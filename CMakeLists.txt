@@ -17,7 +17,7 @@ set(ASSIMP_INSTALL OFF)
 set(ASSIMP_WARNINGS_AS_ERRORS OFF)
 
 # set(CPM_USE_LOCAL_PACKAGES ON)
-CPMAddPackage("gh:nikitawew/nicecs#c2b2f0f")
+CPMAddPackage("https://codeberg.org/nikitam/nicecs.git#c2b2f0f")
 CPMAddPackage("gh:assimp/assimp@6.0.2")
 CPMAddPackage("gh:gabime/spdlog@1.16.0")
 CPMAddPackage("gh:g-truc/glm#1.0.2")
@@ -32,6 +32,7 @@ set(LEVULKAN_SOURCE
 )
 
 add_executable(levulkan ${LEVULKAN_SOURCE})
+message(STATUS "Packages: ${CPM_PACKAGES}")
 target_link_libraries(levulkan PRIVATE spdlog nicecs::ecs glm assimp)
 target_link_libraries(levulkan PRIVATE glfw Vulkan::Headers volk)
 target_include_directories(levulkan PRIVATE "src")

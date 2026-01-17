@@ -1,11 +1,4 @@
-#include <cstdint>
-#include <initializer_list>
-#include <memory>
-#include <queue>
-#include <spdlog/common.h>
-#include <utility>
-#include <vector>
-#include <numeric>
+#include <bits/stdc++.h>
 
 #include "nicecs/ecs.hpp"
 #include "spdlog/spdlog.h"
@@ -22,6 +15,9 @@ static std::shared_ptr<spdlog::logger> sLogger;
 #define LOG_WARN(...) sLogger->warn(__VA_ARGS__)
 #define LOG_ERROR(...) sLogger->error(__VA_ARGS__)
 
+template <typename T>
+using SparseSet = ecs::sparse_set<T>;
+
 struct EventListener
 {
     struct KeyEvent
@@ -37,10 +33,36 @@ struct EventListener
 struct QueueFamilies
 {
     std::optional<uint32_t> graphics;
+    std::optional<uint32_t> preset;
 
-    inline bool isComplete() { return graphics.has_value(); }
+    SparseSet<VkDeviceQueueCreateInfo> deviceCreateInfo;
+
+    inline bool isComplete() 
+    { 
+        return graphics.has_value() && preset.has_value(); 
+    }
 };
-static QueueFamilies findQueueFamilies(VkPhysicalDevice const &device)
+struct VulkanState
+{
+    QueueFamilies queueFamilies;
+    VkInstance instance;
+    VkPhysicalDevice physicalDevice;
+    VkDevice device;
+    VkSurfaceKHR surface;
+    GLFWwindow *window;
+};
+
+static VkDeviceQueueCreateInfo makeDeviceQueueCreateInfo(uint32_t index)
+{
+    float priorities = 1.0f;
+    return VkDeviceQueueCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .queueFamilyIndex = index,
+        .queueCount = 1,
+        .pQueuePriorities = &priorities
+    };
+}
+static QueueFamilies findQueueFamilies(VkPhysicalDevice const &device, VulkanState const &state)
 {
     QueueFamilies indices;
     
@@ -53,7 +75,18 @@ static QueueFamilies findQueueFamilies(VkPhysicalDevice const &device)
     {
         auto const &family = queueFamilies[i];
         if(family.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+        {
             indices.graphics = i;
+            indices.deviceCreateInfo[i] = makeDeviceQueueCreateInfo(i);
+        }
+
+        VkBool32 presentSupport;
+        vkGetPhysicalDeviceSurfaceSupportKHR(device, i, state.surface, &presentSupport);
+        if(presentSupport)
+        {
+            indices.preset = i;
+            indices.deviceCreateInfo[i] = makeDeviceQueueCreateInfo(i);
+        }
 
         if(indices.isComplete()) break;
     }
@@ -135,9 +168,6 @@ static std::pair<VkInstance, bool> createInstance()
         vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
         std::vector<VkLayerProperties> availableLayers(layerCount);
         vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
-        LOG_TRACE("Available layers:");
-        for(auto const &layer : availableLayers)
-            LOG_TRACE("Layer \"{}\". {}.", layer.layerName, layer.description);
 
         for(auto const &layer : requestedLayers)
         {
@@ -152,7 +182,7 @@ static std::pair<VkInstance, bool> createInstance()
     } else {
         LOG_WARN("Validation layers disabled!");
     }
-    LOG_INFO("enabled layers: {}", layers);
+    LOG_INFO("Layers: {}", layers);
 
     VkInstanceCreateInfo instanceCI{
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
@@ -175,26 +205,22 @@ static std::pair<VkInstance, bool> createInstance()
     
     return std::make_pair(instance, true);
 }
-static bool isDeviceSuitable(VkPhysicalDevice dev)
+static bool isDeviceSuitable(VkPhysicalDevice dev, VulkanState const &state)
 {
     VkPhysicalDeviceFeatures2 features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
     vkGetPhysicalDeviceFeatures2(dev, &features);
-    return features.features.geometryShader && findQueueFamilies(dev).isComplete();
+    return features.features.geometryShader && findQueueFamilies(dev, state).isComplete();
 }
-static std::pair<VkPhysicalDevice, bool> pickPhysicalDevice(VkInstance const &instance)
+static bool pickPhysicalDevice(VulkanState &state)
 {
     uint32_t deviceCount = 0;
-    vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
+    vkEnumeratePhysicalDevices(state.instance, &deviceCount, nullptr);
     std::vector<VkPhysicalDevice> devices(deviceCount);
-    vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
+    vkEnumeratePhysicalDevices(state.instance, &deviceCount, devices.data());
 
     if(devices.size() == 0)
-    {
         LOG_ERROR("No vulkan devices!");
-        return {{}, false};
-    }
 
-    VkPhysicalDevice device;
     bool deviceFound = false;
     for(auto const &dev : devices)
     {
@@ -203,18 +229,16 @@ static std::pair<VkPhysicalDevice, bool> pickPhysicalDevice(VkInstance const &in
         // vkGetPhysicalDeviceProperties2(dev, &deviceProperties);
         // vkGetPhysicalDeviceFeatures2(dev, &deviceFeatures);
 
-        if(!isDeviceSuitable(dev))
+        if(!isDeviceSuitable(dev, state))
             continue;
 
-        device = dev;
+        state.physicalDevice = dev;
         deviceFound = true;
     }    
 
-    return {device, deviceFound};
+    return deviceFound;
 }
-
-
-int main(int argc, char const **argv)
+static bool init()
 {
     spdlog::set_pattern("%^[%T] %v%$");
     sLogger = spdlog::stdout_color_mt("sLogger");
@@ -222,17 +246,87 @@ int main(int argc, char const **argv)
     if(!glfwInit())
     {
         LOG_ERROR("Failed to init glfw!");
-        return -1;
+        return false;
     }
+    if(!glfwVulkanSupported())
     {
-        auto res = volkInitialize();
-        if(res != VK_SUCCESS)
-            LOG_ERROR("Failed to init volk: {}!", string_VkResult(res));
+        LOG_ERROR("Vulkan is not supported!");
+        return false;
     }
 
-    auto [instance, instanceCreated] = createInstance();
-    if(!instanceCreated)
+    auto res = volkInitialize();
+    if(res != VK_SUCCESS)
+    {
+        LOG_ERROR("Failed to init volk: {}!", string_VkResult(res));
+        return false;
+    }
+
+    return true;
+}
+static VkDevice createDevice(VkPhysicalDevice const &physicalDevice, QueueFamilies const &families)
+{
+    VkPhysicalDeviceVulkan12Features enabledVk12Features{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .descriptorIndexing = true,
+        .descriptorBindingVariableDescriptorCount = true,
+        .runtimeDescriptorArray = true,
+        .bufferDeviceAddress = true
+    };
+    VkPhysicalDeviceVulkan13Features enabledVk13Features{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+        .pNext = &enabledVk12Features,
+        .synchronization2 = true,
+        .dynamicRendering = true,
+    };
+    VkPhysicalDeviceFeatures2 deviceFeatures{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        .pNext = &enabledVk13Features
+    };
+    vkGetPhysicalDeviceFeatures2(physicalDevice, &deviceFeatures);
+    VkDeviceCreateInfo deviceCI{
+        .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pNext = &enabledVk13Features,
+        .queueCreateInfoCount = static_cast<uint32_t>(families.deviceCreateInfo.data().size()),
+        .pQueueCreateInfos = families.deviceCreateInfo.data().data(),
+        .pEnabledFeatures = &deviceFeatures.features
+    };
+    VkDevice device;
+    vkCreateDevice(physicalDevice, &deviceCI, nullptr, &device);
+
+    return device;
+}
+
+int main(int argc, char const **argv)
+{
+    if(!init())
+    {
+        LOG_ERROR("Failed to init!");
         return -1;
+    }
+
+    ecs::registry reg;
+    VulkanState &state = reg.get<VulkanState>(reg.create<VulkanState>());
+
+    {
+        auto [instance, instanceCreated] = createInstance();
+        if(!instanceCreated)
+            return -1;
+        state.instance = instance;
+    }
+
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    state.window = glfwCreateWindow(800, 600, "levulkan", nullptr, nullptr);
+    glfwSetWindowUserPointer(state.window, &reg);
+    glfwSetKeyCallback(state.window, keyCallback);
+
+    {
+        auto res = glfwCreateWindowSurface(state.instance, state.window, nullptr, &state.surface);
+        if(res != VK_SUCCESS)
+        {
+            LOG_ERROR("Failed to create window surface: {}!", string_VkResult(res));
+            return -1;
+        }
+    }
 
     VkDebugUtilsMessengerCreateInfoEXT debugMessengerCI{
         .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
@@ -243,32 +337,33 @@ int main(int argc, char const **argv)
         .pUserData = nullptr
     };
     VkDebugUtilsMessengerEXT debugMessenger;
-    vkCreateDebugUtilsMessengerEXT(instance, &debugMessengerCI, nullptr, &debugMessenger);
+    vkCreateDebugUtilsMessengerEXT(state.instance, &debugMessengerCI, nullptr, &debugMessenger);
 
-    auto [physicalDevice, physicalDeviceFound] = pickPhysicalDevice(instance);
+    bool physicalDeviceFound = pickPhysicalDevice(state);
     if(!physicalDeviceFound)
     {
         LOG_ERROR("No suitable physical device found!");
         return -1;
     }
 
-    QueueFamilies queueFamilies = findQueueFamilies(physicalDevice);
+    state.queueFamilies = findQueueFamilies(state.physicalDevice, state);
+    state.device = createDevice(state.physicalDevice, state.queueFamilies);
 
+    VkQueue graphicsQueue;
+    vkGetDeviceQueue(state.device, state.queueFamilies.graphics.value(), 0, &graphicsQueue);
 
-    GLFWwindow *window = glfwCreateWindow(800, 600, "levulkan", nullptr, nullptr);
-    ecs::registry reg;
-    glfwSetWindowUserPointer(window, &reg);
-    glfwSetKeyCallback(window, keyCallback);
-
-    while(!glfwWindowShouldClose(window))
+    while(!glfwWindowShouldClose(state.window))
     {
         glfwPollEvents();
         break;
     }
 
-    vkDestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
-
-    vkDestroyInstance(instance, nullptr);
+    vkDestroyDevice(state.device, nullptr);
+    vkDestroySurfaceKHR(state.instance, state.surface, nullptr);
+    
+    vkDestroyDebugUtilsMessengerEXT(state.instance, debugMessenger, nullptr);
+    vkDestroyInstance(state.instance, nullptr);
+    glfwDestroyWindow(state.window);
     glfwTerminate();
 
     LOG_INFO("Exiting...");
