@@ -4,7 +4,11 @@
 #include "spdlog/spdlog.h"
 #include "spdlog/sinks/stdout_color_sinks.h"
 #include "spdlog/fmt/bundled/ranges.h"
-
+#include "spdlog/fmt/ostr.h"
+#define GLM_ENABLE_EXPERIMENTAL
+#include "glm/glm.hpp"
+#include "glm/gtc/quaternion.hpp"
+#include "glm/gtx/io.hpp"
 #include "volk.h"
 #include "libraries/vk_enum_string_helper.h"
 #include "GLFW/glfw3.h"
@@ -18,6 +22,16 @@ static std::shared_ptr<spdlog::logger> sLogger;
 template <typename T>
 using SparseSet = ecs::sparse_set<T>;
 
+struct SwapchainSupportDetails {
+    VkSurfaceCapabilitiesKHR capabilities;
+    std::vector<VkSurfaceFormatKHR> formats;
+    std::vector<VkPresentModeKHR> presentModes;
+};
+struct Window
+{
+    glm::uvec2 size;
+    GLFWwindow *handle;
+};
 struct EventListener
 {
     struct KeyEvent
@@ -33,13 +47,15 @@ struct EventListener
 struct QueueFamilies
 {
     std::optional<uint32_t> graphics;
-    std::optional<uint32_t> preset;
+    std::optional<uint32_t> present;
 
     SparseSet<VkDeviceQueueCreateInfo> deviceCreateInfo;
+    SparseSet<uint32_t> uniqueFamilies;
+    uint32_t count = 0;
 
     inline bool isComplete() 
     { 
-        return graphics.has_value() && preset.has_value(); 
+        return graphics.has_value() && present.has_value(); 
     }
 };
 struct VulkanState
@@ -49,7 +65,7 @@ struct VulkanState
     VkPhysicalDevice physicalDevice;
     VkDevice device;
     VkSurfaceKHR surface;
-    GLFWwindow *window;
+    VkSwapchainKHR swapchain;
 };
 
 static VkDeviceQueueCreateInfo makeDeviceQueueCreateInfo(uint32_t index)
@@ -61,6 +77,12 @@ static VkDeviceQueueCreateInfo makeDeviceQueueCreateInfo(uint32_t index)
         .queueCount = 1,
         .pQueuePriorities = &priorities
     };
+}
+static void addToFamilies(QueueFamilies &indices, uint32_t i)
+{
+    indices.deviceCreateInfo[i] = makeDeviceQueueCreateInfo(i);
+    indices.uniqueFamilies[i] = i;
+    ++indices.count;
 }
 static QueueFamilies findQueueFamilies(VkPhysicalDevice const &device, VulkanState const &state)
 {
@@ -77,15 +99,15 @@ static QueueFamilies findQueueFamilies(VkPhysicalDevice const &device, VulkanSta
         if(family.queueFlags & VK_QUEUE_GRAPHICS_BIT)
         {
             indices.graphics = i;
-            indices.deviceCreateInfo[i] = makeDeviceQueueCreateInfo(i);
+            addToFamilies(indices, i);
         }
 
         VkBool32 presentSupport;
         vkGetPhysicalDeviceSurfaceSupportKHR(device, i, state.surface, &presentSupport);
         if(presentSupport)
         {
-            indices.preset = i;
-            indices.deviceCreateInfo[i] = makeDeviceQueueCreateInfo(i);
+            indices.present = i;
+            addToFamilies(indices, i);
         }
 
         if(indices.isComplete()) break;
@@ -113,6 +135,12 @@ static std::vector<char const *> getRequiredExtensions()
         extensions.emplace_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 
     return extensions;
+}
+static std::vector<char const *> getRequiredDeviceExtensions()
+{
+    return {
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME
+    };
 }
 static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -205,11 +233,52 @@ static std::pair<VkInstance, bool> createInstance()
     
     return std::make_pair(instance, true);
 }
+bool checkDeviceExtensionSupport(VkPhysicalDevice device, std::vector<char const *> deviceExtensions) {
+    uint32_t extensionCount;
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+
+    std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
+
+    std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
+
+    for (const auto& extension : availableExtensions) {
+        requiredExtensions.erase(extension.extensionName);
+    }
+
+    return requiredExtensions.empty();
+}
+static SwapchainSupportDetails getSwapChainSupport(VkPhysicalDevice const &dev, VulkanState const &state) {
+    SwapchainSupportDetails details;
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(dev, state.surface, &details.capabilities);
+    uint32_t formatCount;
+    vkGetPhysicalDeviceSurfaceFormatsKHR(dev, state.surface, &formatCount, nullptr);
+
+    if(formatCount != 0) {
+        details.formats.resize(formatCount);
+        vkGetPhysicalDeviceSurfaceFormatsKHR(dev, state.surface, &formatCount, details.formats.data());
+    }
+
+    uint32_t presentModeCount;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(dev, state.surface, &presentModeCount, nullptr);
+
+    if (presentModeCount != 0) {
+        details.presentModes.resize(presentModeCount);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(dev, state.surface, &presentModeCount, details.presentModes.data());
+    }
+
+    return details;
+}
 static bool isDeviceSuitable(VkPhysicalDevice dev, VulkanState const &state)
 {
     VkPhysicalDeviceFeatures2 features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
     vkGetPhysicalDeviceFeatures2(dev, &features);
-    return features.features.geometryShader && findQueueFamilies(dev, state).isComplete();
+    auto swapChainSupport = getSwapChainSupport(dev, state);
+    return 
+        features.features.geometryShader && 
+        findQueueFamilies(dev, state).isComplete() && 
+        checkDeviceExtensionSupport(dev, getRequiredDeviceExtensions()) &&
+        swapChainSupport.formats.size() > 0 && swapChainSupport.presentModes.size() > 0;
 }
 static bool pickPhysicalDevice(VulkanState &state)
 {
@@ -283,17 +352,112 @@ static VkDevice createDevice(VkPhysicalDevice const &physicalDevice, QueueFamili
         .pNext = &enabledVk13Features
     };
     vkGetPhysicalDeviceFeatures2(physicalDevice, &deviceFeatures);
+    auto extensions = getRequiredDeviceExtensions();
     VkDeviceCreateInfo deviceCI{
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .pNext = &enabledVk13Features,
-        .queueCreateInfoCount = static_cast<uint32_t>(families.deviceCreateInfo.data().size()),
-        .pQueueCreateInfos = families.deviceCreateInfo.data().data(),
-        .pEnabledFeatures = &deviceFeatures.features
+        .queueCreateInfoCount = static_cast<uint32_t>(families.deviceCreateInfo.dense().size()),
+        .pQueueCreateInfos = families.deviceCreateInfo.dense().data(),
+        .enabledExtensionCount = static_cast<uint32_t>(extensions.size()),
+        .ppEnabledExtensionNames = extensions.data(),
+        .pEnabledFeatures = &deviceFeatures.features,
     };
     VkDevice device;
     vkCreateDevice(physicalDevice, &deviceCI, nullptr, &device);
 
     return device;
+}
+static VkQueue getQueue(VkDevice dev, std::optional<uint32_t> index)
+{
+    VkQueue queue;
+    vkGetDeviceQueue(dev, index.value(), 0, &queue);
+    return queue;
+}
+static VkSurfaceFormatKHR chooseSwapSurfaceFormat(SwapchainSupportDetails const &details)
+{
+    for(auto const &format : details.formats)
+    {
+        if(format.format == VK_FORMAT_B8G8R8A8_SRGB && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+            return format;
+    }
+
+    LOG_ERROR("Failed to find swap surface format!");
+    return details.formats.size() > 0 ? details.formats[0] : VkSurfaceFormatKHR{};
+}
+static VkPresentModeKHR chooseSwapPresentMode(SwapchainSupportDetails const &details)
+{
+    for (const auto& availablePresentMode : details.presentModes) {
+        if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
+            return availablePresentMode;
+    }
+
+    return VK_PRESENT_MODE_FIFO_KHR;
+}
+static VkExtent2D chooseExtent(SwapchainSupportDetails const &details, Window const &window)
+{
+    if (details.capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
+        return details.capabilities.currentExtent;
+    } else {
+        VkExtent2D actualExtent = {
+            static_cast<uint32_t>(window.size.x),
+            static_cast<uint32_t>(window.size.y)
+        };
+
+        actualExtent.width = glm::clamp(actualExtent.width, details.capabilities.minImageExtent.width, details.capabilities.maxImageExtent.width);
+        actualExtent.height = glm::clamp(actualExtent.height, details.capabilities.minImageExtent.height, details.capabilities.maxImageExtent.height);
+
+        return actualExtent;
+    }
+}
+static bool createSwapchain(VulkanState &state, Window const &window)
+{
+    SwapchainSupportDetails swapChainSupport = getSwapChainSupport(state.physicalDevice, state);
+    VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport);
+    VkPresentModeKHR surfacePresentMode = chooseSwapPresentMode(swapChainSupport);
+    VkExtent2D extent = chooseExtent(swapChainSupport, window);
+
+    uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+    imageCount = glm::max<unsigned>(imageCount, 2);
+    if(swapChainSupport.capabilities.maxImageCount > 0)
+        imageCount = glm::min<unsigned>(imageCount, swapChainSupport.capabilities.maxImageCount);
+
+    VkSwapchainCreateInfoKHR createInfo{
+        .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+        .surface = state.surface,
+        .minImageCount = imageCount,
+        .imageFormat = surfaceFormat.format,
+        .imageColorSpace = surfaceFormat.colorSpace,
+        .imageExtent = extent,
+        .imageArrayLayers = 1,
+        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .preTransform = swapChainSupport.capabilities.currentTransform,
+        .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        .presentMode = surfacePresentMode,
+        .clipped = VK_TRUE,
+        .oldSwapchain = VK_NULL_HANDLE
+    };
+
+    if(state.queueFamilies.uniqueFamilies.size() == state.queueFamilies.count)
+    {
+        LOG_TRACE("VK_SHARING_MODE_CONCURRENT");
+        createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+        createInfo.queueFamilyIndexCount = state.queueFamilies.uniqueFamilies.size();
+        createInfo.pQueueFamilyIndices = state.queueFamilies.uniqueFamilies.dense().data();
+    } else {
+        LOG_TRACE("VK_SHARING_MODE_EXCLUSIVE");
+        createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        createInfo.queueFamilyIndexCount = 0;
+        createInfo.pQueueFamilyIndices = nullptr;
+    }
+
+    auto res = vkCreateSwapchainKHR(state.device, &createInfo, nullptr, &state.swapchain);
+    if(res != VK_SUCCESS)
+    {
+        LOG_ERROR("Failed to create swap chain: {}", string_VkResult(res));
+        return false;
+    }
+
+    return true;
 }
 
 int main(int argc, char const **argv)
@@ -306,6 +470,7 @@ int main(int argc, char const **argv)
 
     ecs::registry reg;
     VulkanState &state = reg.get<VulkanState>(reg.create<VulkanState>());
+    Window &mainWindow = reg.get<Window>(reg.create<Window>());
 
     {
         auto [instance, instanceCreated] = createInstance();
@@ -315,12 +480,13 @@ int main(int argc, char const **argv)
     }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    state.window = glfwCreateWindow(800, 600, "levulkan", nullptr, nullptr);
-    glfwSetWindowUserPointer(state.window, &reg);
-    glfwSetKeyCallback(state.window, keyCallback);
+    mainWindow.handle = glfwCreateWindow(800, 600, "levulkan", nullptr, nullptr);
+    glfwGetWindowSize(mainWindow.handle, reinterpret_cast<int *>(&mainWindow.size.x), reinterpret_cast<int *>(&mainWindow.size.y));
+    glfwSetWindowUserPointer(mainWindow.handle, &reg);
+    glfwSetKeyCallback(mainWindow.handle, keyCallback);
 
     {
-        auto res = glfwCreateWindowSurface(state.instance, state.window, nullptr, &state.surface);
+        auto res = glfwCreateWindowSurface(state.instance, mainWindow.handle, nullptr, &state.surface);
         if(res != VK_SUCCESS)
         {
             LOG_ERROR("Failed to create window surface: {}!", string_VkResult(res));
@@ -344,26 +510,42 @@ int main(int argc, char const **argv)
     {
         LOG_ERROR("No suitable physical device found!");
         return -1;
+    } else {
+        VkPhysicalDeviceProperties properties;
+        vkGetPhysicalDeviceProperties(state.physicalDevice, &properties);
+        LOG_INFO("Physical device: {}", properties.deviceName);
     }
 
     state.queueFamilies = findQueueFamilies(state.physicalDevice, state);
     state.device = createDevice(state.physicalDevice, state.queueFamilies);
 
-    VkQueue graphicsQueue;
-    vkGetDeviceQueue(state.device, state.queueFamilies.graphics.value(), 0, &graphicsQueue);
+    assert(state.queueFamilies.isComplete());
 
-    while(!glfwWindowShouldClose(state.window))
+    if(!createSwapchain(state, mainWindow))
+        return -1;
+
+    VkQueue graphicsQueue = getQueue(state.device, state.queueFamilies.graphics);
+    VkQueue presentQueue = getQueue(state.device, state.queueFamilies.present);
+
+    while(!glfwWindowShouldClose(mainWindow.handle))
     {
+        for(auto e : reg.view<Window>())
+        {
+            auto &window = reg.get<Window>(e);
+            glfwGetWindowSize(window.handle, reinterpret_cast<int *>(&window.size.x), reinterpret_cast<int *>(&window.size.y));
+        }
         glfwPollEvents();
         break;
     }
 
+    vkDestroySwapchainKHR(state.device, state.swapchain, nullptr);
     vkDestroyDevice(state.device, nullptr);
-    vkDestroySurfaceKHR(state.instance, state.surface, nullptr);
     
+    vkDestroySurfaceKHR(state.instance, state.surface, nullptr);
     vkDestroyDebugUtilsMessengerEXT(state.instance, debugMessenger, nullptr);
+
     vkDestroyInstance(state.instance, nullptr);
-    glfwDestroyWindow(state.window);
+    glfwDestroyWindow(mainWindow.handle);
     glfwTerminate();
 
     LOG_INFO("Exiting...");

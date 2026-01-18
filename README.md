@@ -4,9 +4,17 @@ yeah
 
 ## Building 
 
-Use cmake. Vulkan loader and headers are included.
+The project uses cmake with cpm.cmake.
+```shell
+cd levulkan
+cmake -S . -B build
+cmake --build build
+cmake --install build --prefix install
+install/levulkan # profit
+```
+Vulkan loader and headers are included.
 
 ### Requirements
 - Cmake, build system and a c++20 compiler of your choice.
-- Glsl compiler
-- Validation layers installed.
+- Validation layers (VK_LAYER_KHRONOS_validation) installed for validation.
+<!-- - Slang compiler -->

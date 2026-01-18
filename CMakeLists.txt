@@ -17,7 +17,7 @@ set(ASSIMP_INSTALL OFF)
 set(ASSIMP_WARNINGS_AS_ERRORS OFF)
 
 # set(CPM_USE_LOCAL_PACKAGES ON)
-CPMAddPackage("https://codeberg.org/nikitam/nicecs.git#c2b2f0f")
+CPMAddPackage("https://codeberg.org/nikitam/nicecs.git#06df83d")
 CPMAddPackage("gh:assimp/assimp@6.0.2")
 CPMAddPackage("gh:gabime/spdlog@1.16.0")
 CPMAddPackage("gh:g-truc/glm#1.0.2")
