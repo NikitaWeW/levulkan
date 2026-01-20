@@ -1,3 +1,5 @@
+![image](lefishe.jpg)
+
 # Learning vulkan
 
 yeah
@@ -17,4 +19,9 @@ Vulkan loader and headers are included.
 ### Requirements
 - Cmake, build system and a c++20 compiler of your choice.
 - Validation layers (VK_LAYER_KHRONOS_validation) installed for validation.
-<!-- - Slang compiler -->
+- shader compiler (set the SHADER_COMPILER option to use a custom slang compiler)
+
+## TODO
+- set up [vma](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator)
+- dynamic rendering
+

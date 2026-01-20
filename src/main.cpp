@@ -22,10 +22,20 @@ static std::shared_ptr<spdlog::logger> sLogger;
 template <typename T>
 using SparseSet = ecs::sparse_set<T>;
 
+#define ALLOCATOR_HERE VK_NULL_HANDLE
+#define CHK(x) \
+{\
+    VkResult _result = x;\
+    if(_result != VK_SUCCESS)\
+        LOG_ERROR("Failed to {}: {}", #x, string_VkResult(_result));\
+}
+
 struct SwapchainSupportDetails {
     VkSurfaceCapabilitiesKHR capabilities;
     std::vector<VkSurfaceFormatKHR> formats;
     std::vector<VkPresentModeKHR> presentModes;
+    VkSurfaceFormatKHR surfaceFormat;
+    VkPresentModeKHR surfacePresentMode;
 };
 struct Window
 {
@@ -66,6 +76,11 @@ struct VulkanState
     VkDevice device;
     VkSurfaceKHR surface;
     VkSwapchainKHR swapchain;
+    VkPipeline pipeline;
+    
+    SwapchainSupportDetails swapchainSupport;
+    std::vector<VkImage> swapchainImages;
+    std::vector<VkImageView> swapchainImageViews;
 };
 
 static VkDeviceQueueCreateInfo makeDeviceQueueCreateInfo(uint32_t index)
@@ -222,7 +237,7 @@ static std::pair<VkInstance, bool> createInstance()
     };
 
     VkInstance instance;
-    auto res = vkCreateInstance(&instanceCI, nullptr, &instance);
+    auto res = vkCreateInstance(&instanceCI, ALLOCATOR_HERE, &instance);
     if(res != VK_SUCCESS)
     {
         LOG_ERROR("Failed to create instance: {}!", string_VkResult(res));
@@ -248,7 +263,27 @@ bool checkDeviceExtensionSupport(VkPhysicalDevice device, std::vector<char const
 
     return requiredExtensions.empty();
 }
-static SwapchainSupportDetails getSwapChainSupport(VkPhysicalDevice const &dev, VulkanState const &state) {
+static VkSurfaceFormatKHR chooseSwapSurfaceFormat(SwapchainSupportDetails const &details)
+{
+    for(auto const &format : details.formats)
+    {
+        if(format.format == VK_FORMAT_B8G8R8A8_SRGB && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+            return format;
+    }
+
+    LOG_ERROR("Failed to find swap surface format!");
+    return details.formats.size() > 0 ? details.formats[0] : VkSurfaceFormatKHR{};
+}
+static VkPresentModeKHR chooseSwapPresentMode(SwapchainSupportDetails const &details)
+{
+    for (const auto& availablePresentMode : details.presentModes) {
+        if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
+            return availablePresentMode;
+    }
+
+    return VK_PRESENT_MODE_FIFO_KHR;
+}
+static SwapchainSupportDetails getSwapchainSupport(VkPhysicalDevice const &dev, VulkanState const &state) {
     SwapchainSupportDetails details;
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(dev, state.surface, &details.capabilities);
     uint32_t formatCount;
@@ -267,18 +302,21 @@ static SwapchainSupportDetails getSwapChainSupport(VkPhysicalDevice const &dev, 
         vkGetPhysicalDeviceSurfacePresentModesKHR(dev, state.surface, &presentModeCount, details.presentModes.data());
     }
 
+    details.surfaceFormat = chooseSwapSurfaceFormat(details);
+    details.surfacePresentMode = chooseSwapPresentMode(details);
+
     return details;
 }
 static bool isDeviceSuitable(VkPhysicalDevice dev, VulkanState const &state)
 {
     VkPhysicalDeviceFeatures2 features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
     vkGetPhysicalDeviceFeatures2(dev, &features);
-    auto swapChainSupport = getSwapChainSupport(dev, state);
+    auto swapchainSupport = getSwapchainSupport(dev, state);
     return 
         features.features.geometryShader && 
         findQueueFamilies(dev, state).isComplete() && 
         checkDeviceExtensionSupport(dev, getRequiredDeviceExtensions()) &&
-        swapChainSupport.formats.size() > 0 && swapChainSupport.presentModes.size() > 0;
+        swapchainSupport.formats.size() > 0 && swapchainSupport.presentModes.size() > 0;
 }
 static bool pickPhysicalDevice(VulkanState &state)
 {
@@ -363,7 +401,7 @@ static VkDevice createDevice(VkPhysicalDevice const &physicalDevice, QueueFamili
         .pEnabledFeatures = &deviceFeatures.features,
     };
     VkDevice device;
-    vkCreateDevice(physicalDevice, &deviceCI, nullptr, &device);
+    vkCreateDevice(physicalDevice, &deviceCI, ALLOCATOR_HERE, &device);
 
     return device;
 }
@@ -372,26 +410,6 @@ static VkQueue getQueue(VkDevice dev, std::optional<uint32_t> index)
     VkQueue queue;
     vkGetDeviceQueue(dev, index.value(), 0, &queue);
     return queue;
-}
-static VkSurfaceFormatKHR chooseSwapSurfaceFormat(SwapchainSupportDetails const &details)
-{
-    for(auto const &format : details.formats)
-    {
-        if(format.format == VK_FORMAT_B8G8R8A8_SRGB && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
-            return format;
-    }
-
-    LOG_ERROR("Failed to find swap surface format!");
-    return details.formats.size() > 0 ? details.formats[0] : VkSurfaceFormatKHR{};
-}
-static VkPresentModeKHR chooseSwapPresentMode(SwapchainSupportDetails const &details)
-{
-    for (const auto& availablePresentMode : details.presentModes) {
-        if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
-            return availablePresentMode;
-    }
-
-    return VK_PRESENT_MODE_FIFO_KHR;
 }
 static VkExtent2D chooseExtent(SwapchainSupportDetails const &details, Window const &window)
 {
@@ -411,28 +429,26 @@ static VkExtent2D chooseExtent(SwapchainSupportDetails const &details, Window co
 }
 static bool createSwapchain(VulkanState &state, Window const &window)
 {
-    SwapchainSupportDetails swapChainSupport = getSwapChainSupport(state.physicalDevice, state);
-    VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport);
-    VkPresentModeKHR surfacePresentMode = chooseSwapPresentMode(swapChainSupport);
-    VkExtent2D extent = chooseExtent(swapChainSupport, window);
+    SwapchainSupportDetails swapchainSupport = getSwapchainSupport(state.physicalDevice, state);
+    VkExtent2D extent = chooseExtent(swapchainSupport, window);
 
-    uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+    uint32_t imageCount = swapchainSupport.capabilities.minImageCount + 1;
     imageCount = glm::max<unsigned>(imageCount, 2);
-    if(swapChainSupport.capabilities.maxImageCount > 0)
-        imageCount = glm::min<unsigned>(imageCount, swapChainSupport.capabilities.maxImageCount);
+    if(swapchainSupport.capabilities.maxImageCount > 0)
+        imageCount = glm::min<unsigned>(imageCount, swapchainSupport.capabilities.maxImageCount);
 
     VkSwapchainCreateInfoKHR createInfo{
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .surface = state.surface,
         .minImageCount = imageCount,
-        .imageFormat = surfaceFormat.format,
-        .imageColorSpace = surfaceFormat.colorSpace,
+        .imageFormat = swapchainSupport.surfaceFormat.format,
+        .imageColorSpace = swapchainSupport.surfaceFormat.colorSpace,
         .imageExtent = extent,
         .imageArrayLayers = 1,
         .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-        .preTransform = swapChainSupport.capabilities.currentTransform,
+        .preTransform = swapchainSupport.capabilities.currentTransform,
         .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-        .presentMode = surfacePresentMode,
+        .presentMode = swapchainSupport.surfacePresentMode,
         .clipped = VK_TRUE,
         .oldSwapchain = VK_NULL_HANDLE
     };
@@ -450,7 +466,7 @@ static bool createSwapchain(VulkanState &state, Window const &window)
         createInfo.pQueueFamilyIndices = nullptr;
     }
 
-    auto res = vkCreateSwapchainKHR(state.device, &createInfo, nullptr, &state.swapchain);
+    auto res = vkCreateSwapchainKHR(state.device, &createInfo, ALLOCATOR_HERE, &state.swapchain);
     if(res != VK_SUCCESS)
     {
         LOG_ERROR("Failed to create swap chain: {}", string_VkResult(res));
@@ -459,9 +475,279 @@ static bool createSwapchain(VulkanState &state, Window const &window)
 
     return true;
 }
+static void getSwapchainImages(VulkanState &state)
+{
+    uint32_t imageCount;
+    vkGetSwapchainImagesKHR(state.device, state.swapchain, &imageCount, nullptr);
+    state.swapchainImages.resize(imageCount);
+    vkGetSwapchainImagesKHR(state.device, state.swapchain, &imageCount, state.swapchainImages.data());
+    state.swapchainImageViews.resize(imageCount);
+    
+    for(size_t i = 0; i < imageCount; i++) {
+        VkImageViewCreateInfo createInfo{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = state.swapchainImages[i],
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = state.swapchainSupport.surfaceFormat.format,
+            .components = {
+                .r = VK_COMPONENT_SWIZZLE_IDENTITY,
+                .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+                .b = VK_COMPONENT_SWIZZLE_IDENTITY,
+                .a = VK_COMPONENT_SWIZZLE_IDENTITY,
+            },
+            .subresourceRange = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1
+            }
+        };
+
+        auto res = vkCreateImageView(state.device, &createInfo, ALLOCATOR_HERE, &state.swapchainImageViews[i]);
+        if(res != VK_SUCCESS)
+        {
+            LOG_ERROR("Failed to create an image view: {}", string_VkResult(res));
+        }
+    }
+}
+static std::vector<char> readFileBinary(std::string_view filename) 
+{
+    std::ifstream file(std::string{filename}, std::ios::ate | std::ios::binary);
+
+    if(!file.is_open()) 
+    {
+        LOG_ERROR("Failed to open file \"{}\"", filename);
+        return {};
+    }
+
+    size_t fileSize = static_cast<size_t>(file.tellg());
+    std::vector<char> buffer(fileSize);
+
+    file.seekg(0);
+    file.read(buffer.data(), fileSize);
+
+    return buffer;
+}
+static VkShaderModule createShaderModule(VkDevice const &device, std::vector<char> const &code) 
+{
+    VkShaderModuleCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    createInfo.codeSize = code.size();
+    createInfo.pCode = reinterpret_cast<uint32_t const *>(code.data());
+    
+    VkShaderModule module;
+    auto res = vkCreateShaderModule(device, &createInfo, ALLOCATOR_HERE, &module);
+
+    if(res != VK_SUCCESS)
+        LOG_ERROR("Failed to create a shader module: {}", string_VkResult(res));
+
+    return module;
+}
+static void createPipeline(VulkanState &state,
+    VkShaderModule &vertShaderModule,
+    VkShaderModule &fragShaderModule,
+    VkRenderPass &renderPass,
+    VkPipelineLayout &pipelineLayout,
+    VkExtent2D extent)
+{
+    auto vertShaderCode = readFileBinary("shaders-bin/vert.vert.spv");
+    auto fragShaderCode = readFileBinary("shaders-bin/frag.frag.spv");
+
+    vertShaderModule = createShaderModule(state.device, vertShaderCode);
+    fragShaderModule = createShaderModule(state.device, fragShaderCode);
+
+    VkPipelineShaderStageCreateInfo vertShaderStageInfo{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = VK_SHADER_STAGE_VERTEX_BIT,
+        .module = vertShaderModule,
+        .pName = "main",
+        .pSpecializationInfo = nullptr
+    };
+    VkPipelineShaderStageCreateInfo fragShaderStageInfo{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+        .module = fragShaderModule,
+        .pName = "main",
+        .pSpecializationInfo = nullptr
+    };
+
+    VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .vertexBindingDescriptionCount = 0,
+        .pVertexBindingDescriptions = nullptr,
+        .vertexAttributeDescriptionCount = 0,
+        .pVertexAttributeDescriptions = nullptr,
+    };
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+        .primitiveRestartEnable = VK_FALSE,
+    };
+
+    VkViewport viewport{
+        .x = 0.0f,
+        .y = 0.0f,
+        .width = (float) extent.width,
+        .height = (float) extent.height,
+        .minDepth = 0.0f,
+        .maxDepth = 1.0f,
+    };
+
+    VkRect2D scissor{
+        .offset = {0, 0},
+        .extent = extent,
+    };
+
+    std::array<VkDynamicState, 2> dynamicStates = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR
+    };
+    VkPipelineDynamicStateCreateInfo dynamicState{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()),
+        .pDynamicStates = dynamicStates.data(),
+    };
+
+    VkPipelineViewportStateCreateInfo viewportState{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .viewportCount = 1,
+        .pViewports = &viewport,
+        .scissorCount = 1,
+        .pScissors = &scissor,
+    };
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .depthClampEnable = VK_FALSE,
+        .rasterizerDiscardEnable = VK_FALSE,
+        .polygonMode = VK_POLYGON_MODE_FILL,
+        .cullMode = VK_CULL_MODE_BACK_BIT,
+        .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+        .depthBiasEnable = VK_FALSE,
+        .depthBiasConstantFactor = 0.0f,
+        .depthBiasClamp = 0.0f,
+        .depthBiasSlopeFactor = 0.0f,
+        .lineWidth = 1.0f,
+    };
+
+    VkPipelineMultisampleStateCreateInfo multisampling{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+        .sampleShadingEnable = VK_FALSE,
+        .minSampleShading = 1.0f,
+        .pSampleMask = nullptr,
+        .alphaToCoverageEnable = VK_FALSE,
+        .alphaToOneEnable = VK_FALSE,
+    };
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+        .depthTestEnable = VK_FALSE,
+        .depthWriteEnable = VK_FALSE,
+        .depthCompareOp = VK_COMPARE_OP_LESS,
+        .depthBoundsTestEnable = VK_FALSE,
+        .stencilTestEnable = VK_FALSE,
+        .front = {},
+        .back = {},
+        .minDepthBounds = 0.0f,
+        .maxDepthBounds = 1.0f,
+    };
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{
+        .blendEnable = VK_TRUE,
+        .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .colorBlendOp = VK_BLEND_OP_ADD,
+        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+        .alphaBlendOp = VK_BLEND_OP_ADD,
+        .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+    };
+
+    VkPipelineColorBlendStateCreateInfo colorBlending{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .logicOpEnable = VK_FALSE,
+        .logicOp = VK_LOGIC_OP_COPY,
+        .attachmentCount = 1,
+        .pAttachments = &colorBlendAttachment,
+        .blendConstants = {
+            0.0f, 0.0f, 0.0f, 0.0f
+        }
+    };
+
+    VkAttachmentDescription colorAttachment{
+        .format = state.swapchainSupport.surfaceFormat.format,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+    };
+    VkAttachmentReference colorAttachmentRef{
+        .attachment = 0,
+        .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    };
+
+    VkSubpassDescription subpass{
+        .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &colorAttachmentRef,
+    };
+
+    VkRenderPassCreateInfo renderPassInfo{
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .attachmentCount = 1,
+        .pAttachments = &colorAttachment,
+        .subpassCount = 1,
+        .pSubpasses = &subpass,
+    };
+    
+    CHK(vkCreateRenderPass(state.device, &renderPassInfo, ALLOCATOR_HERE, &renderPass));
+
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 0,
+        .pSetLayouts = nullptr,
+        .pushConstantRangeCount = 0,
+        .pPushConstantRanges = nullptr,
+    };
+    CHK(vkCreatePipelineLayout(state.device, &pipelineLayoutInfo, ALLOCATOR_HERE, &pipelineLayout));
+
+    VkGraphicsPipelineCreateInfo pipelineCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .stageCount = 2,
+        .pStages = shaderStages,
+        .pVertexInputState = &vertexInputInfo,
+        .pInputAssemblyState = &inputAssembly,
+        .pViewportState = &viewportState,
+        .pRasterizationState = &rasterizer,
+        .pMultisampleState = &multisampling,
+        .pDepthStencilState = &depthStencil,
+        .pColorBlendState = &colorBlending,
+        .pDynamicState = &dynamicState,
+        .layout = pipelineLayout,
+        .renderPass = renderPass,
+        .subpass = 0,
+        .basePipelineHandle = VK_NULL_HANDLE,
+        .basePipelineIndex = -1,
+    };
+
+    CHK(vkCreateGraphicsPipelines(state.device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, ALLOCATOR_HERE, &state.pipeline));
+}
 
 int main(int argc, char const **argv)
 {
+    // Non-vulkan setup
     if(!init())
     {
         LOG_ERROR("Failed to init!");
@@ -472,6 +758,14 @@ int main(int argc, char const **argv)
     VulkanState &state = reg.get<VulkanState>(reg.create<VulkanState>());
     Window &mainWindow = reg.get<Window>(reg.create<Window>());
 
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    mainWindow.handle = glfwCreateWindow(800, 600, "levulkan", nullptr, nullptr);
+    glfwGetWindowSize(mainWindow.handle, reinterpret_cast<int *>(&mainWindow.size.x), reinterpret_cast<int *>(&mainWindow.size.y));
+    glfwSetWindowUserPointer(mainWindow.handle, &reg);
+    glfwSetKeyCallback(mainWindow.handle, keyCallback);
+
+    // Actual vulkan setup
+
     {
         auto [instance, instanceCreated] = createInstance();
         if(!instanceCreated)
@@ -479,14 +773,8 @@ int main(int argc, char const **argv)
         state.instance = instance;
     }
 
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    mainWindow.handle = glfwCreateWindow(800, 600, "levulkan", nullptr, nullptr);
-    glfwGetWindowSize(mainWindow.handle, reinterpret_cast<int *>(&mainWindow.size.x), reinterpret_cast<int *>(&mainWindow.size.y));
-    glfwSetWindowUserPointer(mainWindow.handle, &reg);
-    glfwSetKeyCallback(mainWindow.handle, keyCallback);
-
     {
-        auto res = glfwCreateWindowSurface(state.instance, mainWindow.handle, nullptr, &state.surface);
+        auto res = glfwCreateWindowSurface(state.instance, mainWindow.handle, ALLOCATOR_HERE, &state.surface);
         if(res != VK_SUCCESS)
         {
             LOG_ERROR("Failed to create window surface: {}!", string_VkResult(res));
@@ -503,7 +791,7 @@ int main(int argc, char const **argv)
         .pUserData = nullptr
     };
     VkDebugUtilsMessengerEXT debugMessenger;
-    vkCreateDebugUtilsMessengerEXT(state.instance, &debugMessengerCI, nullptr, &debugMessenger);
+    vkCreateDebugUtilsMessengerEXT(state.instance, &debugMessengerCI, ALLOCATOR_HERE, &debugMessenger);
 
     bool physicalDeviceFound = pickPhysicalDevice(state);
     if(!physicalDeviceFound)
@@ -524,8 +812,19 @@ int main(int argc, char const **argv)
     if(!createSwapchain(state, mainWindow))
         return -1;
 
-    VkQueue graphicsQueue = getQueue(state.device, state.queueFamilies.graphics);
-    VkQueue presentQueue = getQueue(state.device, state.queueFamilies.present);
+    state.swapchainSupport = getSwapchainSupport(state.physicalDevice, state);
+    getSwapchainImages(state);
+    VkExtent2D extent = chooseExtent(state.swapchainSupport, mainWindow);
+
+    VkShaderModule vertShaderModule;
+    VkShaderModule fragShaderModule;
+    VkRenderPass renderPass;
+    VkPipelineLayout pipelineLayout;
+    createPipeline(state, vertShaderModule, fragShaderModule, renderPass, pipelineLayout, extent);
+
+// === === === === === === === === === === === === === === === ===
+    // VkQueue graphicsQueue = getQueue(state.device, state.queueFamilies.graphics);
+    // VkQueue presentQueue = getQueue(state.device, state.queueFamilies.present);
 
     while(!glfwWindowShouldClose(mainWindow.handle))
     {
@@ -538,13 +837,23 @@ int main(int argc, char const **argv)
         break;
     }
 
-    vkDestroySwapchainKHR(state.device, state.swapchain, nullptr);
-    vkDestroyDevice(state.device, nullptr);
-    
-    vkDestroySurfaceKHR(state.instance, state.surface, nullptr);
-    vkDestroyDebugUtilsMessengerEXT(state.instance, debugMessenger, nullptr);
+    for (auto imageView : state.swapchainImageViews) {
+        vkDestroyImageView(state.device, imageView, ALLOCATOR_HERE);
+    }
 
-    vkDestroyInstance(state.instance, nullptr);
+    vkDestroyPipeline(state.device, state.pipeline, ALLOCATOR_HERE);
+    vkDestroyRenderPass(state.device, renderPass, ALLOCATOR_HERE);
+    vkDestroyPipelineLayout(state.device, pipelineLayout, ALLOCATOR_HERE);
+    vkDestroyShaderModule(state.device, fragShaderModule, ALLOCATOR_HERE);
+    vkDestroyShaderModule(state.device, vertShaderModule, ALLOCATOR_HERE);
+
+    vkDestroySwapchainKHR(state.device, state.swapchain, ALLOCATOR_HERE);
+    vkDestroyDevice(state.device, ALLOCATOR_HERE);
+    
+    vkDestroySurfaceKHR(state.instance, state.surface, ALLOCATOR_HERE);
+    vkDestroyDebugUtilsMessengerEXT(state.instance, debugMessenger, ALLOCATOR_HERE);
+
+    vkDestroyInstance(state.instance, ALLOCATOR_HERE);
     glfwDestroyWindow(mainWindow.handle);
     glfwTerminate();
 

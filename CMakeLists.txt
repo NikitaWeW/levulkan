@@ -4,6 +4,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 project(levulkan C CXX)
 
+if(NOT DEFINED SHADER_COMPILER)
+set(SHADER_COMPILER "glslc" CACHE STRING "The path to the shader compiler")
+endif()
+
 include(cpm.cmake)
 
 # Setup assimp.
@@ -16,8 +20,7 @@ set(ASSIMP_BUILD_TESTS OFF)
 set(ASSIMP_INSTALL OFF)
 set(ASSIMP_WARNINGS_AS_ERRORS OFF)
 
-# set(CPM_USE_LOCAL_PACKAGES ON)
-CPMAddPackage("https://codeberg.org/nikitam/nicecs.git#06df83d")
+CPMAddPackage("gh:nikitawew/nicecs#06df83d")
 CPMAddPackage("gh:assimp/assimp@6.0.2")
 CPMAddPackage("gh:gabime/spdlog@1.16.0")
 CPMAddPackage("gh:g-truc/glm#1.0.2")
@@ -38,3 +41,25 @@ target_link_libraries(levulkan PRIVATE glfw Vulkan::Headers volk)
 target_include_directories(levulkan PRIVATE "src")
 
 install(TARGETS levulkan DESTINATION .)
+
+set(SHADERS_IN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
+set(SHADERS_OUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders-bin")
+
+file(GLOB SHADERS "${SHADERS_IN_DIR}/*.vert" "${SHADERS_IN_DIR}/*.frag" "${SHADERS_IN_DIR}/*.comp" "${SHADERS_IN_DIR}/*.geom")
+
+file(MAKE_DIRECTORY ${SHADERS_OUT_DIR})
+
+foreach(SHADER ${SHADERS})
+	get_filename_component(SHADER_NAME ${SHADER} NAME)
+	set(SHADER_OUT_NAME "${SHADERS_OUT_DIR}/${SHADER_NAME}.spv")
+	list(APPEND SHADER_OUT_NAMES ${SHADER_OUT_NAME})
+	add_custom_command(
+		MAIN_DEPENDENCY ${SHADER}
+		OUTPUT ${SHADER_OUT_NAME}
+		COMMAND ${SHADER_COMPILER} ${SHADER} "-o" ${SHADER_OUT_NAME}
+		VERBATIM)
+endforeach()
+
+add_custom_target(build_shaders DEPENDS ${SHADER_OUT_NAMES})
+
+add_dependencies(levulkan build_shaders)
