@@ -76,11 +76,15 @@ struct VulkanState
     VkDevice device;
     VkSurfaceKHR surface;
     VkSwapchainKHR swapchain;
+    VkRenderPass renderPass;
     VkPipeline pipeline;
+    VkCommandPool commandPool;
+    VkCommandBuffer commandBuffer;
     
     SwapchainSupportDetails swapchainSupport;
     std::vector<VkImage> swapchainImages;
     std::vector<VkImageView> swapchainImageViews;
+    std::vector<VkFramebuffer> swapchainFramebuffers;
 };
 
 static VkDeviceQueueCreateInfo makeDeviceQueueCreateInfo(uint32_t index)
@@ -547,7 +551,6 @@ static VkShaderModule createShaderModule(VkDevice const &device, std::vector<cha
 static void createPipeline(VulkanState &state,
     VkShaderModule &vertShaderModule,
     VkShaderModule &fragShaderModule,
-    VkRenderPass &renderPass,
     VkPipelineLayout &pipelineLayout,
     VkExtent2D extent)
 {
@@ -712,7 +715,7 @@ static void createPipeline(VulkanState &state,
         .pSubpasses = &subpass,
     };
     
-    CHK(vkCreateRenderPass(state.device, &renderPassInfo, ALLOCATOR_HERE, &renderPass));
+    CHK(vkCreateRenderPass(state.device, &renderPassInfo, ALLOCATOR_HERE, &state.renderPass));
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -736,13 +739,77 @@ static void createPipeline(VulkanState &state,
         .pColorBlendState = &colorBlending,
         .pDynamicState = &dynamicState,
         .layout = pipelineLayout,
-        .renderPass = renderPass,
+        .renderPass = state.renderPass,
         .subpass = 0,
         .basePipelineHandle = VK_NULL_HANDLE,
         .basePipelineIndex = -1,
     };
 
     CHK(vkCreateGraphicsPipelines(state.device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, ALLOCATOR_HERE, &state.pipeline));
+}
+void createFramebuffers(VulkanState &state, VkExtent2D extent)
+{
+    state.swapchainFramebuffers.resize(state.swapchainImageViews.size());
+    for(size_t i = 0; i < state.swapchainImageViews.size(); i++) 
+    {
+        std::array<VkImageView, 1> attachments{
+            state.swapchainImageViews[i]
+        };
+
+        VkFramebufferCreateInfo framebufferInfo{
+            .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+            .renderPass = state.renderPass,
+            .attachmentCount = attachments.size(),
+            .pAttachments = attachments.data(),
+            .width = extent.width,
+            .height = extent.height,
+            .layers = 1,
+        };
+
+        CHK(vkCreateFramebuffer(state.device, &framebufferInfo, ALLOCATOR_HERE, &state.swapchainFramebuffers[i]));
+    }
+}
+void createCommandBuffer(VulkanState &state, VkExtent2D extent)
+{
+    VkCommandPoolCreateInfo poolCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = state.queueFamilies.graphics.value(),
+    };
+    CHK(vkCreateCommandPool(state.device, &poolCreateInfo, ALLOCATOR_HERE, &state.commandPool));
+
+    VkCommandBufferAllocateInfo commandBufferAllocateInfo{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = state.commandPool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+    CHK(vkAllocateCommandBuffers(state.device, &commandBufferAllocateInfo, &state.commandBuffer));
+
+    VkCommandBufferBeginInfo beginInfo{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = 0,
+        .pInheritanceInfo = nullptr,
+    };
+    CHK(vkBeginCommandBuffer(state.commandBuffer, &beginInfo));
+
+    uint32_t imageIndex = 0;
+    VkClearValue clearColor{
+        .color = {{0.0f, 0.0f, 0.0f, 1.0f}}
+    };
+    VkRenderPassBeginInfo renderPassInfo{
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+        .renderPass = state.renderPass,
+        .framebuffer = state.swapchainFramebuffers[imageIndex],
+        .renderArea = {
+            .offset = {0, 0},
+            .extent = extent
+        },
+        .clearValueCount = 1,
+        .pClearValues = &clearColor
+    };
+    vkCmdBeginRenderPass(state.commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
 }
 
 int main(int argc, char const **argv)
@@ -818,9 +885,11 @@ int main(int argc, char const **argv)
 
     VkShaderModule vertShaderModule;
     VkShaderModule fragShaderModule;
-    VkRenderPass renderPass;
     VkPipelineLayout pipelineLayout;
-    createPipeline(state, vertShaderModule, fragShaderModule, renderPass, pipelineLayout, extent);
+    
+    createPipeline(state, vertShaderModule, fragShaderModule, pipelineLayout, extent);
+    createFramebuffers(state, extent);
+    createCommandBuffer(state, extent);
 
 // === === === === === === === === === === === === === === === ===
     // VkQueue graphicsQueue = getQueue(state.device, state.queueFamilies.graphics);
@@ -837,12 +906,19 @@ int main(int argc, char const **argv)
         break;
     }
 
+// === === === === === === === === === === === === === === === ===
+
+    vkDestroyCommandPool(state.device, state.commandPool, ALLOCATOR_HERE);
+
+    for(auto framebuffer : state.swapchainFramebuffers) {
+        vkDestroyFramebuffer(state.device, framebuffer, nullptr);
+    }
     for (auto imageView : state.swapchainImageViews) {
         vkDestroyImageView(state.device, imageView, ALLOCATOR_HERE);
     }
 
     vkDestroyPipeline(state.device, state.pipeline, ALLOCATOR_HERE);
-    vkDestroyRenderPass(state.device, renderPass, ALLOCATOR_HERE);
+    vkDestroyRenderPass(state.device, state.renderPass, ALLOCATOR_HERE);
     vkDestroyPipelineLayout(state.device, pipelineLayout, ALLOCATOR_HERE);
     vkDestroyShaderModule(state.device, fragShaderModule, ALLOCATOR_HERE);
     vkDestroyShaderModule(state.device, vertShaderModule, ALLOCATOR_HERE);

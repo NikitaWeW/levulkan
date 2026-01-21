@@ -17,11 +17,14 @@ install/levulkan # profit
 Vulkan loader and headers are included.
 
 ### Requirements
-- Cmake, build system and a c++20 compiler of your choice.
+- Cmake
+- Build system (e.g. makefiles, visual studio, ninja, etc.)
+- C++20 compiler.
 - Validation layers (VK_LAYER_KHRONOS_validation) installed for validation.
-- shader compiler (set the SHADER_COMPILER option to use a custom slang compiler)
+- GLSL shader compiler (set the SHADER_COMPILER variable to use a custom compiler), default: glslc
 
 ## TODO
+- finish [vulkan tutorial](https://vulkan-tutorial.com)
 - set up [vma](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator)
 - dynamic rendering
 
