@@ -809,7 +809,28 @@ void createCommandBuffer(VulkanState &state, VkExtent2D extent)
         .pClearValues = &clearColor
     };
     vkCmdBeginRenderPass(state.commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    
+    vkCmdBindPipeline(state.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, state.pipeline);
 
+    VkViewport viewport{
+        .x = 0.0f,
+        .y = 0.0f,
+        .width = (float) extent.width,
+        .height = (float) extent.height,
+        .minDepth = 0.0f,
+        .maxDepth = 1.0f,
+    };
+    vkCmdSetViewport(state.commandBuffer, 0, 1, &viewport);
+
+    VkRect2D scissor{
+        .offset = {0, 0},
+        .extent = extent,
+    };
+    vkCmdSetScissor(state.commandBuffer, 0, 1, &scissor);
+    vkCmdDraw(state.commandBuffer, 3, 1, 0, 0);
+    vkCmdEndRenderPass(state.commandBuffer);
+
+    CHK(vkEndCommandBuffer(state.commandBuffer));
 }
 
 int main(int argc, char const **argv)
