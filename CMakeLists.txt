@@ -13,31 +13,35 @@ include(cpm.cmake)
 # Setup assimp.
 set(ASSIMP_NO_EXPORT ON)
 set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF)
-foreach(LOADER FBX OBJ GLTF)
+foreach(LOADER GLTF)
     set(ASSIMP_BUILD_${LOADER}_IMPORTER ON)
 endforeach()
 set(ASSIMP_BUILD_TESTS OFF)
 set(ASSIMP_INSTALL OFF)
 set(ASSIMP_WARNINGS_AS_ERRORS OFF)
+set(BUILD_SHARED_LIBS OFF)
 
 CPMAddPackage("gh:nikitawew/nicecs#06df83d")
 CPMAddPackage("gh:assimp/assimp@6.0.2")
-CPMAddPackage("gh:gabime/spdlog@1.16.0")
+CPMAddPackage("gh:zeux/meshoptimizer@1.0")
+CPMAddPackage("gh:gabime/spdlog@1.17.0")
 CPMAddPackage("gh:g-truc/glm#1.0.2")
 
 CPMAddPackage("gh:glfw/glfw#3.4")
 CPMAddPackage("gh:KhronosGroup/Vulkan-Headers@1.4.338")
 CPMAddPackage("gh:zeux/volk#1.4.304")
+CPMAddPackage("gh:GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator@3.3.0")
 
 set(LEVULKAN_SOURCE
     "src/main.cpp"
     "src/libraries/stb.c"
+	"src/ModelLoader.cpp"
+	"src/TextureLoader.cpp"
 )
 
 add_executable(levulkan ${LEVULKAN_SOURCE})
-message(STATUS "Packages: ${CPM_PACKAGES}")
-target_link_libraries(levulkan PRIVATE spdlog nicecs::ecs glm assimp)
-target_link_libraries(levulkan PRIVATE glfw Vulkan::Headers volk)
+target_link_libraries(levulkan PRIVATE spdlog nicecs::ecs glm assimp meshoptimizer)
+target_link_libraries(levulkan PRIVATE glfw Vulkan::Headers volk GPUOpen::VulkanMemoryAllocator)
 target_include_directories(levulkan PRIVATE "src")
 
 install(TARGETS levulkan DESTINATION .)
@@ -49,6 +53,7 @@ file(GLOB SHADERS "${SHADERS_IN_DIR}/*.vert" "${SHADERS_IN_DIR}/*.frag" "${SHADE
 
 file(MAKE_DIRECTORY ${SHADERS_OUT_DIR})
 
+# HACK
 foreach(SHADER ${SHADERS})
 	get_filename_component(SHADER_NAME ${SHADER} NAME)
 	set(SHADER_OUT_NAME "${SHADERS_OUT_DIR}/${SHADER_NAME}.spv")

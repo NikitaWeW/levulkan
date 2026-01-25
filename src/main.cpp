@@ -1,34 +1,27 @@
 #include <bits/stdc++.h>
 
 #include "nicecs/ecs.hpp"
-#include "spdlog/spdlog.h"
-#include "spdlog/sinks/stdout_color_sinks.h"
-#include "spdlog/fmt/bundled/ranges.h"
-#include "spdlog/fmt/ostr.h"
-#define GLM_ENABLE_EXPERIMENTAL
 #include "glm/glm.hpp"
 #include "glm/gtc/quaternion.hpp"
-#include "glm/gtx/io.hpp"
+#include "assimp/Importer.hpp"
+#include "assimp/scene.h"
+#include "assimp/postprocess.h"
+
 #include "volk.h"
 #include "libraries/vk_enum_string_helper.h"
+#define VMA_IMPLEMENTATION
+#define VMA_STATIC_VULKAN_FUNCTIONS 0
+#define VMA_DYNAMIC_VULKAN_FUNCTIONS 0
+#define VMA_VULKAN_VERSION 1003000
+#include "vk_mem_alloc.h"
 #include "GLFW/glfw3.h"
 
-static std::shared_ptr<spdlog::logger> sLogger;
-#define LOG_TRACE(...) sLogger->trace(__VA_ARGS__)
-#define LOG_INFO(...) sLogger->info(__VA_ARGS__)
-#define LOG_WARN(...) sLogger->warn(__VA_ARGS__)
-#define LOG_ERROR(...) sLogger->error(__VA_ARGS__)
+#include "Logging.hpp"
+#include "Model.hpp"
+#include "Loaders.hpp"
 
 template <typename T>
 using SparseSet = ecs::sparse_set<T>;
-
-#define ALLOCATOR_HERE VK_NULL_HANDLE
-#define CHK(x) \
-{\
-    VkResult _result = x;\
-    if(_result != VK_SUCCESS)\
-        LOG_ERROR("Failed to {}: {}", #x, string_VkResult(_result));\
-}
 
 struct SwapchainSupportDetails {
     VkSurfaceCapabilitiesKHR capabilities;
@@ -37,6 +30,60 @@ struct SwapchainSupportDetails {
     VkSurfaceFormatKHR surfaceFormat;
     VkPresentModeKHR surfacePresentMode;
 };
+struct QueueFamilies
+{
+    std::optional<uint32_t> graphics;
+    std::optional<uint32_t> present;
+
+    SparseSet<VkDeviceQueueCreateInfo> deviceCreateInfo;
+    SparseSet<uint32_t> uniqueFamilies;
+    uint32_t count = 0;
+
+    inline bool isComplete() 
+    { 
+        return graphics.has_value() && present.has_value(); 
+    }
+};
+struct ImageAllocation
+{
+    VmaAllocation allocation;
+    VkImage image;
+    VkImageView view;
+};
+struct VulkanState
+{
+    QueueFamilies queueFamilies;
+    VkInstance instance;
+    VkPhysicalDevice physicalDevice;
+    VkDevice device;
+    VmaAllocator vma;
+    VkSurfaceKHR surface;
+    VkSwapchainKHR swapchain;
+    VkRenderPass renderPass;
+    VkPipeline pipeline;
+    VkCommandPool commandPool;
+    VkCommandBuffer commandBuffer;
+    
+    SwapchainSupportDetails swapchainSupport;
+    std::vector<VkImage> swapchainImages;
+    std::vector<VkImageView> swapchainImageViews;
+    ImageAllocation depthImage;
+    std::vector<VkFramebuffer> swapchainFramebuffers;
+};
+
+static ecs::registry sReg;
+
+#define ALLOCATOR_HERE VK_NULL_HANDLE
+#define CHK(x) { VkResult _result = x; if(_result != VK_SUCCESS) { LOG_ERROR("Failed to {}: {}", #x, string_VkResult(_result)); abort(); }}
+
+constexpr bool ENABLE_VALIDATION_LAYERS = true;
+constexpr std::array<char const *, 1> sInstanceExtensions = {
+    VK_EXT_DEBUG_UTILS_EXTENSION_NAME
+};
+constexpr std::array<char const *, 1> sDeviceExtensions = {
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+};
+
 struct Window
 {
     glm::uvec2 size;
@@ -54,38 +101,36 @@ struct EventListener
     };
     std::queue<KeyEvent> keyEvents;
 };
-struct QueueFamilies
+static bool init()
 {
-    std::optional<uint32_t> graphics;
-    std::optional<uint32_t> present;
+    #if LOG_FILENAME
+    spdlog::set_pattern("%@ %^%v%$");
+    #else
+    spdlog::set_pattern("%^%v%$");
+    #endif
+    sLogger = spdlog::stdout_color_mt("sLogger");
+    sLogger->set_level(spdlog::level::trace);
 
-    SparseSet<VkDeviceQueueCreateInfo> deviceCreateInfo;
-    SparseSet<uint32_t> uniqueFamilies;
-    uint32_t count = 0;
-
-    inline bool isComplete() 
-    { 
-        return graphics.has_value() && present.has_value(); 
+    if(!glfwInit())
+    {
+        LOG_ERROR("Failed to init glfw!");
+        return false;
     }
-};
-struct VulkanState
-{
-    QueueFamilies queueFamilies;
-    VkInstance instance;
-    VkPhysicalDevice physicalDevice;
-    VkDevice device;
-    VkSurfaceKHR surface;
-    VkSwapchainKHR swapchain;
-    VkRenderPass renderPass;
-    VkPipeline pipeline;
-    VkCommandPool commandPool;
-    VkCommandBuffer commandBuffer;
-    
-    SwapchainSupportDetails swapchainSupport;
-    std::vector<VkImage> swapchainImages;
-    std::vector<VkImageView> swapchainImageViews;
-    std::vector<VkFramebuffer> swapchainFramebuffers;
-};
+    if(!glfwVulkanSupported())
+    {
+        LOG_ERROR("Vulkan is not supported!");
+        return false;
+    }
+
+    auto res = volkInitialize();
+    if(res != VK_SUCCESS)
+    {
+        LOG_ERROR("Failed to init volk: {}!", string_VkResult(res));
+        return false;
+    }
+
+    return true;
+}
 
 static VkDeviceQueueCreateInfo makeDeviceQueueCreateInfo(uint32_t index)
 {
@@ -142,24 +187,19 @@ static void keyCallback(GLFWwindow* window, int key, int scancode, int action, i
         reg.get<EventListener>(e).keyEvents.emplace(window, key, scancode, action, mods);
 }
 
-constexpr bool ENABLE_VALIDATION_LAYERS = true;
-
 static std::vector<char const *> getRequiredExtensions()
 {
     uint32_t glfwExtensionCount = 0;
     const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
     auto extensions = std::vector<char const *>(glfwExtensions, glfwExtensions + glfwExtensionCount);
 
-    if(ENABLE_VALIDATION_LAYERS)
-        extensions.emplace_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    extensions.insert(extensions.end(), sInstanceExtensions.begin(), sInstanceExtensions.end());
 
     return extensions;
 }
 static std::vector<char const *> getRequiredDeviceExtensions()
 {
-    return {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME
-    };
+    return std::vector<char const *>(sDeviceExtensions.begin(), sDeviceExtensions.end());
 }
 static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -181,14 +221,15 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(
         type.erase(type.find("_BIT_EXT"), std::string_view("_BIT_EXT").size());
     for(auto& character : type) character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
 
+    auto format = fmt::runtime("{} {} message:\n{}");
     if(messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
-        LOG_ERROR("{} {} message: {}", type, severity, pCallbackData->pMessage);
+        LOG_ERROR(format, type, severity, pCallbackData->pMessage);
     else if(messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
-        LOG_WARN("{} {} message: {}", type, severity, pCallbackData->pMessage);
+        LOG_WARN(format, type, severity, pCallbackData->pMessage);
     else if(messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT)
-        LOG_INFO("{} {} message: {}", type, severity, pCallbackData->pMessage);
+        LOG_INFO(format, type, severity, pCallbackData->pMessage);
     else
-        LOG_TRACE("{} {} message: {}", type, severity, pCallbackData->pMessage);
+        LOG_TRACE(format, type, severity, pCallbackData->pMessage);
 
     return VK_FALSE;
 }
@@ -202,7 +243,7 @@ static std::pair<VkInstance, bool> createInstance()
     };
 
     auto extensions = getRequiredExtensions();
-    LOG_INFO("Extensions: {}", extensions);
+    LOG_INFO("Instance extensions: {}", extensions);
 
     std::vector<char const *> layers;
     if(ENABLE_VALIDATION_LAYERS)
@@ -349,31 +390,6 @@ static bool pickPhysicalDevice(VulkanState &state)
 
     return deviceFound;
 }
-static bool init()
-{
-    spdlog::set_pattern("%^[%T] %v%$");
-    sLogger = spdlog::stdout_color_mt("sLogger");
-    sLogger->set_level(spdlog::level::trace);
-    if(!glfwInit())
-    {
-        LOG_ERROR("Failed to init glfw!");
-        return false;
-    }
-    if(!glfwVulkanSupported())
-    {
-        LOG_ERROR("Vulkan is not supported!");
-        return false;
-    }
-
-    auto res = volkInitialize();
-    if(res != VK_SUCCESS)
-    {
-        LOG_ERROR("Failed to init volk: {}!", string_VkResult(res));
-        return false;
-    }
-
-    return true;
-}
 static VkDevice createDevice(VkPhysicalDevice const &physicalDevice, QueueFamilies const &families)
 {
     VkPhysicalDeviceVulkan12Features enabledVk12Features{
@@ -406,8 +422,23 @@ static VkDevice createDevice(VkPhysicalDevice const &physicalDevice, QueueFamili
     };
     VkDevice device;
     vkCreateDevice(physicalDevice, &deviceCI, ALLOCATOR_HERE, &device);
+    volkLoadDevice(device);
 
     return device;
+}
+static void createAllocator(VulkanState &state)
+{
+    VmaAllocatorCreateInfo allocatorCI{
+        .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT, 
+        .physicalDevice = state.physicalDevice,
+        .device = state.device,
+        .instance = state.instance,
+        .vulkanApiVersion = VK_API_VERSION_1_3
+    };
+    VmaVulkanFunctions functions;
+    CHK(vmaImportVulkanFunctionsFromVolk(&allocatorCI, &functions));
+    allocatorCI.pVulkanFunctions = &functions;
+    CHK(vmaCreateAllocator(&allocatorCI, &state.vma));
 }
 static VkQueue getQueue(VkDevice dev, std::optional<uint32_t> index)
 {
@@ -548,6 +579,23 @@ static VkShaderModule createShaderModule(VkDevice const &device, std::vector<cha
 
     return module;
 }
+void createCommandPool(VulkanState &state)
+{
+    VkCommandPoolCreateInfo poolCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = state.queueFamilies.graphics.value(),
+    };
+    CHK(vkCreateCommandPool(state.device, &poolCreateInfo, ALLOCATOR_HERE, &state.commandPool));
+
+    VkCommandBufferAllocateInfo commandBufferAllocateInfo{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = state.commandPool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+    CHK(vkAllocateCommandBuffers(state.device, &commandBufferAllocateInfo, &state.commandBuffer));
+}
 static void createPipeline(VulkanState &state,
     VkShaderModule &vertShaderModule,
     VkShaderModule &fragShaderModule,
@@ -623,6 +671,48 @@ static void createPipeline(VulkanState &state,
         .scissorCount = 1,
         .pScissors = &scissor,
     };
+
+
+    std::vector<VkFormat> depthFormatList{ VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT };
+    VkFormat depthFormat = VK_FORMAT_UNDEFINED;
+    for (VkFormat& format : depthFormatList) {
+        VkFormatProperties2 formatProperties{ .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2 };
+        vkGetPhysicalDeviceFormatProperties2(state.physicalDevice, format, &formatProperties);
+        if(formatProperties.formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+            depthFormat = format;
+            break;
+        }
+    }
+    LOG_TRACE("Depth format: {}", string_VkFormat(depthFormat));
+    if(depthFormat == VK_FORMAT_UNDEFINED)
+    {
+        LOG_ERROR("Failed to find depth format!");
+    }
+    VkImageCreateInfo depthImageCI{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = depthFormat,
+        .extent{.width = extent.width, .height = extent.height, .depth = 1 },
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    VmaAllocationCreateInfo depthImageAllocCI{
+        .flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO
+    };
+    CHK(vmaCreateImage(state.vma, &depthImageCI, &depthImageAllocCI, &state.depthImage.image, &state.depthImage.allocation, nullptr));
+        VkImageViewCreateInfo depthViewCI{ 
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = state.depthImage.image,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = depthFormat,
+        .subresourceRange{ .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT, .levelCount = 1, .layerCount = 1 }
+    };
+    CHK(vkCreateImageView(state.device, &depthViewCI, nullptr, &state.depthImage.view));
 
     VkPipelineRasterizationStateCreateInfo rasterizer{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
@@ -706,13 +796,22 @@ static void createPipeline(VulkanState &state,
         .colorAttachmentCount = 1,
         .pColorAttachments = &colorAttachmentRef,
     };
-
+    VkSubpassDependency subpassDependency{
+        .srcSubpass = VK_SUBPASS_EXTERNAL,
+        .dstSubpass = 0,
+        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .srcAccessMask = 0,
+        .dstAccessMask = 0,
+    };
     VkRenderPassCreateInfo renderPassInfo{
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
         .attachmentCount = 1,
         .pAttachments = &colorAttachment,
         .subpassCount = 1,
         .pSubpasses = &subpass,
+        .dependencyCount = 1,
+        .pDependencies = &subpassDependency
     };
     
     CHK(vkCreateRenderPass(state.device, &renderPassInfo, ALLOCATOR_HERE, &state.renderPass));
@@ -769,23 +868,8 @@ void createFramebuffers(VulkanState &state, VkExtent2D extent)
         CHK(vkCreateFramebuffer(state.device, &framebufferInfo, ALLOCATOR_HERE, &state.swapchainFramebuffers[i]));
     }
 }
-void createCommandBuffer(VulkanState &state, VkExtent2D extent)
+void recordCommandBuffer(VulkanState &state, uint32_t imageIndex, VkExtent2D extent)
 {
-    VkCommandPoolCreateInfo poolCreateInfo{
-        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = state.queueFamilies.graphics.value(),
-    };
-    CHK(vkCreateCommandPool(state.device, &poolCreateInfo, ALLOCATOR_HERE, &state.commandPool));
-
-    VkCommandBufferAllocateInfo commandBufferAllocateInfo{
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = state.commandPool,
-        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1,
-    };
-    CHK(vkAllocateCommandBuffers(state.device, &commandBufferAllocateInfo, &state.commandBuffer));
-
     VkCommandBufferBeginInfo beginInfo{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = 0,
@@ -793,7 +877,6 @@ void createCommandBuffer(VulkanState &state, VkExtent2D extent)
     };
     CHK(vkBeginCommandBuffer(state.commandBuffer, &beginInfo));
 
-    uint32_t imageIndex = 0;
     VkClearValue clearColor{
         .color = {{0.0f, 0.0f, 0.0f, 1.0f}}
     };
@@ -833,6 +916,97 @@ void createCommandBuffer(VulkanState &state, VkExtent2D extent)
     CHK(vkEndCommandBuffer(state.commandBuffer));
 }
 
+static std::string printTexture(ecs::entity e, ecs::registry const &reg)
+{
+    std::stringstream ss;
+    auto const &texture = reg.get<Texture>(e);
+    ss 
+        << 'e' << e << ", \"" 
+        << texture.path << "\", \t" 
+        << texture.bitmap.size.x << "x" << texture.bitmap.size.y << ", \t" 
+        << (texture.srgb ? "srgb" : "not srgb");
+    return fmt::format("e{}, \"{:<30} {}x{}, {:>3}", e, texture.path + "\",", texture.bitmap.size.x, texture.bitmap.size.y, (texture.srgb ? "srgb" : "not srgb"));
+}
+static void printModelData(ecs::entity e, ecs::registry const &reg)
+{
+    assert(reg.has<Model>(e));
+    Model const &model = reg.get<Model>(e);
+    LOG_INFO("");
+    LOG_INFO("Model: e{}: \"{}\"", e, model.path);
+    LOG_INFO("Skeleton: ");
+    LOG_INFO("  Bone map size / number of bones: {}", model.skeleton.boneMap.size());
+    if(model.skeleton.boneMap.size() <= 30)
+        for(auto const &[name, id] : model.skeleton.boneMap)
+            LOG_INFO("    [\"{}\": {}]", name, id);
+
+    LOG_INFO("Animations: {}", model.animations.size());
+    for(auto const &animation : model.animations)
+    {
+        LOG_INFO("-----------------");
+        LOG_INFO("Animation: \"{}\"", animation.name);
+        LOG_INFO("  Duration: {} ticks, tps: {}", animation.durationTicks, animation.ticksPerSecond);
+        LOG_INFO("  Bones size: {}", animation.bones.size());
+    }
+
+    LOG_INFO("Meshes: {}", model.meshes.size());
+    for(auto const &mesh : model.meshes)
+    {
+        LOG_INFO("-----------------");
+
+        LOG_INFO("Geometry:");
+        LOG_INFO("  Triangles: {}", mesh.geometry.indices.size() / 3);
+        LOG_INFO("  Indices:   {}", mesh.geometry.indices.size());
+        LOG_INFO("  Positions: {}", mesh.geometry.positions.size());
+        LOG_INFO("  TexCoords: {}", mesh.geometry.texCoords.size());
+        LOG_INFO("  Normals:   {}", mesh.geometry.normals.size());
+        LOG_INFO("  Tangents:  {}", mesh.geometry.tangents.size());
+        LOG_INFO("  BoneIDs:   {}", mesh.geometry.boneIDs.size());
+        LOG_INFO("  Weights:   {}", mesh.geometry.weights.size());
+        
+        LOG_INFO("Material:");
+        LOG_INFO("Textures:");
+        LOG_INFO("  Albedo:       {}", printTexture(mesh.material.textures.albedo, reg));
+        LOG_INFO("  Metallic:     {}", printTexture(mesh.material.textures.metallic, reg));
+        LOG_INFO("  Roughness:    {}", printTexture(mesh.material.textures.roughness, reg));
+        LOG_INFO("  Ambient:      {}", printTexture(mesh.material.textures.ambient, reg));
+        LOG_INFO("  Normal:       {}", printTexture(mesh.material.textures.normal, reg));
+        LOG_INFO("  Displacement: {}", printTexture(mesh.material.textures.displacement, reg));
+        LOG_INFO("Properties:");
+        LOG_INFO("  Ambient:       {}", fmt::streamed(mesh.material.properties.ambient));
+        LOG_INFO("  Albedo:        {}", fmt::streamed(mesh.material.properties.albedo));
+        LOG_INFO("  Specular:      {}", fmt::streamed(mesh.material.properties.specular));
+        LOG_INFO("  Emission:      {}", fmt::streamed(mesh.material.properties.emission));
+        LOG_INFO("  Shininess:     {}", mesh.material.properties.shininess);
+        LOG_INFO("  Metallic:      {}", mesh.material.properties.metallic);
+        LOG_INFO("  IOR:           {}", mesh.material.properties.ior);
+    }
+}
+static std::optional<Mesh> loadMesh(std::string_view path)
+{
+    static ModelLoader loader(sReg);
+    
+    auto eModel = loader.loadFromFile(path);
+
+    if(!eModel)
+    {
+        return std::nullopt;
+    } else {
+        printModelData(eModel, sReg);
+    }
+
+    auto &model = sReg.get<Model>(eModel);
+
+    if(model.meshes.size() > 1)
+        LOG_WARN("Multi-mesh models are not yet supported! \"{}\"", path);
+    if(model.meshes.size() == 0)
+    {
+        LOG_ERROR("Model \"{}\" has no meshes!", path);
+        return std::nullopt;
+    }
+
+    return model.meshes.at(0);
+}
+
 int main(int argc, char const **argv)
 {
     // Non-vulkan setup
@@ -842,14 +1016,13 @@ int main(int argc, char const **argv)
         return -1;
     }
 
-    ecs::registry reg;
-    VulkanState &state = reg.get<VulkanState>(reg.create<VulkanState>());
-    Window &mainWindow = reg.get<Window>(reg.create<Window>());
+    VulkanState &state = sReg.get<VulkanState>(sReg.create<VulkanState>());
+    Window &mainWindow = sReg.get<Window>(sReg.create<Window>());
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     mainWindow.handle = glfwCreateWindow(800, 600, "levulkan", nullptr, nullptr);
     glfwGetWindowSize(mainWindow.handle, reinterpret_cast<int *>(&mainWindow.size.x), reinterpret_cast<int *>(&mainWindow.size.y));
-    glfwSetWindowUserPointer(mainWindow.handle, &reg);
+    glfwSetWindowUserPointer(mainWindow.handle, &sReg);
     glfwSetKeyCallback(mainWindow.handle, keyCallback);
 
     // Actual vulkan setup
@@ -882,6 +1055,7 @@ int main(int argc, char const **argv)
     vkCreateDebugUtilsMessengerEXT(state.instance, &debugMessengerCI, ALLOCATOR_HERE, &debugMessenger);
 
     bool physicalDeviceFound = pickPhysicalDevice(state);
+    LOG_INFO("Device extensions: {}", getRequiredDeviceExtensions());
     if(!physicalDeviceFound)
     {
         LOG_ERROR("No suitable physical device found!");
@@ -895,6 +1069,8 @@ int main(int argc, char const **argv)
     state.queueFamilies = findQueueFamilies(state.physicalDevice, state);
     state.device = createDevice(state.physicalDevice, state.queueFamilies);
 
+    createAllocator(state);
+
     assert(state.queueFamilies.isComplete());
 
     if(!createSwapchain(state, mainWindow))
@@ -904,39 +1080,117 @@ int main(int argc, char const **argv)
     getSwapchainImages(state);
     VkExtent2D extent = chooseExtent(state.swapchainSupport, mainWindow);
 
+    LOG_INFO("{} swapchain images", state.swapchainImages.size());
+    assert(state.swapchainImages.size() == state.swapchainImageViews.size());
+
     VkShaderModule vertShaderModule;
     VkShaderModule fragShaderModule;
     VkPipelineLayout pipelineLayout;
     
     createPipeline(state, vertShaderModule, fragShaderModule, pipelineLayout, extent);
     createFramebuffers(state, extent);
-    createCommandBuffer(state, extent);
+    createCommandPool(state);
 
+    Mesh mesh = loadMesh("assets/suzanne.glb").value_or({});
+    VkDeviceSize bufferSize = sizeof(mesh.geometry.positions[0]) * mesh.geometry.positions.size();
+
+    VkSemaphoreCreateInfo semaphoreCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO
+    };
+    VkFenceCreateInfo fenceCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .flags = VK_FENCE_CREATE_SIGNALED_BIT
+    };
+
+    VkSemaphore imageAvailableSemaphore;
+    VkSemaphore renderFinishedSemaphore;
+    VkFence inFlightFence;
+
+    vkCreateSemaphore(state.device, &semaphoreCreateInfo, ALLOCATOR_HERE, &imageAvailableSemaphore);
+    vkCreateSemaphore(state.device, &semaphoreCreateInfo, ALLOCATOR_HERE, &renderFinishedSemaphore);
+    vkCreateFence(state.device, &fenceCreateInfo, ALLOCATOR_HERE, &inFlightFence);
+return 0;
 // === === === === === === === === === === === === === === === ===
-    // VkQueue graphicsQueue = getQueue(state.device, state.queueFamilies.graphics);
-    // VkQueue presentQueue = getQueue(state.device, state.queueFamilies.present);
+    VkQueue graphicsQueue = getQueue(state.device, state.queueFamilies.graphics);
+    VkQueue presentQueue = getQueue(state.device, state.queueFamilies.present);
+    float deltatime = 0.01f;
 
+    float fpsRefresh = 0;
+    constexpr float fpsRefreshRate = 0.1f;
     while(!glfwWindowShouldClose(mainWindow.handle))
     {
-        for(auto e : reg.view<Window>())
+        auto start = std::chrono::high_resolution_clock::now();
+        fpsRefresh += deltatime;
+        if(fpsRefresh > fpsRefreshRate)
         {
-            auto &window = reg.get<Window>(e);
+            glfwSetWindowTitle(mainWindow.handle, fmt::format("levulkan | {:.2f}ms | {:.2f} fps", deltatime * 1e3, 1 / deltatime).c_str());
+            fpsRefresh = 0;
+            break;
+        }
+        for(auto e : sReg.view<Window>())
+        {
+            auto &window = sReg.get<Window>(e);
             glfwGetWindowSize(window.handle, reinterpret_cast<int *>(&window.size.x), reinterpret_cast<int *>(&window.size.y));
         }
         glfwPollEvents();
-        break;
+
+        vkWaitForFences(state.device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+        vkResetFences(state.device, 1, &inFlightFence);
+
+        uint32_t imageIndex;
+        vkAcquireNextImageKHR(state.device, state.swapchain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+
+        vkResetCommandBuffer(state.commandBuffer, 0);
+        recordCommandBuffer(state, 0, extent);
+
+        std::array<VkSemaphore, 1> waitSemaphores{ imageAvailableSemaphore };
+        std::array<VkSemaphore, 1> signalSemaphores{ renderFinishedSemaphore };
+        std::array<VkPipelineStageFlags, waitSemaphores.size()> waitStages{ VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+        VkSubmitInfo submitInfo{
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .waitSemaphoreCount = waitSemaphores.size(),
+            .pWaitSemaphores = waitSemaphores.data(),
+            .pWaitDstStageMask = waitStages.data(),
+            .commandBufferCount = 1,
+            .pCommandBuffers = &state.commandBuffer,
+            .signalSemaphoreCount = signalSemaphores.size(),
+            .pSignalSemaphores = signalSemaphores.data(),
+        };
+
+        CHK(vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence))
+
+        VkPresentInfoKHR presentInfo{
+            .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .waitSemaphoreCount = signalSemaphores.size(),
+            .pWaitSemaphores = signalSemaphores.data(),
+            .swapchainCount = 1,
+            .pSwapchains = &state.swapchain,
+            .pImageIndices = &imageIndex,
+            .pResults = nullptr
+        };
+
+        CHK(vkQueuePresentKHR(presentQueue, &presentInfo));
+
+        deltatime = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - start).count() * 1e-9f;
     }
+
+    CHK(vkDeviceWaitIdle(state.device));
 
 // === === === === === === === === === === === === === === === ===
 
+    vmaDestroyImage(state.vma, state.depthImage.image, state.depthImage.allocation);
+    vmaDestroyAllocator(state.vma);
+
+    vkDestroySemaphore(state.device, imageAvailableSemaphore, ALLOCATOR_HERE);
+    vkDestroySemaphore(state.device, renderFinishedSemaphore, ALLOCATOR_HERE);
+    vkDestroyFence(state.device, inFlightFence, ALLOCATOR_HERE);
+
     vkDestroyCommandPool(state.device, state.commandPool, ALLOCATOR_HERE);
 
-    for(auto framebuffer : state.swapchainFramebuffers) {
+    for(auto framebuffer : state.swapchainFramebuffers)
         vkDestroyFramebuffer(state.device, framebuffer, nullptr);
-    }
-    for (auto imageView : state.swapchainImageViews) {
+    for (auto imageView : state.swapchainImageViews)
         vkDestroyImageView(state.device, imageView, ALLOCATOR_HERE);
-    }
 
     vkDestroyPipeline(state.device, state.pipeline, ALLOCATOR_HERE);
     vkDestroyRenderPass(state.device, state.renderPass, ALLOCATOR_HERE);
