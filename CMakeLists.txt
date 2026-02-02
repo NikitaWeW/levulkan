@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 project(levulkan C CXX)
 
 if(NOT DEFINED SHADER_COMPILER)
-set(SHADER_COMPILER "glslc" CACHE STRING "The path to the shader compiler")
+set(SHADER_COMPILER "slangc" CACHE STRING "The path to the shader compiler")
 endif()
 
 include(cpm.cmake)
@@ -49,7 +49,7 @@ install(TARGETS levulkan DESTINATION .)
 set(SHADERS_IN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
 set(SHADERS_OUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders-bin")
 
-file(GLOB SHADERS "${SHADERS_IN_DIR}/*.vert" "${SHADERS_IN_DIR}/*.frag" "${SHADERS_IN_DIR}/*.comp" "${SHADERS_IN_DIR}/*.geom")
+file(GLOB SHADERS "${SHADERS_IN_DIR}/*.slang")
 
 file(MAKE_DIRECTORY ${SHADERS_OUT_DIR})
 
@@ -61,7 +61,7 @@ foreach(SHADER ${SHADERS})
 	add_custom_command(
 		MAIN_DEPENDENCY ${SHADER}
 		OUTPUT ${SHADER_OUT_NAME}
-		COMMAND ${SHADER_COMPILER} ${SHADER} "-o" ${SHADER_OUT_NAME}
+		COMMAND ${SHADER_COMPILER} ${SHADER} "-o" ${SHADER_OUT_NAME} "-target" "spirv"
 		VERBATIM)
 endforeach()
 

@@ -20,8 +20,9 @@ struct Bitmap
 
 struct Texture
 {
-    Bitmap<float> bitmap;
+    Bitmap<unsigned char> bitmap;
     bool srgb = false;
+    unsigned numMipLevels = 0;
     std::string path;
 };
 
@@ -83,10 +84,10 @@ struct Mesh
     struct Geometry
     {
         // guaranteed
-        std::vector<glm::vec4> positions;
+        std::vector<glm::vec3> positions;
         std::vector<glm::vec2> texCoords;
-        std::vector<glm::vec4> normals;
-        std::vector<glm::vec4> tangents;
+        std::vector<glm::vec3> normals;
+        std::vector<glm::vec3> tangents;
         std::vector<unsigned> indices;
 
         // optional

@@ -134,9 +134,9 @@ static void calculateMissingPrimitives(Mesh &mesh)
             glm::vec3 e1 = mesh.geometry.positions[i1] - mesh.geometry.positions[i0];
             glm::vec3 e2 = mesh.geometry.positions[i2] - mesh.geometry.positions[i0];
             glm::vec3 normal = glm::normalize(glm::cross(e1, e2));
-            mesh.geometry.normals[i0] = { normal, 0 };
-            mesh.geometry.normals[i1] = { normal, 0 };
-            mesh.geometry.normals[i2] = { normal, 0 };
+            mesh.geometry.normals[i0] = normal;
+            mesh.geometry.normals[i1] = normal;
+            mesh.geometry.normals[i2] = normal;
         }
     }
 
@@ -164,9 +164,9 @@ static void calculateMissingPrimitives(Mesh &mesh)
             glm::vec3 normal = mesh.geometry.normals[i0];
             tangent = glm::normalize(tangent - normal * glm::dot(normal, tangent));
 
-            mesh.geometry.tangents[i0] = { tangent, 0 };
-            mesh.geometry.tangents[i1] = { tangent, 0 };
-            mesh.geometry.tangents[i2] = { tangent, 0 };
+            mesh.geometry.tangents[i0] = tangent;
+            mesh.geometry.tangents[i1] = tangent;
+            mesh.geometry.tangents[i2] = tangent;
         }
     }
 }
@@ -178,10 +178,10 @@ static void optimizeMesh(Mesh &mesh)
     size_t index_count = indexed ? oldMesh.geometry.indices.size() : oldMesh.geometry.positions.size();
     size_t vertex_count = indexed ? oldMesh.geometry.positions.size() : index_count;
     std::vector<meshopt_Stream> streams = {
-        meshopt_Stream{oldMesh.geometry.positions.data(), sizeof(glm::vec4), sizeof(glm::vec4)},
+        meshopt_Stream{oldMesh.geometry.positions.data(), sizeof(glm::vec3), sizeof(glm::vec3)},
         meshopt_Stream{oldMesh.geometry.texCoords.data(), sizeof(glm::vec2), sizeof(glm::vec2)},
-        meshopt_Stream{oldMesh.geometry.normals  .data(), sizeof(glm::vec4), sizeof(glm::vec4)},
-        meshopt_Stream{oldMesh.geometry.tangents .data(), sizeof(glm::vec4), sizeof(glm::vec4)}
+        meshopt_Stream{oldMesh.geometry.normals  .data(), sizeof(glm::vec3), sizeof(glm::vec3)},
+        meshopt_Stream{oldMesh.geometry.tangents .data(), sizeof(glm::vec3), sizeof(glm::vec3)}
     };
 
     if(!oldMesh.geometry.boneIDs.empty())
@@ -218,21 +218,21 @@ static void moveMesh(Mesh::Geometry &primitives, glm::mat4 const &mat)
     glm::mat4 normalMat = glm::inverse(glm::transpose(mat));
 
     for(auto &position : primitives.positions)
-        position = mat * position;
+        position = mat * glm::vec4(position, 1);
     for(auto &normal : primitives.normals)
-        normal = normalMat * normal;
+        normal = normalMat * glm::vec4(normal, 0);
     for(auto &tangent : primitives.tangents)
-        tangent = normalMat * tangent;
+        tangent = normalMat * glm::vec4(tangent, 0);
 }
 
 static void extractVertexData(aiMesh const *aimesh, Mesh &mesh)
 {
     for(unsigned i = 0; i < aimesh->mNumVertices; ++i) {
-        mesh.geometry.positions.emplace_back(aimesh->mVertices[i].x, aimesh->mVertices[i].y, aimesh->mVertices[i].z, 1);
+        mesh.geometry.positions.emplace_back(aimesh->mVertices[i].x, aimesh->mVertices[i].y, aimesh->mVertices[i].z);
         if(aimesh->HasNormals())
-            mesh.geometry.normals.emplace_back(aimesh->mNormals[i].x, aimesh->mNormals[i].y, aimesh->mNormals[i].z, 0);
+            mesh.geometry.normals.emplace_back(aimesh->mNormals[i].x, aimesh->mNormals[i].y, aimesh->mNormals[i].z);
         if(aimesh->HasTangentsAndBitangents())
-            mesh.geometry.tangents.emplace_back(aimesh->mTangents[i].x, aimesh->mTangents[i].y, aimesh->mTangents[i].z, 0);
+            mesh.geometry.tangents.emplace_back(aimesh->mTangents[i].x, aimesh->mTangents[i].y, aimesh->mTangents[i].z);
         if(aimesh->HasTextureCoords(0))
             mesh.geometry.texCoords.emplace_back(aimesh->mTextureCoords[0][i].x, aimesh->mTextureCoords[0][i].y);
     }
@@ -335,9 +335,9 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg)
 
     if(!white)
         white = mRegistry->create(Texture{
-            .bitmap = Bitmap<float>{
+            .bitmap = Bitmap<unsigned char>{
                 .pixels = {
-                    1, 1, 1
+                    255, 255, 255
                 },
                 .numComponents = 3,
                 .size = {1, 1},
@@ -347,9 +347,9 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg)
         });
     if(!normal)
         normal = mRegistry->create(Texture{
-            .bitmap = Bitmap<float>{
+            .bitmap = Bitmap<unsigned char>{
                 .pixels = {
-                    0.5, 0.5, 0.5
+                    128, 128, 128
                 },
                 .numComponents = 3,
                 .size = {1, 1},
@@ -359,7 +359,7 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg)
         });
     if(!black)
         black = mRegistry->create(Texture{
-            .bitmap = Bitmap<float>{
+            .bitmap = Bitmap<unsigned char>{
                 .pixels = {
                     0, 0, 0
                 },
@@ -371,16 +371,16 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg)
         });
     if(!tile)
         tile = mRegistry->create(Texture{
-            .bitmap = Bitmap<float>{
+            .bitmap = Bitmap<unsigned char>{
                 .pixels = {
-                    1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 
-                    0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 
-                    1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 
-                    0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 
-                    1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 
-                    0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 
-                    1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 
-                    0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 
+                    255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 
+                    125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 
+                    255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 
+                    125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 
+                    255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 
+                    125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 
+                    255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 
+                    125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 125, 125, 125, 255, 255, 255, 
                 },
                 .numComponents = 3,
                 .size = {8, 8},
@@ -435,7 +435,7 @@ ecs::entity ModelLoaderImpl::fromRawAssimpTexture(aiTexture const *texture)
     }
 
     Texture result;
-    result.bitmap = Bitmap<float>{
+    result.bitmap = Bitmap<unsigned char>{
         .numComponents = 4,
         .size = {width, height}
     };
@@ -445,11 +445,11 @@ ecs::entity ModelLoaderImpl::fromRawAssimpTexture(aiTexture const *texture)
     {
         aiTexel const &texel = texture->pcData[i];
         glm::uvec2 pixel{static_cast<unsigned>(i % width), static_cast<unsigned>(i / width)};
-        *reinterpret_cast<glm::vec4 *>(&result.bitmap.pixels[result.bitmap.getOffsetOf(pixel)]) = {
-            u8ToFloat(texel.r),
-            u8ToFloat(texel.g),
-            u8ToFloat(texel.b),
-            u8ToFloat(texel.a)
+        *reinterpret_cast<glm::vec<4, unsigned char> *>(&result.bitmap.pixels[result.bitmap.getOffsetOf(pixel)]) = {
+            /* u8ToFloat */(texel.r),
+            /* u8ToFloat */(texel.g),
+            /* u8ToFloat */(texel.b),
+            /* u8ToFloat */(texel.a)
         };
     }
 
@@ -548,7 +548,7 @@ Mesh ModelLoaderImpl::processMesh(aiMesh const *aimesh, glm::mat4 const &transfo
     optimizeMesh(mesh);
 
     // Apply transformation only for meshes.
-        // Models with bones should use the bone transformations.
+    // Models with bones should use the bone transformations.
     if(!aimesh->HasBones())
         moveMesh(mesh.geometry, transform);
 
