@@ -46,7 +46,7 @@ constexpr glm::quat toQuat(aiQuaternion const &aiquaternion)
 {
     return glm::quat{aiquaternion.w, aiquaternion.x, aiquaternion.y, aiquaternion.z};
 }
-static float u8ToFloat(unsigned char v) { return v / 255.0f; }
+// static float u8ToFloat(unsigned char v) { return v / 255.0f; }
 static glm::vec3 getColor(aiMaterial const *material, glm::vec3 defaultColor, const char* key, unsigned int type, unsigned int idx)
 {
     aiColor3D color;

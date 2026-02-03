@@ -27,4 +27,5 @@ Vulkan loader and headers are included.
 
 - [How to vulkan](https://howtovulkan.com)
 - [Vulkan docs](https://docs.vulkan.org)
+- [OGLDEV's vulkan tutorials](https://youtube.com/watch?v=EsEP9iJKBhU&list=PLA0dXqQjCx0RntJy1pqje9uHRF1Z5vZgA)
 - [Sasha Willems' vulkan samples](https://github.com/SaschaWillems/Vulkan)
