@@ -26,11 +26,15 @@ CPMAddPackage("gh:assimp/assimp@6.0.2")
 CPMAddPackage("gh:zeux/meshoptimizer@1.0")
 CPMAddPackage("gh:gabime/spdlog@1.17.0")
 CPMAddPackage("gh:g-truc/glm#1.0.2")
+# TODO: stack traces
+# CPMAddPackage("gh:boostorg/stacktrace#boost-1.90.0")
 
 CPMAddPackage("gh:glfw/glfw#3.4")
 CPMAddPackage("gh:KhronosGroup/Vulkan-Headers@1.4.338")
 CPMAddPackage("gh:zeux/volk#1.4.304")
 CPMAddPackage("gh:GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator@3.3.0")
+# TODO: glsl and at runtime
+# CPMAddPackage("gh:google/shaderc@2026.1")
 
 set(LEVULKAN_SOURCE
     "src/main.cpp"

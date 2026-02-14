@@ -22,7 +22,7 @@ struct Texture
 {
     Bitmap<unsigned char> bitmap;
     bool srgb = false;
-    unsigned numMipLevels = 0;
+    unsigned numMipLevels = 1;
     std::string path;
 };
 

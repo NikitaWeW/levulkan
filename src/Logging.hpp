@@ -10,9 +10,10 @@
 
 inline std::shared_ptr<spdlog::logger> sLogger;
 
-#define LOG_FILENAME true
+#define LOG_FILENAME false
 
-#define LOG_TRACE(...) sLogger->log(spdlog::source_loc{__FILE__, __LINE__, SPDLOG_FUNCTION}, spdlog::level::trace, __VA_ARGS__)
-#define LOG_INFO(...) sLogger->log(spdlog::source_loc{__FILE__, __LINE__, SPDLOG_FUNCTION}, spdlog::level::info, __VA_ARGS__)
-#define LOG_WARN(...) sLogger->log(spdlog::source_loc{__FILE__, __LINE__, SPDLOG_FUNCTION}, spdlog::level::warn, __VA_ARGS__)
-#define LOG_ERROR(...) sLogger->log(spdlog::source_loc{__FILE__, __LINE__, SPDLOG_FUNCTION}, spdlog::level::err, __VA_ARGS__)
+#define LOG(level, ...) sLogger->log(spdlog::source_loc{__FILE__, __LINE__, SPDLOG_FUNCTION}, level, __VA_ARGS__)
+#define LOG_TRACE(...) LOG(spdlog::level::trace, __VA_ARGS__)
+#define LOG_INFO(...) LOG(spdlog::level::info, __VA_ARGS__)
+#define LOG_WARN(...) LOG(spdlog::level::warn, __VA_ARGS__)
+#define LOG_ERROR(...) LOG(spdlog::level::err, __VA_ARGS__)
