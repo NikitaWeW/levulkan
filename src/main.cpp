@@ -136,8 +136,7 @@ static ecs::registry sReg;
 
 constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
 constexpr bool ENABLE_VALIDATION_LAYERS = true;
-constexpr std::array<char const *, 1> sInstanceExtensions = {
-    VK_EXT_DEBUG_UTILS_EXTENSION_NAME
+constexpr std::array<char const *, 0> sInstanceExtensions = {
 };
 constexpr std::array<char const *, 1> sDeviceExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -291,6 +290,9 @@ static std::vector<char const *> getRequiredExtensions()
 
     extensions.insert(extensions.end(), sInstanceExtensions.begin(), sInstanceExtensions.end());
 
+    if constexpr(ENABLE_VALIDATION_LAYERS)
+        extensions.emplace_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+
     return extensions;
 }
 static std::vector<char const *> getRequiredDeviceExtensions()
@@ -347,11 +349,33 @@ static std::pair<VkInstance, bool> createInstance()
         .apiVersion = VK_API_VERSION_1_3
     };
 
+    uint numExtensionsAvailable;
+    vkEnumerateInstanceExtensionProperties(nullptr, &numExtensionsAvailable, nullptr);
+    std::vector<VkExtensionProperties> availableExtensions(numExtensionsAvailable);
+    vkEnumerateInstanceExtensionProperties(nullptr, &numExtensionsAvailable, availableExtensions.data());
+
     auto extensions = getRequiredExtensions();
+
+    bool notFound = false;
+    std::vector<char const *> enabledExtensions;
+    for(auto const &extension : extensions)
+    {
+        if(std::find_if(availableExtensions.begin(), availableExtensions.end(), [&](VkExtensionProperties const &prop){ return std::strcmp(prop.extensionName, extension) == 0;}) == availableExtensions.end())
+        {
+            LOG_ERROR("Required extension \"{}\" not present!", extension);
+            notFound = true;
+        } else {
+            enabledExtensions.emplace_back(extension);
+        }
+    }
+
+
     LOG_INFO("Instance extensions: {}", extensions);
+    if(notFound)
+        LOG_WARN("Enabled extensions: {}", enabledExtensions);
 
     std::vector<char const *> layers;
-    if(ENABLE_VALIDATION_LAYERS)
+    if constexpr(ENABLE_VALIDATION_LAYERS)
     {
         std::vector<char const *> const requestedLayers = {
             "VK_LAYER_KHRONOS_validation"
@@ -382,8 +406,8 @@ static std::pair<VkInstance, bool> createInstance()
         .pApplicationInfo = &appInfo,
         .enabledLayerCount = static_cast<uint32_t>(layers.size()),
         .ppEnabledLayerNames = layers.data(),
-        .enabledExtensionCount = static_cast<uint32_t>(extensions.size()),
-        .ppEnabledExtensionNames = extensions.data(),
+        .enabledExtensionCount = static_cast<uint32_t>(enabledExtensions.size()),
+        .ppEnabledExtensionNames = enabledExtensions.data(),
     };
 
     VkInstance instance;
@@ -1289,9 +1313,6 @@ static void resizeSwapchain(VulkanState &state, VkExtent2D extent)
     state.swapchain.createInfo.imageExtent = extent;
 
     CHK(vkCreateSwapchainKHR(state.device, &state.swapchain.createInfo, ALLOCATOR_HERE, &state.swapchain.swapchain));
-    for (uint i = 0; i < state.swapchain.imageCount; i++) {
-        vkDestroyImageView(state.device, state.swapchain.imageViews[i], ALLOCATOR_HERE);
-    }
     // Image count and image views
     getSwapchainImages(state);
     vkDestroySwapchainKHR(state.device, state.swapchain.createInfo.oldSwapchain, ALLOCATOR_HERE);
@@ -1333,16 +1354,19 @@ int main(int argc, char const **argv)
         }
     }
 
-    VkDebugUtilsMessengerCreateInfoEXT debugMessengerCI{
-        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
-        .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-        // .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-        .messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
-        .pfnUserCallback = vulkanDebugCallback,
-        .pUserData = nullptr
-    };
     VkDebugUtilsMessengerEXT debugMessenger;
-    vkCreateDebugUtilsMessengerEXT(state.instance, &debugMessengerCI, ALLOCATOR_HERE, &debugMessenger);
+    if constexpr(ENABLE_VALIDATION_LAYERS)
+    {
+        VkDebugUtilsMessengerCreateInfoEXT debugMessengerCI{
+            .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+            .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+            // .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+            .messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+            .pfnUserCallback = vulkanDebugCallback,
+            .pUserData = nullptr
+        };
+        vkCreateDebugUtilsMessengerEXT(state.instance, &debugMessengerCI, ALLOCATOR_HERE, &debugMessenger);
+    }
 
     bool physicalDeviceFound = pickPhysicalDevice(state);
     LOG_INFO("Device extensions: {}", getRequiredDeviceExtensions());
@@ -1464,6 +1488,7 @@ int main(int argc, char const **argv)
     VkQueue graphicsQueue = getQueue(state.device, state.queueFamilies.graphics.value());
     VkQueue presentQueue = getQueue(state.device, state.queueFamilies.present.value());
 
+    bool shouldResize = false;
     while(!glfwWindowShouldClose(mainWindow.handle))
     {
         // Poll events
@@ -1471,16 +1496,18 @@ int main(int argc, char const **argv)
         auto prevSize = mainWindow.size;
         glfwGetWindowSize(mainWindow.handle, reinterpret_cast<int *>(&mainWindow.size.x), reinterpret_cast<int *>(&mainWindow.size.y));
         VkExtent2D windowExtent = { .width = mainWindow.size.x, .height = mainWindow.size.y };
+
+        shouldResize = shouldResize || prevSize != mainWindow.size;
         
         // Resize swapchain
-        if(prevSize != mainWindow.size) {
+        if(shouldResize) {
             vkDeviceWaitIdle(state.device);
 
             resizeSwapchain(state, windowExtent);
 
             vmaDestroyImage(state.vma, state.depthImage.image, state.depthImage.allocation);
             vkDestroyImageView(state.device, state.depthImage.view, nullptr);
-            state.depthImage.imageCreateInfo.extent = { windowExtent.width, windowExtent.width, 1 };
+            state.depthImage.imageCreateInfo.extent = { windowExtent.width, windowExtent.height, 1 };
             VmaAllocationCreateInfo allocCI{
                 .flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
                 .usage = VMA_MEMORY_USAGE_AUTO
@@ -1501,7 +1528,15 @@ int main(int argc, char const **argv)
         CHK(vkResetFences(state.device, 1, &fences[frameIndex]));
 
         // Acquire next image
-        CHK(vkAcquireNextImageKHR(state.device, state.swapchain.swapchain, UINT64_MAX, presentSemaphores[frameIndex], VK_NULL_HANDLE, &imageIndex));
+        auto imageAcquireRes = vkAcquireNextImageKHR(state.device, state.swapchain.swapchain, UINT64_MAX, presentSemaphores[frameIndex], VK_NULL_HANDLE, &imageIndex);
+        if(imageAcquireRes == VK_ERROR_OUT_OF_DATE_KHR)
+        {
+            shouldResize = true;
+            // continue;
+        } else if(imageAcquireRes != VK_SUCCESS)
+        {
+            CHK(imageAcquireRes);
+        }
 
         // Update shader data
         shaderData.projection = glm::perspective(glm::radians(45.0f), static_cast<float>(mainWindow.size.x) / mainWindow.size.y, 0.1f, 32.0f);
@@ -1559,7 +1594,7 @@ int main(int argc, char const **argv)
             .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
             .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
             .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-            .clearValue{.color{ 0.0f, 0.0f, 0.2f, 1.0f }}
+            .clearValue{.color{{ 0.0f, 0.4f, 0.0f, 1.0f }}}
         };
         VkRenderingAttachmentInfo depthAttachmentInfo{
             .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -1734,7 +1769,8 @@ int main(int argc, char const **argv)
     vkDestroyDevice(state.device, ALLOCATOR_HERE);
     
     vkDestroySurfaceKHR(state.instance, state.surface, ALLOCATOR_HERE);
-    vkDestroyDebugUtilsMessengerEXT(state.instance, debugMessenger, ALLOCATOR_HERE);
+    if constexpr(ENABLE_VALIDATION_LAYERS)
+        vkDestroyDebugUtilsMessengerEXT(state.instance, debugMessenger, ALLOCATOR_HERE);
 
     vkDestroyInstance(state.instance, ALLOCATOR_HERE);
     glfwDestroyWindow(mainWindow.handle);
