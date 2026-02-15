@@ -41,6 +41,7 @@ set(LEVULKAN_SOURCE
     "src/libraries/stb.c"
 	"src/ModelLoader.cpp"
 	"src/TextureLoader.cpp"
+	"src/Controller.cpp"
 )
 
 add_executable(levulkan ${LEVULKAN_SOURCE})

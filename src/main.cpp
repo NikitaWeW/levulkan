@@ -20,6 +20,8 @@
 #include "Logging.hpp"
 #include "Model.hpp"
 #include "Loaders.hpp"
+#include "IO.hpp"
+#include "Controller.hpp"
 
 template <typename T>
 using SparseSet = ecs::sparse_set<T>;
@@ -142,23 +144,6 @@ constexpr std::array<char const *, 1> sDeviceExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 };
 
-struct Window
-{
-    glm::uvec2 size;
-    GLFWwindow *handle;
-};
-struct EventListener
-{
-    struct KeyEvent
-    {
-        GLFWwindow *window;
-        int key;
-        int scancode;
-        int action;
-        int mods;
-    };
-    std::queue<KeyEvent> keyEvents;
-};
 static bool init()
 {
     #if LOG_FILENAME
@@ -281,6 +266,27 @@ static void keyCallback(GLFWwindow* window, int key, int scancode, int action, i
     for(auto e : reg.view<EventListener>())
         reg.get<EventListener>(e).keyEvents.emplace(window, key, scancode, action, mods);
 }
+static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
+{
+    ecs::registry &reg = *static_cast<ecs::registry *>(glfwGetWindowUserPointer(window));
+    auto cursorPos = glm::dvec2{xpos, ypos};
+    for(auto e : reg.view<EventListener>())
+    {
+        glm::dvec2 delta{0};
+        auto &listener = reg.get<EventListener>(e);
+        if(listener.prevCursorPos != glm::dvec2{-1})
+            delta = cursorPos - listener.prevCursorPos;
+        listener.prevCursorPos = cursorPos;
+        listener.cursorPosEvents.emplace(window, cursorPos, delta);
+    }
+}
+static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
+{
+    ecs::registry &reg = *static_cast<ecs::registry *>(glfwGetWindowUserPointer(window));
+    for(auto e : reg.view<EventListener>())
+        reg.get<EventListener>(e).scrollEvents.emplace(window, glm::dvec2{xoffset, yoffset});
+}
+
 
 static std::vector<char const *> getRequiredExtensions()
 {
@@ -1333,8 +1339,12 @@ int main(int argc, char const **argv)
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     mainWindow.handle = glfwCreateWindow(800, 600, "levulkan", nullptr, nullptr);
     glfwGetWindowSize(mainWindow.handle, reinterpret_cast<int *>(&mainWindow.size.x), reinterpret_cast<int *>(&mainWindow.size.y));
+    if(glfwRawMouseMotionSupported())
+        glfwSetInputMode(mainWindow.handle, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
     glfwSetWindowUserPointer(mainWindow.handle, &sReg);
     glfwSetKeyCallback(mainWindow.handle, keyCallback);
+    glfwSetCursorPosCallback(mainWindow.handle, cursorPosCallback);
+    glfwSetScrollCallback(mainWindow.handle, scrollCallback);
 
     // Actual vulkan setup
 
@@ -1482,8 +1492,10 @@ int main(int argc, char const **argv)
 
     uint frameIndex = 0;
     uint imageIndex = 0;
+    float deltatime = 1e-6;
 
-    glm::vec3 camPos{0, 1, 4};
+    Controller::Camera &camera = sReg.get<Controller::Camera>(Controller::createCamera(sReg, {0, 2, 4}, {0, 0, 0}));
+    Controller cameraController;
 
     VkQueue graphicsQueue = getQueue(state.device, state.queueFamilies.graphics.value());
     VkQueue presentQueue = getQueue(state.device, state.queueFamilies.present.value());
@@ -1491,6 +1503,8 @@ int main(int argc, char const **argv)
     bool shouldResize = false;
     while(!glfwWindowShouldClose(mainWindow.handle))
     {
+        auto start = std::chrono::high_resolution_clock::now();
+        
         // Poll events
         glfwPollEvents();
         auto prevSize = mainWindow.size;
@@ -1539,8 +1553,9 @@ int main(int argc, char const **argv)
         }
 
         // Update shader data
-        shaderData.projection = glm::perspective(glm::radians(45.0f), static_cast<float>(mainWindow.size.x) / mainWindow.size.y, 0.1f, 32.0f);
-        shaderData.view = glm::translate(glm::mat4(1.0f), camPos);
+        cameraController.update(sReg, deltatime);
+        shaderData.projection = camera.projMat;
+        shaderData.view = camera.viewMat;
         for (auto i = 0; i < 3; i++) {
             auto instancePos = glm::vec3((float)(i - 1) * 3.0f, 0.0f, 0.0f);
             shaderData.model[i] = glm::translate(glm::mat4(1.0f), instancePos) * glm::mat4_cast(glm::quat(glm::vec3{static_cast<float>(i*1234%14127), static_cast<float>(i*2972%91248), static_cast<float>(i*4124%87322)}));
@@ -1697,6 +1712,7 @@ int main(int argc, char const **argv)
             .pImageIndices = &imageIndex
         };
         CHK(vkQueuePresentKHR(presentQueue, &presentInfo));
+        deltatime = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - start).count() * 1e-9f;
     }
 
     CHK(vkDeviceWaitIdle(state.device));
