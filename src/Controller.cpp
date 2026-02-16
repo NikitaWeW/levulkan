@@ -7,10 +7,12 @@ ecs::entity Controller::createCamera(ecs::registry &reg, glm::vec3 pos, glm::vec
 {
     auto e = reg.create<CAMERA_COMPONENTS>();
     auto up = glm::abs(glm::dot(glm::normalize(target - pos), glm::vec3{0,1,0})) > 0.99 ? glm::vec3{1,0,0} : glm::vec3{0,1,0};
+    auto q = glm::quat_cast(glm::lookAt(pos, target, up));
     reg.get<Controller::Camera>(e) = {
         .window = reg.view<Window>().at(0),
         .position = pos,
-        .orientation = glm::quat_cast(glm::lookAt(pos, target, up)),
+        // .pitchYaw = glm::vec2(glm::degrees(glm::pitch(q)), glm::degrees(glm::yaw(q)))
+        .orientation = q,
     };
     return e;
 }
@@ -23,9 +25,10 @@ void Controller::update(ecs::registry &reg, float dt)
         auto &listener = reg.get<EventListener>(e_camera);
         auto &window = reg.get<Window>(camera.window);
 
-        glm::vec3 right   = glm::normalize(camera.orientation) * glm::vec3{1, 0, 0};
-        glm::vec3 up      = glm::normalize(camera.orientation) * glm::vec3{0, 1, 0};
-        glm::vec3 forward = glm::normalize(camera.orientation) * glm::vec3{0, 0,-1};
+        auto invView = glm::mat3(glm::inverse(camera.viewMat));
+        glm::vec3 right   = invView * glm::vec3{1, 0, 0};
+        glm::vec3 up      = invView * glm::vec3{0, 1, 0};
+        glm::vec3 forward = invView * glm::vec3{0, 0,-1};
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -69,6 +72,9 @@ void Controller::update(ecs::registry &reg, float dt)
                 );
                 if(glm::abs(glm::vec3(glm::inverse(glm::mat4_cast(newOrientation)) * glm::vec4{0,0,-1,0}).y) < 0.99)
                     camera.orientation = {newOrientation};
+
+                // if(abs(camera.pitchYaw.x) < 89.999)
+                //     camera.pitchYaw += offset;
             }
             camera.firstTimeMovingMouse = false;
         }
@@ -88,10 +94,15 @@ void Controller::update(ecs::registry &reg, float dt)
 
         camera.projMat = glm::perspective<float>(glm::radians(camera.fov), (float) window.size.x / (float) window.size.y, camera.znear, camera.zfar);
         camera.viewMat = glm::mat4_cast(glm::normalize(camera.orientation)) * glm::translate(glm::mat4(1.0f), -camera.position);
+        camera.projMat[1][1] *= -1;
+        // camera.viewMat = 
+        //     glm::rotate(glm::mat4{1.0f}, glm::radians(camera.pitchYaw.x), {1,0,0}) * 
+        //     glm::rotate(glm::mat4{1.0f}, glm::radians(camera.pitchYaw.y), {0,1,0}) * 
+        //     glm::translate(glm::mat4(1.0f), -camera.position);
 
         // LOG_VAR(camera.position);
         // LOG_VAR(velocity);
         // LOG_VAR(glm::mat4_cast(glm::normalize(camera.orientation)));
-        LOG_VAR(glm::mat4_cast(glm::normalize(camera.orientation)));
+        // LOG_VAR(camera.viewMat);
     }
 }

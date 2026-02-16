@@ -13,6 +13,7 @@ public:
         glm::mat4 viewMat{1.0f};
         glm::vec3 position;
         glm::quat orientation;
+        // glm::vec2 pitchYaw;
 
         float fov = 45;
         float speed = 5;

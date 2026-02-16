@@ -48,6 +48,7 @@ add_executable(levulkan ${LEVULKAN_SOURCE})
 target_link_libraries(levulkan PRIVATE spdlog nicecs::ecs glm assimp meshoptimizer)
 target_link_libraries(levulkan PRIVATE glfw Vulkan::Headers volk GPUOpen::VulkanMemoryAllocator)
 target_include_directories(levulkan PRIVATE "src")
+target_compile_definitions(levulkan PRIVATE GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_ENABLE_EXPERIMENTAL)
 
 install(TARGETS levulkan DESTINATION .)
 

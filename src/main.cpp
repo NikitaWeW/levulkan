@@ -1558,7 +1558,7 @@ int main(int argc, char const **argv)
         shaderData.view = camera.viewMat;
         for (auto i = 0; i < 3; i++) {
             auto instancePos = glm::vec3((float)(i - 1) * 3.0f, 0.0f, 0.0f);
-            shaderData.model[i] = glm::translate(glm::mat4(1.0f), instancePos) * glm::mat4_cast(glm::quat(glm::vec3{static_cast<float>(i*1234%14127), static_cast<float>(i*2972%91248), static_cast<float>(i*4124%87322)}));
+            shaderData.model[i] = glm::translate(glm::mat4(1.0f), instancePos)/*  * glm::mat4_cast(glm::quat(glm::vec3{static_cast<float>(i*1234%14127), static_cast<float>(i*2972%91248), static_cast<float>(i*4124%87322)})) */;
         }
         std::memcpy(shaderDataBuffers[frameIndex].mapped, &shaderData, sizeof(ShaderUniformData));
 
@@ -1634,6 +1634,7 @@ int main(int argc, char const **argv)
 
         vkCmdBeginRendering(cb, &renderingInfo);
 
+        // FIXME: Image is flipped. Probably some coordinate system mismatch
         VkViewport vp{
             .width = static_cast<float>(mainWindow.size.x),
             .height = static_cast<float>(mainWindow.size.y),
