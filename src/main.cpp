@@ -1634,10 +1634,11 @@ int main(int argc, char const **argv)
 
         vkCmdBeginRendering(cb, &renderingInfo);
 
-        // FIXME: Image is flipped. Probably some coordinate system mismatch
         VkViewport vp{
+            .x = 0,
+            .y = static_cast<float>(mainWindow.size.y),
             .width = static_cast<float>(mainWindow.size.x),
-            .height = static_cast<float>(mainWindow.size.y),
+            .height = -static_cast<float>(mainWindow.size.y),
             .minDepth = 0.0f,
             .maxDepth = 1.0f
         };

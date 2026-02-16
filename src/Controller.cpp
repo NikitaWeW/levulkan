@@ -94,7 +94,6 @@ void Controller::update(ecs::registry &reg, float dt)
 
         camera.projMat = glm::perspective<float>(glm::radians(camera.fov), (float) window.size.x / (float) window.size.y, camera.znear, camera.zfar);
         camera.viewMat = glm::mat4_cast(glm::normalize(camera.orientation)) * glm::translate(glm::mat4(1.0f), -camera.position);
-        camera.projMat[1][1] *= -1;
         // camera.viewMat = 
         //     glm::rotate(glm::mat4{1.0f}, glm::radians(camera.pitchYaw.x), {1,0,0}) * 
         //     glm::rotate(glm::mat4{1.0f}, glm::radians(camera.pitchYaw.y), {0,1,0}) * 
