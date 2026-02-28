@@ -11,17 +11,16 @@ The project uses cmake with cpm.cmake.
 cd levulkan
 cmake -S . -B build
 cmake --build build
-cmake --install build --prefix install
-install/levulkan # profit
+build/levulkan # profit
 ```
-Vulkan loader and headers are included.
 
 ### Requirements
+- Most of the packages are managed by cpm.cmake
 - Cmake
 - Build system (e.g. makefiles, visual studio, ninja, etc.)
-- C++20 compiler.
-- Validation layers (VK_LAYER_KHRONOS_validation) installed for validation.
-- GLSL shader compiler (set the SHADER_COMPILER variable to use a custom path), default: slangc
+- C++ 20 compiler
+- Validation layers (VK_LAYER_KHRONOS_validation) installed for validation
+- [shaderc](https://github.com/google/shaderc/) installed and available for cmake.
 
 ## Resources I use
 

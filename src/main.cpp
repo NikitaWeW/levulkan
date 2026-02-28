@@ -3,9 +3,6 @@
 #include "nicecs/ecs.hpp"
 #include "glm/glm.hpp"
 #include "glm/gtc/quaternion.hpp"
-#include "assimp/Importer.hpp"
-#include "assimp/scene.h"
-#include "assimp/postprocess.h"
 
 #include "volk.h"
 #include "libraries/vk_enum_string_helper.h"
@@ -16,6 +13,10 @@
 #define VMA_VULKAN_VERSION 1003000
 #include "vk_mem_alloc.h"
 #include "GLFW/glfw3.h"
+#include "glslang/Public/ShaderLang.h"
+#include "glslang/Public/ResourceLimits.h"
+#include "glslang/SPIRV/GlslangToSpv.h"
+#include "libraries/DirStackFileIncluder.h"
 
 #include "Logging.hpp"
 #include "Model.hpp"
@@ -68,7 +69,7 @@ struct BufferAllocation
     VmaAllocation allocation;
     VkBuffer buffer;
     VkDeviceAddress deviceAddress = 0;
-    size_t size;
+    size_t size = 0;
     void *mapped = nullptr;
 };
 struct VulkanMesh
@@ -130,6 +131,53 @@ struct VulkanState
 
     ImageAllocation depthImage;
 };
+struct Shader
+{
+    struct Binary
+    {
+        std::vector<uint32_t> spirv;
+        VkShaderModule module = VK_NULL_HANDLE;
+        std::string path;
+    };
+    struct Source
+    {
+        std::string data;
+        std::string path;
+    };
+    struct Stage
+    {
+        VkShaderStageFlagBits stage;
+        Source src;
+        Binary bin;
+    };
+    bool valid = false;
+    std::vector<Stage> stages;
+    std::string dirPath;
+};
+struct PushConstants
+{
+    VkDeviceAddress matrixDataReference;
+};
+struct MatrixData
+{
+    glm::mat4 uProjMat;
+    glm::mat4 uViewMat;
+    glm::mat4 uModelMat;
+    glm::mat4 uNormMat;
+};
+struct Transform
+{
+    glm::vec3 position{0};
+    glm::quat orientation{1, 0, 0, 0};
+    glm::vec3 scale{1};
+    inline glm::mat4 getMat() const {
+        return glm::translate(glm::mat4{1.0f}, position) * glm::mat4_cast(orientation) * glm::scale(glm::mat4{1.0f}, scale);
+    };
+};
+struct ModelInstance
+{
+    ecs::entity eModel = 0;
+};
 
 static ecs::registry sReg;
 
@@ -138,12 +186,70 @@ static ecs::registry sReg;
 
 constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
 constexpr bool ENABLE_VALIDATION_LAYERS = true;
-constexpr std::array<char const *, 0> sInstanceExtensions = {
+constexpr std::array<char const *, 0> INSTANCE_EXTENSIONS = {
 };
-constexpr std::array<char const *, 1> sDeviceExtensions = {
+constexpr std::array<char const *, 1> DEVICE_EXTENSIONS = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 };
+constexpr std::string_view SHADER_SRC_DIR = "shaders";
+constexpr std::string_view SHADER_BIN_DIR = "shaders-bin";
+constexpr bool COMPILE_SHADERS = true; // Set to false when releasing
+constexpr int DEFAULT_GLSL_VERSION = 130;
+constexpr bool GENERATE_SHADER_DEBUG_INFO = true;
+constexpr std::array<std::string_view, 1> SHADER_INCLUDE_DIRS = {
+    SHADER_SRC_DIR
+};
 
+const std::unordered_map<std::string, VkShaderStageFlagBits> gExtensionToVulkanStage = {
+    {".vert" , VK_SHADER_STAGE_VERTEX_BIT          },
+    {".vsh"  , VK_SHADER_STAGE_VERTEX_BIT          },
+    {".vs"   , VK_SHADER_STAGE_VERTEX_BIT          },
+    {".geom" , VK_SHADER_STAGE_GEOMETRY_BIT        },
+    {".gsh"  , VK_SHADER_STAGE_GEOMETRY_BIT        },
+    {".gs"   , VK_SHADER_STAGE_GEOMETRY_BIT        },
+    {".frag" , VK_SHADER_STAGE_FRAGMENT_BIT        },
+    {".fsh"  , VK_SHADER_STAGE_FRAGMENT_BIT        },
+    {".fs"   , VK_SHADER_STAGE_FRAGMENT_BIT        },
+    {".comp" , VK_SHADER_STAGE_COMPUTE_BIT         },
+    {".csh"  , VK_SHADER_STAGE_COMPUTE_BIT         },
+    {".cs"   , VK_SHADER_STAGE_COMPUTE_BIT         },
+    {".rgen" , VK_SHADER_STAGE_RAYGEN_BIT_KHR      },
+    {".rinit", VK_SHADER_STAGE_INTERSECTION_BIT_KHR},
+    {".rahit", VK_SHADER_STAGE_ANY_HIT_BIT_KHR     },
+    {".rchit", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR },
+    {".rmiss", VK_SHADER_STAGE_MISS_BIT_KHR        },
+    {".rcall", VK_SHADER_STAGE_CALLABLE_BIT_KHR    },
+};
+const std::unordered_map<VkShaderStageFlagBits, EShLanguage> gVulkanStageToGlslang = {
+    {VK_SHADER_STAGE_VERTEX_BIT          , EShLangVertex    },
+    {VK_SHADER_STAGE_VERTEX_BIT          , EShLangVertex    },
+    {VK_SHADER_STAGE_VERTEX_BIT          , EShLangVertex    },
+    {VK_SHADER_STAGE_GEOMETRY_BIT        , EShLangGeometry  },
+    {VK_SHADER_STAGE_GEOMETRY_BIT        , EShLangGeometry  },
+    {VK_SHADER_STAGE_GEOMETRY_BIT        , EShLangGeometry  },
+    {VK_SHADER_STAGE_FRAGMENT_BIT        , EShLangFragment  },
+    {VK_SHADER_STAGE_FRAGMENT_BIT        , EShLangFragment  },
+    {VK_SHADER_STAGE_FRAGMENT_BIT        , EShLangFragment  },
+    {VK_SHADER_STAGE_COMPUTE_BIT         , EShLangCompute   },
+    {VK_SHADER_STAGE_COMPUTE_BIT         , EShLangCompute   },
+    {VK_SHADER_STAGE_COMPUTE_BIT         , EShLangCompute   },
+    {VK_SHADER_STAGE_RAYGEN_BIT_KHR      , EShLangRayGen    },
+    {VK_SHADER_STAGE_INTERSECTION_BIT_KHR, EShLangIntersect },
+    {VK_SHADER_STAGE_ANY_HIT_BIT_KHR     , EShLangAnyHit    },
+    {VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR , EShLangClosestHit},
+    {VK_SHADER_STAGE_MISS_BIT_KHR        , EShLangMiss      },
+    {VK_SHADER_STAGE_CALLABLE_BIT_KHR    , EShLangCallable  },
+};
+
+static Transform lookat(glm::vec3 pos, glm::vec3 center)
+{
+    auto dir = center - pos;
+    auto up = glm::abs(glm::dot(dir, {0,1,0})) > 0.999 ? glm::vec3{1,0,0} : glm::vec3{0,1,0};
+    return {
+        .position = pos,
+        .orientation = glm::normalize(glm::quatLookAt(dir, up))
+    };
+}
 static bool init()
 {
     #if LOG_FILENAME
@@ -173,39 +279,6 @@ static bool init()
     }
 
     return true;
-}
-
-
-static void insertImageMemoryBarrier(
-    VkCommandBuffer         command_buffer,
-    VkImage                 image,
-    VkAccessFlags           src_access_mask,
-    VkAccessFlags           dst_access_mask,
-    VkImageLayout           old_layout,
-    VkImageLayout           new_layout,
-    VkPipelineStageFlags    src_stage_mask,
-    VkPipelineStageFlags    dst_stage_mask,
-    VkImageSubresourceRange subresource_range)
-{
-    VkImageMemoryBarrier2 barrier{
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-        .srcStageMask = src_stage_mask,
-        .srcAccessMask = src_access_mask,
-        .dstStageMask = dst_stage_mask,
-        .dstAccessMask = dst_access_mask,
-        .oldLayout = old_layout,
-        .newLayout = new_layout,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .image = image,
-        .subresourceRange = subresource_range
-    };
-    VkDependencyInfo dependency{
-        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .imageMemoryBarrierCount = 1,
-        .pImageMemoryBarriers = &barrier,
-    };
-    vkCmdPipelineBarrier2(command_buffer, &dependency);
 }
 static VkDeviceQueueCreateInfo makeDeviceQueueCreateInfo(uint32_t index)
 {
@@ -294,7 +367,7 @@ static std::vector<char const *> getRequiredExtensions()
     const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
     auto extensions = std::vector<char const *>(glfwExtensions, glfwExtensions + glfwExtensionCount);
 
-    extensions.insert(extensions.end(), sInstanceExtensions.begin(), sInstanceExtensions.end());
+    extensions.insert(extensions.end(), INSTANCE_EXTENSIONS.begin(), INSTANCE_EXTENSIONS.end());
 
     if constexpr(ENABLE_VALIDATION_LAYERS)
         extensions.emplace_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -303,7 +376,7 @@ static std::vector<char const *> getRequiredExtensions()
 }
 static std::vector<char const *> getRequiredDeviceExtensions()
 {
-    return std::vector<char const *>(sDeviceExtensions.begin(), sDeviceExtensions.end());
+    return std::vector<char const *>(DEVICE_EXTENSIONS.begin(), DEVICE_EXTENSIONS.end());
 }
 static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -457,7 +530,7 @@ static VkSurfaceFormatKHR chooseSwapSurfaceFormat(SwapchainSupportDetails const 
 static VkPresentModeKHR chooseSwapPresentMode(SwapchainSupportDetails const &details)
 {
     for (const auto& availablePresentMode : details.presentModes) {
-        if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
+        if(availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
             return availablePresentMode;
     }
 
@@ -477,7 +550,7 @@ static SwapchainSupportDetails getSwapchainSupport(VkPhysicalDevice const &dev, 
     uint32_t presentModeCount;
     vkGetPhysicalDeviceSurfacePresentModesKHR(dev, state.surface, &presentModeCount, nullptr);
 
-    if (presentModeCount != 0) {
+    if(presentModeCount != 0) {
         details.presentModes.resize(presentModeCount);
         vkGetPhysicalDeviceSurfacePresentModesKHR(dev, state.surface, &presentModeCount, details.presentModes.data());
     }
@@ -583,7 +656,7 @@ static VkQueue getQueue(VkDevice dev, uint32_t index)
 }
 static VkExtent2D chooseExtent(SwapchainSupportDetails const &details, Window const &window)
 {
-    if (details.capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
+    if(details.capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
         return details.capabilities.currentExtent;
     } else {
         VkExtent2D actualExtent = {
@@ -677,7 +750,8 @@ static bool createSwapchain(VulkanState &state, Window const &window)
 
     return true;
 }
-static std::vector<char> readFileBinary(std::string_view filename) 
+template<typename T = char>
+static std::vector<T> readFileBinary(std::string_view filename) 
 {
     std::ifstream file(std::string{filename}, std::ios::ate | std::ios::binary);
 
@@ -688,27 +762,251 @@ static std::vector<char> readFileBinary(std::string_view filename)
     }
 
     size_t fileSize = static_cast<size_t>(file.tellg());
-    std::vector<char> buffer(fileSize);
+    std::vector<T> buffer((fileSize + sizeof(T) - 1) / sizeof(T));
 
     file.seekg(0);
-    file.read(buffer.data(), fileSize);
+    file.read(reinterpret_cast<char *>(buffer.data()), fileSize);
 
     return buffer;
 }
-static VkShaderModule createShaderModule(VkDevice const &device, std::vector<char> const &code) 
+static std::string readFileString(std::string_view filename)
 {
-    VkShaderModuleCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    createInfo.codeSize = code.size();
-    createInfo.pCode = reinterpret_cast<uint32_t const *>(code.data());
+    std::ifstream file(std::string{filename});
+
+    if(!file)
+    {
+        LOG_ERROR("Failed to open file \"{}\"", filename);
+        return {};
+    }
+
+    std::stringstream ss;
+    ss << file.rdbuf();
+
+    return ss.str();
+}
+static void writeFileBinary(std::string_view filename, char const *data, size_t size)
+{
+    auto dir = filename.substr(0, filename.find_last_of('.'));
+    std::filesystem::create_directories(dir);
+    std::ofstream file(std::string{filename}, std::ios::out | std::ios::binary);
+    assert(file);
+
+    file.write(data, size);
+}
+static std::string toBinPath(std::string_view srcPath, std::string_view srcDir = SHADER_SRC_DIR, std::string_view dstDir = SHADER_BIN_DIR)
+{
+    std::string binPath(srcPath);
+    {
+        auto pos = binPath.find_first_of(srcDir);
+        if(pos == std::string::npos)
+        {
+            LOG_ERROR("Path \"{}\" is not in the source dir \"{}\"", srcPath, srcDir);
+        } else {
+            binPath.erase(pos, srcDir.size());
+            binPath.insert(pos, dstDir);
+        }
+    }
     
-    VkShaderModule module;
-    auto res = vkCreateShaderModule(device, &createInfo, ALLOCATOR_HERE, &module);
+    LOG_VAR(binPath);
+    return binPath;
+}
+static void makeShaderModules(VkDevice device, std::vector<Shader::Stage> &stages)
+{
+    for(auto &stage : stages)
+    {
+        VkShaderModuleCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = stage.bin.spirv.size() * sizeof(stage.bin.spirv[0]);
+        createInfo.pCode = stage.bin.spirv.data();
+        CHK(vkCreateShaderModule(device, &createInfo, ALLOCATOR_HERE, &stage.bin.module));
+    }
+}
+template<typename T, typename P>
+static bool contains(T const &container, P pred)
+{
+    return std::find_if(container.begin(), container.end(), pred) != container.end();
+}
+static Shader compileShaders(std::string_view path)
+{
+    Shader shader{
+        .valid = false,
+        .dirPath = std::string{path},
+    };
 
-    if(res != VK_SUCCESS)
-        LOG_ERROR("Failed to create a shader module: {}", string_VkResult(res));
+    // Collect stages
+    shader.stages.reserve(3);
+    for(auto const &directoryEntry : std::filesystem::recursive_directory_iterator{path}) {
+        if(!std::filesystem::is_regular_file(directoryEntry.path())) continue; 
+        std::string extension = directoryEntry.path().string().substr(directoryEntry.path().string().find_last_of('.'), directoryEntry.path().string().size());
+        if(gExtensionToVulkanStage.find(extension) == gExtensionToVulkanStage.end()) 
+            continue;
+        auto stage = gExtensionToVulkanStage.at(extension);
+        if(contains(shader.stages, [&](Shader::Stage const &s){ return s.stage == stage; }))
+        {
+            LOG_WARN("Multiple shader files of same stage are not supported!");
+            continue;
+        }
+        auto filePath = directoryEntry.path().string();
+        auto source = readFileString(filePath);
+        source.push_back('\0');
 
-    return module;
+        shader.stages.emplace_back(Shader::Stage{
+            .stage = stage,
+            .src = {
+                .data = source,
+                .path = filePath,
+            },
+        });
+    }
+
+    // Compile shaders
+    EShMessages messages = static_cast<EShMessages>(EShMsgDefault | EShMsgRelaxedErrors | EShMsgSpvRules | EShMsgVulkanRules);
+    std::vector<glslang::TShader> glslShaders; // Temporary storage for 
+    glslang::TProgram glslProgram;
+    glslShaders.reserve(shader.stages.size());
+    DirStackFileIncluder includer;
+    std::for_each(SHADER_INCLUDE_DIRS.rbegin(), SHADER_INCLUDE_DIRS.rend(), [&includer](std::string_view dir) {
+        includer.pushExternalLocalDirectory(std::string{dir}); });
+    std::string output;
+    bool compileFailed = false;
+    for(auto &stage : shader.stages)
+    {
+        if(gVulkanStageToGlslang.find(stage.stage) == gVulkanStageToGlslang.end())
+        {
+            LOG_WARN("Unknown shader stage: {}", string_VkShaderStageFlagBits(stage.stage));
+            continue;
+        }
+        glslang::TShader shader(gVulkanStageToGlslang.at(stage.stage));
+        shader.addSourceText(stage.src.data.c_str(), stage.src.data.length());
+
+        shader.setUniformLocationBase(0);
+
+        if(shader.preprocess(GetDefaultResources(), DEFAULT_GLSL_VERSION, ENoProfile, false, false, messages, &output, includer))
+        {
+            if(!output.empty())
+                LOG_WARN(output);
+        } else {
+            compileFailed = true;
+        }
+        if(shader.getInfoLog())
+            LOG_ERROR(shader.getInfoLog());
+        if(shader.getInfoDebugLog())
+            LOG_ERROR(shader.getInfoDebugLog());
+
+        if(!shader.parse(GetDefaultResources(), DEFAULT_GLSL_VERSION, false, messages, includer))
+        {
+            compileFailed = true;
+        }
+
+        if(shader.getInfoLog())
+            LOG_ERROR(shader.getInfoLog());
+        if(shader.getInfoDebugLog())
+            LOG_ERROR(shader.getInfoDebugLog());
+
+        glslShaders.emplace_back(std::move(shader));
+        glslProgram.addShader(&glslShaders.back());
+    }
+    if(compileFailed)
+    {
+        LOG_ERROR("Failed to parse shaders in \"{}\"!", path);
+        return shader;
+    }
+
+    bool linkFailed = true;
+
+    if(!glslProgram.link(messages))
+        linkFailed = true;
+
+    if(!glslProgram.mapIO())
+        linkFailed = true;
+
+    // Report
+    if(glslProgram.getInfoLog())
+        LOG_ERROR(glslProgram.getInfoLog());
+    if(glslProgram.getInfoDebugLog())
+        LOG_ERROR(glslProgram.getInfoDebugLog());
+
+    // Reflect
+    // glslProgram.buildReflection(EShReflectionDefault);
+    // glslProgram.dumpReflection();
+
+    if(linkFailed)
+    {
+        LOG_ERROR("Failed to link shaders in \"{}\"!", path);
+        return shader;
+    }
+
+    for(auto &stage : shader.stages) 
+    {
+        auto *intermediate = glslProgram.getIntermediate((EShLanguage)stage.stage);
+        spv::SpvBuildLogger logger;
+        glslang::SpvOptions spvOptions;
+        if(GENERATE_SHADER_DEBUG_INFO)
+        {
+            spvOptions.generateDebugInfo = true;
+            spvOptions.emitNonSemanticShaderDebugInfo = true;
+        } else {
+            spvOptions.stripDebugInfo = true;
+        }
+        spvOptions.disableOptimizer = false;
+        spvOptions.optimizeSize = 1;
+        spvOptions.disassemble = false;
+        spvOptions.validate = true;
+        spvOptions.compileOnly = false;
+        glslang::GlslangToSpv(*intermediate, stage.bin.spirv, &logger, &spvOptions);
+        stage.bin.path = toBinPath(stage.src.path) + ".spv";
+        writeFileBinary(stage.bin.path, reinterpret_cast<char const *>(stage.bin.spirv.data()), stage.bin.spirv.size() * sizeof(stage.bin.spirv[0]));
+        LOG_TRACE("Wrote shader binary to \"{}\"", stage.bin.path);
+    }
+
+    shader.valid = true;
+    return shader;
+}
+/// @brief Compile all the shaders from the given directory to spirv and put it into VkShaderModule. Cache at SHADER_BIN_DIR.
+/// @param path The path to the directory in the shader source tree
+static Shader createShader(VkDevice const &device, std::string_view path) 
+{
+    assert(std::filesystem::exists(path));
+    assert(std::filesystem::is_directory(path));
+
+    Shader shader;
+    shader.dirPath = toBinPath(path);
+    if(std::filesystem::exists(shader.dirPath))
+    {
+        if(!std::filesystem::is_directory(shader.dirPath))
+        {
+            LOG_ERROR("\"{}\" exists but is not a directory!");
+        } else {
+            for(auto const &directoryEntry : std::filesystem::recursive_directory_iterator{path}) {
+                if(!std::filesystem::is_regular_file(directoryEntry.path())) continue; 
+                std::string extension = directoryEntry.path().string().substr(directoryEntry.path().string().find_last_of('.'), directoryEntry.path().string().size());
+                for([[maybe_unused]] auto c : std::string_view(".spv"))
+                    extension.pop_back();
+    
+                if(gExtensionToVulkanStage.find(extension) == gExtensionToVulkanStage.end()) 
+                    continue;
+                auto stage = gExtensionToVulkanStage.at(extension);
+                auto binPath = directoryEntry.path().string();
+                shader.stages.emplace_back(Shader::Stage{
+                    .stage = stage,
+                    .bin = {
+                        .spirv = readFileBinary<uint32_t>(binPath),
+                        .path = binPath,
+                    }
+                });
+            }
+        }
+    }
+    if(shader.stages.empty() && COMPILE_SHADERS)
+        shader = compileShaders(path);
+    else if(shader.stages.empty())
+    {
+        LOG_ERROR("Failed to collect shaders from \"{}\"!", shader.dirPath);
+    }
+
+    makeShaderModules(device, shader.stages);
+
+    return shader;
 }
 void createCommandPool(VulkanState &state)
 {
@@ -804,15 +1102,60 @@ BufferAllocation allocateBuffer(VulkanState &state, std::vector<T> const &data)
     std::memcpy(bufferPtr, data.data(), buffer.size);
     vmaUnmapMemory(state.vma, buffer.allocation);
 
-/* 
-    VkBufferDeviceAddressInfo bdaInfo{
-        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
-        .buffer = buffer.buffer
+    return buffer;
+}
+template<typename T>
+BufferAllocation allocateBuffer(VulkanState &state, T &&obj)
+{
+    BufferAllocation buffer;
+    buffer.size = sizeof(T);
+
+    VkBufferCreateInfo ci{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = buffer.size,
+        .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
     };
-    buffer.deviceAddress = vkGetBufferDeviceAddress(state.device, &bdaInfo);
- */
+    VmaAllocationCreateInfo allocCI{
+        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO
+    };
+
+    CHK(vmaCreateBuffer(state.vma, &ci, &allocCI, &buffer.buffer, &buffer.allocation, nullptr));
+
+    void *bufferPtr = nullptr;
+    CHK(vmaMapMemory(state.vma, buffer.allocation, &bufferPtr));
+    std::memcpy(bufferPtr, static_cast<void *>(&obj), buffer.size);
+    vmaUnmapMemory(state.vma, buffer.allocation);
 
     return buffer;
+}
+template<typename T>
+BufferAllocation allocateBuffer(VulkanState &state)
+{
+    BufferAllocation buffer;
+    buffer.size = sizeof(T);
+
+    VkBufferCreateInfo ci{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = buffer.size,
+        .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+    };
+    VmaAllocationCreateInfo allocCI{
+        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO
+    };
+
+    CHK(vmaCreateBuffer(state.vma, &ci, &allocCI, &buffer.buffer, &buffer.allocation, nullptr));
+
+    return buffer;
+}
+void getBDA(VkDevice dev, BufferAllocation &alloc)
+{
+    VkBufferDeviceAddressInfo bdaInfo{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+        .buffer = alloc.buffer
+    };
+    alloc.deviceAddress = vkGetBufferDeviceAddress(dev, &bdaInfo);
 }
 static ImageAllocation allocateTexture(VulkanState &state, ecs::entity eTexture)
 {
@@ -1027,16 +1370,29 @@ static void makeDescriptors(VulkanState &state)
         .bindingCount = 1,
         .pBindingFlags = &descVariableFlag
     };
-    VkDescriptorSetLayoutBinding descLayoutBindingTex{
-        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .descriptorCount = static_cast<uint32_t>(state.textureDescriptorInfos.size()),
-        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
+
+    std::array<VkDescriptorSetLayoutBinding, 1> descSetLayoutBindings{
+        VkDescriptorSetLayoutBinding{
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = static_cast<uint32_t>(state.textureDescriptorInfos.size()),
+            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
+        },
+        // VkDescriptorSetLayoutBinding{
+        //     .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        //     .descriptorCount = 1,
+        //     .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+        // },
+        // VkDescriptorSetLayoutBinding{
+        //     .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        //     .descriptorCount = 1,
+        //     .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
+        // },
     };
     VkDescriptorSetLayoutCreateInfo descLayoutTexCI{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .pNext = &descBindingFlags,
-        .bindingCount = 1,
-        .pBindings = &descLayoutBindingTex
+        .bindingCount = descSetLayoutBindings.size(),
+        .pBindings = descSetLayoutBindings.data()
     };
     CHK(vkCreateDescriptorSetLayout(state.device, &descLayoutTexCI, nullptr, &state.descriptorSetLayoutTex));
 
@@ -1187,34 +1543,37 @@ static void makeDepthAttachment(VulkanState &state, VkExtent2D extent)
     CHK(vkCreateImageView(state.device, &depthViewCI, ALLOCATOR_HERE, &state.depthImage.view));
 }
 
-static void makePipeline(VulkanState &state, VkShaderModule shaderModule, VkExtent2D extent)
+static void makePipeline(VulkanState &state, Shader const &shader, VkExtent2D extent)
 {
-    VkPushConstantRange pushConstantRange{
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-        .size = sizeof(VkDeviceAddress)
+    std::array<VkPushConstantRange, 1> pushConstantRanges{
+        VkPushConstantRange{
+            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            .size = sizeof(PushConstants)
+        }
     };
+
     VkPipelineLayoutCreateInfo pipelineLayoutCI{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
         .pSetLayouts = &state.descriptorSetLayoutTex,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges = &pushConstantRange
+        .pushConstantRangeCount = pushConstantRanges.size(),
+        .pPushConstantRanges = pushConstantRanges.data()
     };
     CHK(vkCreatePipelineLayout(state.device, &pipelineLayoutCI, nullptr, &state.pipelineLayout));
 
     // Bindings
     const std::array<VkVertexInputBindingDescription, 4> vertexInputBindings = {
         VkVertexInputBindingDescription{ 0, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX },
-        VkVertexInputBindingDescription{ 1, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX },
-        VkVertexInputBindingDescription{ 2, sizeof(glm::vec2), VK_VERTEX_INPUT_RATE_VERTEX },
+        VkVertexInputBindingDescription{ 1, sizeof(glm::vec2), VK_VERTEX_INPUT_RATE_VERTEX },
+        VkVertexInputBindingDescription{ 2, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX },
         VkVertexInputBindingDescription{ 3, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX },
     };
 
     // Attributes
     const std::array<VkVertexInputAttributeDescription, 4> vertexInputAttributes = {
         VkVertexInputAttributeDescription{ 0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0 },
-        VkVertexInputAttributeDescription{ 1, 1, VK_FORMAT_R32G32B32_SFLOAT, 0 },
-        VkVertexInputAttributeDescription{ 2, 2, VK_FORMAT_R32G32_SFLOAT, 0 },
+        VkVertexInputAttributeDescription{ 1, 2, VK_FORMAT_R32G32_SFLOAT, 0 },
+        VkVertexInputAttributeDescription{ 2, 1, VK_FORMAT_R32G32B32_SFLOAT, 0 },
         VkVertexInputAttributeDescription{ 3, 3, VK_FORMAT_R32G32B32A32_SFLOAT, 0 },
     };
 
@@ -1232,18 +1591,15 @@ static void makePipeline(VulkanState &state, VkShaderModule shaderModule, VkExte
         .primitiveRestartEnable = VK_FALSE
     };
 
-    std::vector<VkPipelineShaderStageCreateInfo> shaderStages{
-        { 
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-            .stage = VK_SHADER_STAGE_VERTEX_BIT,
-            .module = shaderModule, .pName = "main"
-        },
-        { 
+    std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
+    for(auto const &stage : shader.stages)
+    {
+        shaderStages.emplace_back(VkPipelineShaderStageCreateInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-            .module = shaderModule, .pName = "main" 
-        }
-    };
+            .module = stage.bin.module, .pName = "main" 
+        });
+    }
 
     VkPipelineViewportStateCreateInfo viewportState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
@@ -1411,50 +1767,34 @@ int main(int argc, char const **argv)
             .albedo = TextureLoader{sReg}.loadFromFile("assets/wood.jpg")
         }
     })));
-    auto &mesh = sReg.get<VulkanMesh>(eMesh);
+
+    sReg.create(ModelInstance{eMesh}, lookat({-2,-1, 4}, {0,0,0}));
+    sReg.create(ModelInstance{eMesh}, lookat({ 0, 0, 4}, {0,0,0}));
+    sReg.create(ModelInstance{eMesh}, lookat({ 2, 1, 4}, {0,0,0}));
 
     makeDescriptors(state);
 
-    std::array<BufferAllocation, MAX_FRAMES_IN_FLIGHT> shaderDataBuffers;
+    std::array<BufferAllocation, MAX_FRAMES_IN_FLIGHT> matrixDataBuffers;
     std::array<VkCommandBuffer, MAX_FRAMES_IN_FLIGHT> commandBuffers;
     std::array<VkSemaphore, MAX_FRAMES_IN_FLIGHT> presentSemaphores;
     std::array<VkFence, MAX_FRAMES_IN_FLIGHT> fences;
     std::vector<VkSemaphore> renderSemaphores;
-    struct ShaderUniformData 
+
+    auto shader = createShader(state.device, "shaders/basic");
+    if(!shader.valid)
     {
-        glm::mat4 projection;
-        glm::mat4 view;
-        glm::mat4 model[3];
-        glm::vec3 lightPos{0.0f, -10.0f, 10.0f};
-        uint32_t selected{1};
-    } shaderData{};
+        LOG_ERROR("Failed to load shader");
+        return -1;
+    }
 
-    // TODO: switch back to glsl
-    auto shaderModule = createShaderModule(state.device, readFileBinary("shaders-bin/basic.slang.spv")); 
-
-    makePipeline(state, shaderModule, extent);
+    makePipeline(state, shader, extent);
 
     for(uint i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) 
     {
-        VkBufferCreateInfo uBufferCI{
-            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = sizeof(ShaderUniformData),
-            .usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-        };
-        VmaAllocationCreateInfo uBufferAllocCI{
-            .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
-            .usage = VMA_MEMORY_USAGE_AUTO
-        };
-
-        auto &shaderDataBuffer = shaderDataBuffers[i];
-        CHK(vmaCreateBuffer(state.vma, &uBufferCI, &uBufferAllocCI, &shaderDataBuffer.buffer, &shaderDataBuffer.allocation, nullptr));
+        auto &shaderDataBuffer = matrixDataBuffers[i];
+        shaderDataBuffer = allocateBuffer<MatrixData>(state);
         CHK(vmaMapMemory(state.vma, shaderDataBuffer.allocation, &shaderDataBuffer.mapped));
-
-        VkBufferDeviceAddressInfo bdaInfo{
-            .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
-            .buffer = shaderDataBuffer.buffer
-        };
-        shaderDataBuffer.deviceAddress = vkGetBufferDeviceAddress(state.device, &bdaInfo);
+        getBDA(state.device, shaderDataBuffer);
 
         VkCommandBufferAllocateInfo commandBufferAllocateInfo{
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -1552,15 +1892,11 @@ int main(int argc, char const **argv)
             CHK(imageAcquireRes);
         }
 
-        // Update shader data
+        // Update matrix data
         cameraController.update(sReg, deltatime);
-        shaderData.projection = camera.projMat;
-        shaderData.view = camera.viewMat;
-        for (auto i = 0; i < 3; i++) {
-            auto instancePos = glm::vec3((float)(i - 1) * 3.0f, 0.0f, 0.0f);
-            shaderData.model[i] = glm::translate(glm::mat4(1.0f), instancePos)/*  * glm::mat4_cast(glm::quat(glm::vec3{static_cast<float>(i*1234%14127), static_cast<float>(i*2972%91248), static_cast<float>(i*4124%87322)})) */;
-        }
-        std::memcpy(shaderDataBuffers[frameIndex].mapped, &shaderData, sizeof(ShaderUniformData));
+        MatrixData matrixData;
+        matrixData.uProjMat = camera.projMat;
+        matrixData.uViewMat = camera.viewMat;
 
         // Record command buffer
         auto cb = commandBuffers[frameIndex];
@@ -1649,22 +1985,50 @@ int main(int argc, char const **argv)
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, state.pipeline);
         VkDeviceSize vOffset{ 0 };
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, state.pipelineLayout, 0, 1, &state.descriptorSetTex, 0, nullptr);
-        vkCmdBindVertexBuffers(cb, 0, 1, &mesh.buffers.pos .buffer, &vOffset);
-        vkCmdBindVertexBuffers(cb, 1, 1, &mesh.buffers.uv  .buffer, &vOffset);
-        vkCmdBindVertexBuffers(cb, 2, 1, &mesh.buffers.norm.buffer, &vOffset);
-        vkCmdBindVertexBuffers(cb, 3, 1, &mesh.buffers.tan .buffer, &vOffset);
-        vkCmdBindIndexBuffer(cb, mesh.buffers.idx.buffer, 0, VK_INDEX_TYPE_UINT32);
 
+        PushConstants pushConstants{
+            .matrixDataReference = matrixDataBuffers[frameIndex].deviceAddress
+        };
         vkCmdPushConstants(
             cb,
             state.pipelineLayout,
             VK_SHADER_STAGE_VERTEX_BIT,
             0,
-            sizeof(VkDeviceAddress),
-            &shaderDataBuffers[frameIndex].deviceAddress
+            sizeof(PushConstants),
+            &pushConstants
         );
 
-        vkCmdDrawIndexed(cb, mesh.indexCount, 3, 0, 0, 0);
+        for(auto eInstance : sReg.view<ModelInstance>())
+        {
+            auto const &instance = sReg.get<ModelInstance>(eInstance);
+            if(!sReg.valid(instance.eModel))
+            {
+                LOG_ERROR("Model instance e{} has invalid eModel ({})", eInstance, instance.eModel);
+                continue;
+            }
+            if(!sReg.has<VulkanMesh>(instance.eModel))
+            {
+                LOG_ERROR("Model e{} doesent have VulkanMesh component!", instance.eModel);
+                continue;
+            }
+
+            matrixData.uModelMat = {1.0f};
+            if(sReg.has<Transform>(eInstance))
+                matrixData.uModelMat = sReg.get<Transform>(eInstance).getMat();
+
+            matrixData.uNormMat = glm::inverse(glm::transpose(matrixData.uModelMat));
+            std::memcpy(matrixDataBuffers[frameIndex].mapped, &matrixData, sizeof(MatrixData));
+
+            auto &mesh = sReg.get<VulkanMesh>(instance.eModel);
+
+            vkCmdBindVertexBuffers(cb, 0, 1, &mesh.buffers.pos .buffer, &vOffset);
+            vkCmdBindVertexBuffers(cb, 1, 1, &mesh.buffers.uv  .buffer, &vOffset);
+            vkCmdBindVertexBuffers(cb, 2, 1, &mesh.buffers.norm.buffer, &vOffset);
+            vkCmdBindVertexBuffers(cb, 3, 1, &mesh.buffers.tan .buffer, &vOffset);
+            vkCmdBindIndexBuffer(cb, mesh.buffers.idx.buffer, 0, VK_INDEX_TYPE_UINT32);
+    
+            vkCmdDrawIndexed(cb, mesh.indexCount, 1, 0, 0, 0);
+        }
 
         vkCmdEndRendering(cb);
 
@@ -1715,6 +2079,7 @@ int main(int argc, char const **argv)
         };
         CHK(vkQueuePresentKHR(presentQueue, &presentInfo));
         deltatime = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - start).count() * 1e-9f;
+        // LOG_INFO("dt {:.2f}ms fps {:.2f}", deltatime * 1e3, 1 / deltatime);
     }
 
     CHK(vkDeviceWaitIdle(state.device));
@@ -1755,14 +2120,17 @@ int main(int argc, char const **argv)
     vkDestroyImageView(state.device, state.depthImage.view, ALLOCATOR_HERE);
     vmaDestroyImage(state.vma, state.depthImage.image, state.depthImage.allocation);
 
-    vkDestroyShaderModule(state.device, shaderModule, ALLOCATOR_HERE);
+    for(auto &stage : shader.stages)
+    {
+        vkDestroyShaderModule(state.device, stage.bin.module, ALLOCATOR_HERE);
+    }
 
     for(uint i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) 
     {
         vkDestroySemaphore(state.device, presentSemaphores[i], ALLOCATOR_HERE);
         vkDestroyFence(state.device, fences[i], ALLOCATOR_HERE);
-        vmaUnmapMemory(state.vma, shaderDataBuffers[i].allocation);
-        vmaDestroyBuffer(state.vma, shaderDataBuffers[i].buffer, shaderDataBuffers[i].allocation);
+        vmaUnmapMemory(state.vma, matrixDataBuffers[i].allocation);
+        vmaDestroyBuffer(state.vma, matrixDataBuffers[i].buffer, matrixDataBuffers[i].allocation);
     }
 
     for(uint i = 0; i < state.swapchain.imageCount; ++i)
