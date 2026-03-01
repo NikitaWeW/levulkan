@@ -1,4 +1,5 @@
 #version 460
+#include "../extensions.glsl"
 
 layout(location = 0) in VS_OUT {
     vec2 uv;
@@ -19,15 +20,16 @@ layout(push_constant) uniform PushConstants
 	MatrixDataReference uMatrixDataReference;
 };
 
-
 layout(location = 0) out vec4 oColor;
+
+const vec3 uSunDir = vec3(0.5, -1, 1);
 
 void main()
 {
     // Phong lighting
     vec3 N = normalize(fs_in.tbn[2]);
     vec3 L = -normalize(uSunDir);
-    vec3 V = normalize(-uViewMat[2].xyz);
+    vec3 V = normalize(-uMatrixDataReference.uViewMat[2].xyz);
     vec3 R = reflect(-L, N);
     vec3 diffuse = vec3(max(dot(N, L), 0.0025));
     vec3 specular = vec3(pow(max(dot(R, V), 0.0), 16.0) * 0.75);

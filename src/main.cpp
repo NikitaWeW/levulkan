@@ -13,10 +13,8 @@
 #define VMA_VULKAN_VERSION 1003000
 #include "vk_mem_alloc.h"
 #include "GLFW/glfw3.h"
-#include "glslang/Public/ShaderLang.h"
-#include "glslang/Public/ResourceLimits.h"
-#include "glslang/SPIRV/GlslangToSpv.h"
-#include "libraries/DirStackFileIncluder.h"
+#include "glslang/Include/glslang_c_interface.h"
+#include "glslang/Public/resource_limits_c.h"
 
 #include "Logging.hpp"
 #include "Model.hpp"
@@ -180,9 +178,10 @@ struct ModelInstance
 };
 
 static ecs::registry sReg;
+static std::string sChkLastFileLine;
 
 #define ALLOCATOR_HERE VK_NULL_HANDLE
-#define CHK(x) { VkResult _result = x; if(_result != VK_SUCCESS) { LOG_ERROR("{}:{}: Failed to {}: {}.", __FILE__, __LINE__, #x, string_VkResult(_result)); LOG_WARN("Aborting..."); abort(); }}
+#define CHK(x) { sChkLastFileLine = std::string(__FILE__) + ':' + std::to_string(__LINE__); VkResult _result = x; if(_result != VK_SUCCESS) { LOG_ERROR("{}:{}: Failed to {}: {}.", __FILE__, __LINE__, #x, string_VkResult(_result)); LOG_WARN("Aborting..."); abort(); }}
 
 constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
 constexpr bool ENABLE_VALIDATION_LAYERS = true;
@@ -220,6 +219,7 @@ const std::unordered_map<std::string, VkShaderStageFlagBits> gExtensionToVulkanS
     {".rmiss", VK_SHADER_STAGE_MISS_BIT_KHR        },
     {".rcall", VK_SHADER_STAGE_CALLABLE_BIT_KHR    },
 };
+/* 
 const std::unordered_map<VkShaderStageFlagBits, EShLanguage> gVulkanStageToGlslang = {
     {VK_SHADER_STAGE_VERTEX_BIT          , EShLangVertex    },
     {VK_SHADER_STAGE_VERTEX_BIT          , EShLangVertex    },
@@ -239,6 +239,27 @@ const std::unordered_map<VkShaderStageFlagBits, EShLanguage> gVulkanStageToGlsla
     {VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR , EShLangClosestHit},
     {VK_SHADER_STAGE_MISS_BIT_KHR        , EShLangMiss      },
     {VK_SHADER_STAGE_CALLABLE_BIT_KHR    , EShLangCallable  },
+};
+ */
+const std::unordered_map<VkShaderStageFlagBits, glslang_stage_t> gVulkanStageToGlslang = {
+    {VK_SHADER_STAGE_VERTEX_BIT          , GLSLANG_STAGE_VERTEX    },
+    {VK_SHADER_STAGE_VERTEX_BIT          , GLSLANG_STAGE_VERTEX    },
+    {VK_SHADER_STAGE_VERTEX_BIT          , GLSLANG_STAGE_VERTEX    },
+    {VK_SHADER_STAGE_GEOMETRY_BIT        , GLSLANG_STAGE_GEOMETRY  },
+    {VK_SHADER_STAGE_GEOMETRY_BIT        , GLSLANG_STAGE_GEOMETRY  },
+    {VK_SHADER_STAGE_GEOMETRY_BIT        , GLSLANG_STAGE_GEOMETRY  },
+    {VK_SHADER_STAGE_FRAGMENT_BIT        , GLSLANG_STAGE_FRAGMENT  },
+    {VK_SHADER_STAGE_FRAGMENT_BIT        , GLSLANG_STAGE_FRAGMENT  },
+    {VK_SHADER_STAGE_FRAGMENT_BIT        , GLSLANG_STAGE_FRAGMENT  },
+    {VK_SHADER_STAGE_COMPUTE_BIT         , GLSLANG_STAGE_COMPUTE   },
+    {VK_SHADER_STAGE_COMPUTE_BIT         , GLSLANG_STAGE_COMPUTE   },
+    {VK_SHADER_STAGE_COMPUTE_BIT         , GLSLANG_STAGE_COMPUTE   },
+    {VK_SHADER_STAGE_RAYGEN_BIT_KHR      , GLSLANG_STAGE_RAYGEN    },
+    {VK_SHADER_STAGE_INTERSECTION_BIT_KHR, GLSLANG_STAGE_INTERSECT },
+    {VK_SHADER_STAGE_ANY_HIT_BIT_KHR     , GLSLANG_STAGE_ANYHIT    },
+    {VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR , GLSLANG_STAGE_CLOSESTHIT},
+    {VK_SHADER_STAGE_MISS_BIT_KHR        , GLSLANG_STAGE_MISS      },
+    {VK_SHADER_STAGE_CALLABLE_BIT_KHR    , GLSLANG_STAGE_CALLABLE  },
 };
 
 static Transform lookat(glm::vec3 pos, glm::vec3 center)
@@ -415,7 +436,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(
         break;
     }
 
-    LOG(level, "vulkan {} {} message:\n{}", type, severity, pCallbackData->pMessage);
+    LOG(level, "{}: vulkan {} {} message:\n{}", sChkLastFileLine, type, severity, pCallbackData->pMessage);
 
     return VK_FALSE;
 }
@@ -510,7 +531,7 @@ bool checkDeviceExtensionSupport(VkPhysicalDevice device, std::vector<char const
 
     std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
 
-    for (const auto& extension : availableExtensions) {
+    for(const auto& extension : availableExtensions) {
         requiredExtensions.erase(extension.extensionName);
     }
 
@@ -529,7 +550,7 @@ static VkSurfaceFormatKHR chooseSwapSurfaceFormat(SwapchainSupportDetails const 
 }
 static VkPresentModeKHR chooseSwapPresentMode(SwapchainSupportDetails const &details)
 {
-    for (const auto& availablePresentMode : details.presentModes) {
+    for(const auto& availablePresentMode : details.presentModes) {
         if(availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
             return availablePresentMode;
     }
@@ -786,7 +807,7 @@ static std::string readFileString(std::string_view filename)
 }
 static void writeFileBinary(std::string_view filename, char const *data, size_t size)
 {
-    auto dir = filename.substr(0, filename.find_last_of('.'));
+    auto dir = filename.substr(0, filename.find_last_of('/'));
     std::filesystem::create_directories(dir);
     std::ofstream file(std::string{filename}, std::ios::out | std::ios::binary);
     assert(file);
@@ -826,6 +847,73 @@ static bool contains(T const &container, P pred)
 {
     return std::find_if(container.begin(), container.end(), pred) != container.end();
 }
+
+// thanks to https://stackoverflow.com/a/217605
+// Trim from the start (in place)
+static void ltrim(std::string &s) {
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }));
+}
+// thanks to https://stackoverflow.com/a/217605
+// Trim from the end (in place)
+static void rtrim(std::string &s) {
+    s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }).base(), s.end());
+}
+/// @brief Process the include directives in the file.
+/// @return Processed string of the file.
+static std::string readFileWithIncludes(std::string path, std::string_view includeIdentifier = "#include", std::string prevDir = "")
+{
+    LOG_TRACE("path = \"{}\"; prevDir = \"{}\"; prevDir + '/' + path = \"{}\"", path, prevDir, prevDir + '/' + path);
+	std::ifstream file;
+
+    std::string fullPath = "";
+    if(std::filesystem::exists(prevDir + '/' + path)) // Relative
+        fullPath = prevDir + '/' + path;
+    else if(std::filesystem::exists(path)) // Absolute
+        fullPath = path;
+    else {
+		LOG_ERROR("Could not open the file \"{}\"!", path);
+		return std::string(includeIdentifier) + " \"" + path + '\"';
+	}
+
+    file = std::ifstream(fullPath);
+    prevDir = fullPath.substr(0, std::min(fullPath.find_last_of("/\\") + 1, fullPath.size()));
+
+    assert(file.is_open());
+
+    auto dir = path.substr(0, path.find_last_of('/'));
+
+	std::string fullSourceCode = "", lineBuffer;
+	while(std::getline(file, lineBuffer))
+	{
+		if(lineBuffer.find(includeIdentifier) != std::string::npos)
+		{
+            // Trim the line
+            ltrim(lineBuffer);
+            rtrim(lineBuffer);
+			// Remove the include identifier, this will cause the path to remain
+			lineBuffer.erase(0, includeIdentifier.size());
+			// Remove quotation marks from the include-string, in case there are any
+            lineBuffer.erase(std::remove(lineBuffer.begin(), lineBuffer.end(), '\"'), lineBuffer.cend());
+            // Trim the line again for a good measure
+            ltrim(lineBuffer);
+            rtrim(lineBuffer);
+
+			fullSourceCode += readFileWithIncludes(lineBuffer, includeIdentifier, dir);
+
+			continue;
+		} else {
+            fullSourceCode += lineBuffer + '\n';
+        }
+	}
+
+	file.close();
+
+	return fullSourceCode;
+}
 static Shader compileShaders(std::string_view path)
 {
     Shader shader{
@@ -847,8 +935,7 @@ static Shader compileShaders(std::string_view path)
             continue;
         }
         auto filePath = directoryEntry.path().string();
-        auto source = readFileString(filePath);
-        source.push_back('\0');
+        auto source = readFileWithIncludes(filePath);
 
         shader.stages.emplace_back(Shader::Stage{
             .stage = stage,
@@ -857,18 +944,19 @@ static Shader compileShaders(std::string_view path)
                 .path = filePath,
             },
         });
+
+        LOG_TRACE("Collected shader \"{}\" stage {}", shader.stages.back().src.path, string_VkShaderStageFlagBits(shader.stages.back().stage));
     }
 
-    // Compile shaders
-    EShMessages messages = static_cast<EShMessages>(EShMsgDefault | EShMsgRelaxedErrors | EShMsgSpvRules | EShMsgVulkanRules);
-    std::vector<glslang::TShader> glslShaders; // Temporary storage for 
-    glslang::TProgram glslProgram;
-    glslShaders.reserve(shader.stages.size());
-    DirStackFileIncluder includer;
-    std::for_each(SHADER_INCLUDE_DIRS.rbegin(), SHADER_INCLUDE_DIRS.rend(), [&includer](std::string_view dir) {
-        includer.pushExternalLocalDirectory(std::string{dir}); });
-    std::string output;
-    bool compileFailed = false;
+    if(shader.stages.empty())
+    {
+        LOG_ERROR("No stages collected!");
+        return shader;
+    }
+
+    glslang_program_t *glslProgram = glslang_program_create();
+    std::vector<glslang_shader_t *> glslShaders;
+
     for(auto &stage : shader.stages)
     {
         if(gVulkanStageToGlslang.find(stage.stage) == gVulkanStageToGlslang.end())
@@ -876,88 +964,65 @@ static Shader compileShaders(std::string_view path)
             LOG_WARN("Unknown shader stage: {}", string_VkShaderStageFlagBits(stage.stage));
             continue;
         }
-        glslang::TShader shader(gVulkanStageToGlslang.at(stage.stage));
-        shader.addSourceText(stage.src.data.c_str(), stage.src.data.length());
 
-        shader.setUniformLocationBase(0);
+        const glslang_input_t input = {
+            .language = GLSLANG_SOURCE_GLSL,
+            .stage = gVulkanStageToGlslang.at(stage.stage),
+            .client = GLSLANG_CLIENT_VULKAN,
+            .client_version = GLSLANG_TARGET_VULKAN_1_3,
+            .target_language = GLSLANG_TARGET_SPV,
+            .target_language_version = GLSLANG_TARGET_SPV_1_6,
+            .code = stage.src.data.c_str(),
+            .default_version = 130,
+            .default_profile = GLSLANG_NO_PROFILE,
+            .force_default_version_and_profile = false,
+            .forward_compatible = false,
+            .messages = GLSLANG_MSG_DEFAULT_BIT,
+            .resource = glslang_default_resource(),
+        };
 
-        if(shader.preprocess(GetDefaultResources(), DEFAULT_GLSL_VERSION, ENoProfile, false, false, messages, &output, includer))
-        {
-            if(!output.empty())
-                LOG_WARN(output);
-        } else {
-            compileFailed = true;
+        glslang_shader_t *glslShader = glslang_shader_create(&input);
+
+        if(!glslang_shader_preprocess(glslShader, &input))	{
+            LOG_ERROR("GLSL preprocessing of \"{}\" failed: \n{}\n{}", stage.src.path, glslang_shader_get_info_log(glslShader), glslang_shader_get_info_debug_log(glslShader));
+            glslang_shader_delete(glslShader);
+            return shader;
         }
-        if(shader.getInfoLog())
-            LOG_ERROR(shader.getInfoLog());
-        if(shader.getInfoDebugLog())
-            LOG_ERROR(shader.getInfoDebugLog());
 
-        if(!shader.parse(GetDefaultResources(), DEFAULT_GLSL_VERSION, false, messages, includer))
-        {
-            compileFailed = true;
+        if(!glslang_shader_parse(glslShader, &input)) {
+            LOG_ERROR("GLSL parsing of \"{}\" failed: \n{}\n{}", stage.src.path, glslang_shader_get_info_log(glslShader), glslang_shader_get_info_debug_log(glslShader));
+            glslang_shader_delete(glslShader);
+            return shader;
         }
-
-        if(shader.getInfoLog())
-            LOG_ERROR(shader.getInfoLog());
-        if(shader.getInfoDebugLog())
-            LOG_ERROR(shader.getInfoDebugLog());
-
-        glslShaders.emplace_back(std::move(shader));
-        glslProgram.addShader(&glslShaders.back());
+        
+        glslang_program_add_shader(glslProgram, glslShader);
+        glslShaders.emplace_back(glslShader);
     }
-    if(compileFailed)
-    {
-        LOG_ERROR("Failed to parse shaders in \"{}\"!", path);
+
+    if(!glslang_program_link(glslProgram, GLSLANG_MSG_SPV_RULES_BIT | GLSLANG_MSG_VULKAN_RULES_BIT)) {
+        LOG_ERROR("GLSL linking of \"{}\" failed: \n{}\n{}", path, glslang_program_get_info_log(glslProgram), glslang_program_get_info_debug_log(glslProgram));
+        glslang_program_delete(glslProgram);
+        for(auto glslShader : glslShaders)
+            glslang_shader_delete(glslShader);
         return shader;
     }
 
-    bool linkFailed = true;
-
-    if(!glslProgram.link(messages))
-        linkFailed = true;
-
-    if(!glslProgram.mapIO())
-        linkFailed = true;
-
-    // Report
-    if(glslProgram.getInfoLog())
-        LOG_ERROR(glslProgram.getInfoLog());
-    if(glslProgram.getInfoDebugLog())
-        LOG_ERROR(glslProgram.getInfoDebugLog());
-
-    // Reflect
-    // glslProgram.buildReflection(EShReflectionDefault);
-    // glslProgram.dumpReflection();
-
-    if(linkFailed)
+    for(auto &stage : shader.stages)
     {
-        LOG_ERROR("Failed to link shaders in \"{}\"!", path);
-        return shader;
+        glslang_program_SPIRV_generate(glslProgram, gVulkanStageToGlslang.at(stage.stage));
+
+        auto size = glslang_program_SPIRV_get_size(glslProgram);
+        stage.bin.spirv.resize(size);
+        glslang_program_SPIRV_get(glslProgram, stage.bin.spirv.data());
     }
 
-    for(auto &stage : shader.stages) 
-    {
-        auto *intermediate = glslProgram.getIntermediate((EShLanguage)stage.stage);
-        spv::SpvBuildLogger logger;
-        glslang::SpvOptions spvOptions;
-        if(GENERATE_SHADER_DEBUG_INFO)
-        {
-            spvOptions.generateDebugInfo = true;
-            spvOptions.emitNonSemanticShaderDebugInfo = true;
-        } else {
-            spvOptions.stripDebugInfo = true;
-        }
-        spvOptions.disableOptimizer = false;
-        spvOptions.optimizeSize = 1;
-        spvOptions.disassemble = false;
-        spvOptions.validate = true;
-        spvOptions.compileOnly = false;
-        glslang::GlslangToSpv(*intermediate, stage.bin.spirv, &logger, &spvOptions);
-        stage.bin.path = toBinPath(stage.src.path) + ".spv";
-        writeFileBinary(stage.bin.path, reinterpret_cast<char const *>(stage.bin.spirv.data()), stage.bin.spirv.size() * sizeof(stage.bin.spirv[0]));
-        LOG_TRACE("Wrote shader binary to \"{}\"", stage.bin.path);
-    }
+    const char* spirv_messages = glslang_program_SPIRV_get_messages(glslProgram);
+    if(spirv_messages)
+        LOG_WARN("Spirv messages: {}", spirv_messages);
+
+    glslang_program_delete(glslProgram);
+    for(auto glslShader : glslShaders)
+        glslang_shader_delete(glslShader);
 
     shader.valid = true;
     return shader;
@@ -971,20 +1036,28 @@ static Shader createShader(VkDevice const &device, std::string_view path)
 
     Shader shader;
     shader.dirPath = toBinPath(path);
+    LOG_VAR(std::filesystem::exists(shader.dirPath));
     if(std::filesystem::exists(shader.dirPath))
     {
         if(!std::filesystem::is_directory(shader.dirPath))
         {
             LOG_ERROR("\"{}\" exists but is not a directory!");
         } else {
-            for(auto const &directoryEntry : std::filesystem::recursive_directory_iterator{path}) {
+            for(auto const &directoryEntry : std::filesystem::recursive_directory_iterator{shader.dirPath}) {
                 if(!std::filesystem::is_regular_file(directoryEntry.path())) continue; 
+                // FIXME: only .spv is left
                 std::string extension = directoryEntry.path().string().substr(directoryEntry.path().string().find_last_of('.'), directoryEntry.path().string().size());
+                LOG_VAR(directoryEntry.path()); 
+                LOG_VAR(extension);
+
                 for([[maybe_unused]] auto c : std::string_view(".spv"))
                     extension.pop_back();
     
                 if(gExtensionToVulkanStage.find(extension) == gExtensionToVulkanStage.end()) 
+                {
+                    LOG_WARN("Unknown extension: {}", extension);
                     continue;
+                }
                 auto stage = gExtensionToVulkanStage.at(extension);
                 auto binPath = directoryEntry.path().string();
                 shader.stages.emplace_back(Shader::Stage{
@@ -998,7 +1071,15 @@ static Shader createShader(VkDevice const &device, std::string_view path)
         }
     }
     if(shader.stages.empty() && COMPILE_SHADERS)
+    {
         shader = compileShaders(path);
+
+        for(auto &stage : shader.stages)
+        {
+            stage.bin.path = toBinPath(stage.src.path) + ".spv";
+            writeFileBinary(stage.bin.path, reinterpret_cast<char const *>(stage.bin.spirv.data()), stage.bin.spirv.size() * sizeof(stage.bin.spirv[0]));
+        }
+    }
     else if(shader.stages.empty())
     {
         LOG_ERROR("Failed to collect shaders from \"{}\"!", shader.dirPath);
@@ -1023,7 +1104,7 @@ static std::string printTexture(ecs::entity e, ecs::registry const &reg)
     if(!reg.valid(e))
         return fmt::format("e{} -- INVALID", e);
     auto const &texture = reg.get<Texture>(e);
-    return fmt::format("e{}, \"{:<30} {}x{}, {:>3}", e, texture.path + "\",", texture.bitmap.size.x, texture.bitmap.size.y, (texture.srgb ? "srgb" : "not srgb"));
+    return fmt::format("e{}, \"{:<30} {}x{}, {:>3}", e, texture.path + "\",", texture.bitmap.size.x, texture.bitmap.size.y,(texture.srgb ? "srgb" : "not srgb"));
 }
 static void printModelData(ecs::entity e, ecs::registry const &reg)
 {
@@ -1080,7 +1161,7 @@ static void printModelData(ecs::entity e, ecs::registry const &reg)
     }
 }
 template<typename T>
-BufferAllocation allocateBuffer(VulkanState &state, std::vector<T> const &data)
+BufferAllocation allocateBuffer(VulkanState &state, std::vector<T> const &data, int usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, int flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT)
 {
     BufferAllocation buffer;
     buffer.size = data.size() * sizeof(T);
@@ -1088,10 +1169,10 @@ BufferAllocation allocateBuffer(VulkanState &state, std::vector<T> const &data)
     VkBufferCreateInfo ci{
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = buffer.size,
-        .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        .usage = (VkBufferUsageFlagBits) usage,
     };
     VmaAllocationCreateInfo allocCI{
-        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+        .flags = (VkMemoryAllocateFlagBits) flags,
         .usage = VMA_MEMORY_USAGE_AUTO
     };
 
@@ -1105,7 +1186,7 @@ BufferAllocation allocateBuffer(VulkanState &state, std::vector<T> const &data)
     return buffer;
 }
 template<typename T>
-BufferAllocation allocateBuffer(VulkanState &state, T &&obj)
+BufferAllocation allocateBuffer(VulkanState &state, T &&obj, int usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, int flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT)
 {
     BufferAllocation buffer;
     buffer.size = sizeof(T);
@@ -1113,10 +1194,10 @@ BufferAllocation allocateBuffer(VulkanState &state, T &&obj)
     VkBufferCreateInfo ci{
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = buffer.size,
-        .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        .usage = (VkBufferUsageFlagBits) usage,
     };
     VmaAllocationCreateInfo allocCI{
-        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+        .flags = (VkMemoryAllocateFlagBits) flags,
         .usage = VMA_MEMORY_USAGE_AUTO
     };
 
@@ -1130,7 +1211,7 @@ BufferAllocation allocateBuffer(VulkanState &state, T &&obj)
     return buffer;
 }
 template<typename T>
-BufferAllocation allocateBuffer(VulkanState &state)
+BufferAllocation allocateBuffer(VulkanState &state, int usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, int flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT)
 {
     BufferAllocation buffer;
     buffer.size = sizeof(T);
@@ -1138,10 +1219,10 @@ BufferAllocation allocateBuffer(VulkanState &state)
     VkBufferCreateInfo ci{
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = buffer.size,
-        .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        .usage = (VkBufferUsageFlagBits) usage,
     };
     VmaAllocationCreateInfo allocCI{
-        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+        .flags = (VkMemoryAllocateFlagBits) flags,
         .usage = VMA_MEMORY_USAGE_AUTO
     };
 
@@ -1249,7 +1330,7 @@ static ImageAllocation allocateTexture(VulkanState &state, ecs::entity eTexture)
             },
             .srcOffsets = {
                 { 0, 0, 0 },
-                { int32_t(image.size.x >> (i - 1)), int32_t(image.size.y >> (i - 1)), 1 }
+                { int32_t(image.size.x >>(i - 1)), int32_t(image.size.y >>(i - 1)), 1 }
             },
             .dstSubresource = {
                 .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -1313,24 +1394,24 @@ static ImageAllocation allocateTexture(VulkanState &state, ecs::entity eTexture)
         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         {VK_IMAGE_ASPECT_COLOR_BIT, 0, image.numMipLevels, 0, 1}
     );
+*/
 
     vkEndCommandBuffer(commandBuffer);
 
     VkFence fence;
     VkFenceCreateInfo fenceCI{
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
     };
-    vkCreateFence(state.device, &fenceCI, ALLOCATOR_HERE, &fence);
+    CHK(vkCreateFence(state.device, &fenceCI, ALLOCATOR_HERE, &fence));
 
     VkSubmitInfo submitInfo{
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .commandBufferCount = 1,
         .pCommandBuffers = &commandBuffer,
     };
-    static auto queue = getQueue(state.device, state.queueFamilies.transfer);
-    vkQueueSubmit(queue, 1, &submitInfo, fence);
-    vkWaitForFences(state.device, 1, &fence, true, 0);
-*/
+    static auto queue = getQueue(state.device, state.queueFamilies.transfer.value());
+    CHK(vkQueueSubmit(queue, 1, &submitInfo, fence));
+    CHK(vkWaitForFences(state.device, 1, &fence, true, UINT64_MAX));
     VkImageViewCreateInfo texVewCI{
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .image = image.image,
@@ -1347,7 +1428,7 @@ static ImageAllocation allocateTexture(VulkanState &state, ecs::entity eTexture)
         .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
         .anisotropyEnable = VK_TRUE,
         .maxAnisotropy = 8.0f, // 8 is a widely supported value for max anisotropy
-        .maxLod = (float) image.numMipLevels,
+        .maxLod =(float) image.numMipLevels,
     };
     CHK(vkCreateSampler(state.device, &samplerCI, nullptr, &image.sampler));
 
@@ -1359,6 +1440,7 @@ static ImageAllocation allocateTexture(VulkanState &state, ecs::entity eTexture)
     });
 
     vmaDestroyBuffer(state.vma, imgSrcBuffer, imgSrcAllocation);
+    vkDestroyFence(state.device, fence, ALLOCATOR_HERE);
 
     return image;
 }
@@ -1596,7 +1678,7 @@ static void makePipeline(VulkanState &state, Shader const &shader, VkExtent2D ex
     {
         shaderStages.emplace_back(VkPipelineShaderStageCreateInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-            .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+            .stage = stage.stage,
             .module = stage.bin.module, .pName = "main" 
         });
     }
@@ -1792,7 +1874,7 @@ int main(int argc, char const **argv)
     for(uint i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) 
     {
         auto &shaderDataBuffer = matrixDataBuffers[i];
-        shaderDataBuffer = allocateBuffer<MatrixData>(state);
+        shaderDataBuffer = allocateBuffer<MatrixData>(state, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
         CHK(vmaMapMemory(state.vma, shaderDataBuffer.allocation, &shaderDataBuffer.mapped));
         getBDA(state.device, shaderDataBuffer);
 
@@ -1992,7 +2074,7 @@ int main(int argc, char const **argv)
         vkCmdPushConstants(
             cb,
             state.pipelineLayout,
-            VK_SHADER_STAGE_VERTEX_BIT,
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
             0,
             sizeof(PushConstants),
             &pushConstants
@@ -2003,7 +2085,7 @@ int main(int argc, char const **argv)
             auto const &instance = sReg.get<ModelInstance>(eInstance);
             if(!sReg.valid(instance.eModel))
             {
-                LOG_ERROR("Model instance e{} has invalid eModel ({})", eInstance, instance.eModel);
+                LOG_ERROR("Model instance e{} has invalid eModel({})", eInstance, instance.eModel);
                 continue;
             }
             if(!sReg.has<VulkanMesh>(instance.eModel))
@@ -2066,7 +2148,7 @@ int main(int argc, char const **argv)
         };
         CHK(vkQueueSubmit(graphicsQueue, 1, &submitInfo, fences[frameIndex]));
 
-        frameIndex = (frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
+        frameIndex =(frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
         
         // Present image
         VkPresentInfoKHR presentInfo{

@@ -1,5 +1,4 @@
 #version 460
-
 #include "../extensions.glsl"
 
 layout(location = 0) in vec3 aPosition;
@@ -31,12 +30,12 @@ void main()
     vec3 normal = aNormal;
     vec3 tangent = aTangent;
 
-    vs_out.pos = vec3(uModelMat * vec4(aPosition, 1));
+    vs_out.pos = vec3(uMatrixDataReference.uModelMat * vec4(aPosition, 1));
     gl_Position = uMatrixDataReference.uProjMat * uMatrixDataReference.uViewMat * vec4(vs_out.pos, 1);
     vs_out.uv = aUV;
     
-    normal = vec3(normalize(uNormMat * vec4(normal, 0)));
-    tangent = vec3(normalize(uNormMat * vec4(tangent, 0)));
+    normal = vec3(normalize(uMatrixDataReference.uNormMat * vec4(normal, 0)));
+    tangent = vec3(normalize(uMatrixDataReference.uNormMat * vec4(tangent, 0)));
     tangent = normalize(tangent - dot(tangent, normal) * normal);
     vec3 bitangent = cross(tangent, normal);
     vs_out.tbn = mat3(tangent, bitangent, normal);

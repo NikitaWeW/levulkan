@@ -2,7 +2,9 @@
 
 # Learning vulkan
 
-yeah
+Yeah...
+
+Running on hopes and dreams.
 
 ## Building 
 
@@ -15,12 +17,12 @@ build/levulkan # profit
 ```
 
 ### Requirements
-- Most of the packages are managed by cpm.cmake
 - Cmake
 - Build system (e.g. makefiles, visual studio, ninja, etc.)
 - C++ 20 compiler
 - Validation layers (VK_LAYER_KHRONOS_validation) installed for validation
-- [shaderc](https://github.com/google/shaderc/) installed and available for cmake.
+- Glslang installed and available for cmake (find_package).
+- Most of the packages are managed by cpm.cmake
 
 ## Resources I use
 
