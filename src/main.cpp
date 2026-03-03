@@ -317,6 +317,37 @@ static void addToFamilies(QueueFamilies &indices, uint32_t i)
     indices.uniqueFamilies[i] = i;
     ++indices.count;
 }
+static void insertImageMemoryBarrier(
+    VkCommandBuffer         command_buffer,
+    VkImage                 image,
+    VkAccessFlags           src_access_mask,
+    VkAccessFlags           dst_access_mask,
+    VkImageLayout           old_layout,
+    VkImageLayout           new_layout,
+    VkPipelineStageFlags    src_stage_mask,
+    VkPipelineStageFlags    dst_stage_mask,
+    VkImageSubresourceRange subresource_range)
+{
+    VkImageMemoryBarrier2 barrier{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+        .srcStageMask = src_stage_mask,
+        .srcAccessMask = src_access_mask,
+        .dstStageMask = dst_stage_mask,
+        .dstAccessMask = dst_access_mask,
+        .oldLayout = old_layout,
+        .newLayout = new_layout,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = image,
+        .subresourceRange = subresource_range
+    };
+    VkDependencyInfo dependency{
+        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .imageMemoryBarrierCount = 1,
+        .pImageMemoryBarriers = &barrier,
+    };
+    vkCmdPipelineBarrier2(command_buffer, &dependency);
+}
 static QueueFamilies findQueueFamilies(VkPhysicalDevice const &device, VulkanState const &state)
 {
     QueueFamilies indices;
@@ -1024,7 +1055,6 @@ static Shader compileShaders(std::string_view path)
     for(auto glslShader : glslShaders)
         glslang_shader_delete(glslShader);
 
-    shader.valid = true;
     return shader;
 }
 /// @brief Compile all the shaders from the given directory to spirv and put it into VkShaderModule. Cache at SHADER_BIN_DIR.
@@ -1046,13 +1076,12 @@ static Shader createShader(VkDevice const &device, std::string_view path)
             for(auto const &directoryEntry : std::filesystem::recursive_directory_iterator{shader.dirPath}) {
                 if(!std::filesystem::is_regular_file(directoryEntry.path())) continue; 
                 // FIXME: only .spv is left
-                std::string extension = directoryEntry.path().string().substr(directoryEntry.path().string().find_last_of('.'), directoryEntry.path().string().size());
+                std::string extension = directoryEntry.path().string().substr(0, directoryEntry.path().string().find_last_of('.'));
+                extension = extension.substr(extension.find_last_of('.'), extension.size());
                 LOG_VAR(directoryEntry.path()); 
                 LOG_VAR(extension);
+                LOG_VAR(directoryEntry.path().string().substr(0, directoryEntry.path().string().find_last_of('.')));
 
-                for([[maybe_unused]] auto c : std::string_view(".spv"))
-                    extension.pop_back();
-    
                 if(gExtensionToVulkanStage.find(extension) == gExtensionToVulkanStage.end()) 
                 {
                     LOG_WARN("Unknown extension: {}", extension);
@@ -1087,6 +1116,7 @@ static Shader createShader(VkDevice const &device, std::string_view path)
 
     makeShaderModules(device, shader.stages);
 
+    shader.valid = true;
     return shader;
 }
 void createCommandPool(VulkanState &state)
@@ -1315,6 +1345,17 @@ static ImageAllocation allocateTexture(VulkanState &state, ecs::entity eTexture)
             .depth = 1,
         }
     };
+
+    insertImageMemoryBarrier(commandBuffer, image.image,
+        VK_ACCESS_NONE,
+        VK_ACCESS_TRANSFER_WRITE_BIT,
+        VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        VK_PIPELINE_STAGE_NONE,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        {VK_IMAGE_ASPECT_COLOR_BIT, 0, image.numMipLevels, 0, 1}
+    );
+
     vkCmdCopyBufferToImage(commandBuffer, imgSrcBuffer, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bufferCopyRegion);
 
 /* FIXME
@@ -1385,16 +1426,16 @@ static ImageAllocation allocateTexture(VulkanState &state, ecs::entity eTexture)
         //     {VK_IMAGE_ASPECT_COLOR_BIT, i, 1, 0, 1}
         // );
     }
+*/
     insertImageMemoryBarrier(commandBuffer, image.image,
-        VK_ACCESS_TRANSFER_READ_BIT,
+        VK_ACCESS_TRANSFER_WRITE_BIT,
         VK_ACCESS_SHADER_READ_BIT,
-        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         {VK_IMAGE_ASPECT_COLOR_BIT, 0, image.numMipLevels, 0, 1}
     );
-*/
 
     vkEndCommandBuffer(commandBuffer);
 
@@ -2085,7 +2126,7 @@ int main(int argc, char const **argv)
             auto const &instance = sReg.get<ModelInstance>(eInstance);
             if(!sReg.valid(instance.eModel))
             {
-                LOG_ERROR("Model instance e{} has invalid eModel({})", eInstance, instance.eModel);
+                LOG_ERROR("Model instance e{} has invalid eModel {}", eInstance, instance.eModel);
                 continue;
             }
             if(!sReg.has<VulkanMesh>(instance.eModel))
