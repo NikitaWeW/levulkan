@@ -1059,7 +1059,8 @@ static Shader compileShaders(std::string_view path)
 }
 /// @brief Compile all the shaders from the given directory to spirv and put it into VkShaderModule. Cache at SHADER_BIN_DIR.
 /// @param path The path to the directory in the shader source tree
-static Shader createShader(VkDevice const &device, std::string_view path) 
+/// FIXME: COMPILE_SHADERS false is broken
+static Shader createShader(VkDevice const &device, std::string_view path, bool forceRecompile = false) 
 {
     assert(std::filesystem::exists(path));
     assert(std::filesystem::is_directory(path));
@@ -1073,14 +1074,14 @@ static Shader createShader(VkDevice const &device, std::string_view path)
         {
             LOG_ERROR("\"{}\" exists but is not a directory!");
         } else {
-            for(auto const &directoryEntry : std::filesystem::recursive_directory_iterator{shader.dirPath}) {
+            // BUG: but what if theres no src tree only bin?
+            // Too lazy to fix.
+            for(auto const &directoryEntry : std::filesystem::recursive_directory_iterator{path}) {
                 if(!std::filesystem::is_regular_file(directoryEntry.path())) continue; 
-                // FIXME: only .spv is left
-                std::string extension = directoryEntry.path().string().substr(0, directoryEntry.path().string().find_last_of('.'));
-                extension = extension.substr(extension.find_last_of('.'), extension.size());
-                LOG_VAR(directoryEntry.path()); 
+                std::string srcPath = directoryEntry.path().string();
+                std::string extension = srcPath.substr(srcPath.find_last_of('.'), srcPath.size());
                 LOG_VAR(extension);
-                LOG_VAR(directoryEntry.path().string().substr(0, directoryEntry.path().string().find_last_of('.')));
+                LOG_VAR(srcPath);
 
                 if(gExtensionToVulkanStage.find(extension) == gExtensionToVulkanStage.end()) 
                 {
@@ -1088,9 +1089,27 @@ static Shader createShader(VkDevice const &device, std::string_view path)
                     continue;
                 }
                 auto stage = gExtensionToVulkanStage.at(extension);
-                auto binPath = directoryEntry.path().string();
+                auto binPath = toBinPath(srcPath) + ".spv";
+                LOG_VAR(binPath);
+
+                if(!std::filesystem::exists(binPath))
+                {
+                    LOG_ERROR("Shader binary \"{}\" not found", binPath);
+                    forceRecompile = true;
+                    break;
+                }
+
+                if(std::filesystem::last_write_time(srcPath).time_since_epoch() > std::filesystem::last_write_time(binPath).time_since_epoch())
+                {
+                    LOG_INFO("Shaders modified. Recompiling...");
+                    forceRecompile = true;
+                    break;
+                }
                 shader.stages.emplace_back(Shader::Stage{
                     .stage = stage,
+                    .src = {
+                        .path = srcPath
+                    },
                     .bin = {
                         .spirv = readFileBinary<uint32_t>(binPath),
                         .path = binPath,
@@ -1099,7 +1118,7 @@ static Shader createShader(VkDevice const &device, std::string_view path)
             }
         }
     }
-    if(shader.stages.empty() && COMPILE_SHADERS)
+    if((shader.stages.empty() || forceRecompile) && COMPILE_SHADERS)
     {
         shader = compileShaders(path);
 
