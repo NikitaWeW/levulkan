@@ -1,12 +1,9 @@
-// Source: github.com/nikitawew/breakout
 #pragma once
-#include "nicecs/ecs.hpp"
+#include "ECS.hpp"
 #include "glm/glm.hpp"
 #include "glm/gtc/quaternion.hpp"
 #include <vector>
 #include <string>
-
-constexpr ecs::entity INVALID_ENTITY = 0;
 
 template<typename T>
 struct Bitmap
@@ -31,12 +28,12 @@ struct Material
     /// @brief Contains entities with the Texture component, invalid if not present.
     struct Textures
     {
-        ecs::entity albedo = INVALID_ENTITY;
-        ecs::entity metallic = INVALID_ENTITY;
-        ecs::entity roughness = INVALID_ENTITY;
-        ecs::entity ambient = INVALID_ENTITY;
-        ecs::entity normal = INVALID_ENTITY;
-        ecs::entity displacement = INVALID_ENTITY;
+        ecs::entity albedo = 0;
+        ecs::entity metallic = 0;
+        ecs::entity roughness = 0;
+        ecs::entity ambient = 0;
+        ecs::entity normal = 0;
+        ecs::entity displacement = 0;
     } textures;
     struct Properties
     {

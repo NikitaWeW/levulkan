@@ -16,13 +16,14 @@ cmake --build build
 build/levulkan # profit
 ```
 
+You can also set `CPM_USE_LOCAL_PACKAGES=ON` to speed up the process
+
 ### Requirements
 - Cmake
 - Build system (e.g. makefiles, visual studio, ninja, etc.)
 - C++ 20 compiler
 - Validation layers (VK_LAYER_KHRONOS_validation) installed for validation
-- Glslang installed and available for cmake (find_package).
-- Most of the packages are managed by cpm.cmake
+- All the packages are managed by cpm.cmake
 
 ## Resources I use
 
