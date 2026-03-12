@@ -175,7 +175,7 @@ int main(int argc, char **argv)
     // }
 
     // vk::destroy(pipeline);
-    vk::destroy(initRes.device, shader);
+    vk::destroy(shader);
 
     vmaDestroyAllocator(initRes.vma);
     vkDestroyDevice(initRes.device, nullptr);

@@ -29,10 +29,12 @@ struct InitInfo
     std::string appName; ///< The name of the application.
     GLFWwindow *window = nullptr; ///< The window handle. 
     uint32_t version = VK_API_VERSION_1_3;
+    bool offscreen = false; ///< Controls whether presentation is required.
     
     std::vector<char const *> instanceExtensions; ///< A list of required instance extensions excluding required extensions.
-    std::vector<char const *> deviceExtensions; ///< A list of required device extensions excluding required extensions. VK_KHR_SWAPCHAIN_EXTENSION_NAME is implicitly included.
+    std::vector<char const *> deviceExtensions; ///< A list of required device extensions excluding required extensions. VK_KHR_SWAPCHAIN_EXTENSION_NAME is implicitly included if offscreen is not true.
     std::vector<char const *> layers; ///< A list of required layers.
+    std::underlying_type_t<VkQueueFlagBits> queues = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT; ///< A list of required queues. Present queue is searched for implicitly.
 
     VkDebugUtilsMessageSeverityFlagsEXT messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
     PFN_vkDebugUtilsMessengerCallbackEXT debugCallbackOverride = nullptr; ///< Leave nullptr for default callback.
@@ -47,19 +49,17 @@ inline void enableValidationLayers(InitInfo &info)
 
 struct QueueFamilies
 {
-    std::optional<uint32_t> graphics;
-    std::optional<uint32_t> present;
-    std::optional<uint32_t> transfer;
-    std::optional<uint32_t> compute;
+    VkDevice device;
+    std::map<VkQueueFlagBits, uint32_t> indices;
+    std::optional<uint32_t> presentQueue;
 
     SparseSet<VkDeviceQueueCreateInfo> deviceCreateInfo;
     SparseSet<uint32_t> uniqueFamilies;
     uint32_t count = 0;
 
-    inline bool isComplete() 
-    { 
-        return graphics.has_value() && present.has_value() && transfer.has_value() && compute.has_value();
-    }
+    /// @brief Get the queue from a queue family
+    /// @returns VK_NULL_HANDLE if queue type is not present, a valid queue otherwise
+    VkQueue getQueue(VkQueueFlagBits type, uint32_t queueIndex = 0) const;
 };
 struct InitResult
 {
@@ -98,6 +98,7 @@ struct Shader
         std::string path; 
     };
 
+    VkDevice device = VK_NULL_HANDLE;
     bool valid = false;
     std::vector<Binary> binaries;
     Source src;
@@ -185,7 +186,7 @@ struct VulkanModel
 /// @brief Allocate the model.
 VulkanModel processModel(Model const &model);
 
-void destroy(VkDevice dev, Shader &shader); ///< Destroy the shader
+void destroy(Shader &shader); ///< Destroy the shader
 void destroy(Pipeline &pipeline); ///< Destroy the pipeline
 void destroy(VulkanModel &model); ///< Destroy the model
 

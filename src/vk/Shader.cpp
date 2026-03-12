@@ -6,6 +6,11 @@
 using namespace vk;
 namespace fs = std::filesystem;
 
+#ifndef STRIP_SHADER_COMPILATION
+#define STRIP_SHADER_COMPILATION 0
+#endif // STRIP_SHADER_COMPILATION
+
+#if !STRIP_SHADER_COMPILATION
 static const std::unordered_map<std::string, VkShaderStageFlagBits> gStageNameToVulkanEnum = {
     {"vertex"       , VK_SHADER_STAGE_VERTEX_BIT                 },
     {"geometry"     , VK_SHADER_STAGE_GEOMETRY_BIT               },
@@ -37,6 +42,10 @@ static const std::unordered_map<VkShaderStageFlagBits, glslang_stage_t> gVulkanS
     {VK_SHADER_STAGE_CALLABLE_BIT_KHR           , GLSLANG_STAGE_CALLABLE      },
     {VK_SHADER_STAGE_MESH_BIT_EXT               , GLSLANG_STAGE_MESH          },
 };
+static constexpr std::string_view INCLUDE_IDENTIFIER = "#include";
+static constexpr std::string_view STAGE_IDENTIFIER = "#stage";
+#endif // STRIP_SHADER_COMPILATION
+
 static const std::unordered_map<std::string, VkShaderStageFlagBits> gVulkanStageStringToEnum = {
     {"VK_SHADER_STAGE_VERTEX_BIT"                  , VK_SHADER_STAGE_VERTEX_BIT                 },
     {"VK_SHADER_STAGE_GEOMETRY_BIT"                , VK_SHADER_STAGE_GEOMETRY_BIT               },
@@ -52,8 +61,6 @@ static const std::unordered_map<std::string, VkShaderStageFlagBits> gVulkanStage
     {"VK_SHADER_STAGE_MISS_BIT_KHR"                , VK_SHADER_STAGE_MISS_BIT_KHR               },
     {"VK_SHADER_STAGE_CALLABLE_BIT_KHR"            , VK_SHADER_STAGE_CALLABLE_BIT_KHR           },
 };
-static constexpr std::string_view INCLUDE_IDENTIFIER = "#include";
-static constexpr std::string_view STAGE_IDENTIFIER = "#stage";
 
 template<typename T = char>
 static std::vector<T> readFileBinary(std::string_view filename) 
@@ -105,6 +112,9 @@ static void collectBinaries(Shader &program)
         });
     }
 }
+
+#if !STRIP_SHADER_COMPILATION
+
 // thanks to https://stackoverflow.com/a/217605
 // Trim from the start (in place)
 static void ltrim(std::string &s) {
@@ -310,6 +320,8 @@ static bool compileSources(Shader &program, std::map<VkShaderStageFlagBits, Shad
     return true;
 }
 
+#endif // STRIP_SHADER_COMPILATION // STRIP_SHADER_COMPILATION
+
 Shader vk::makeShader(std::string_view src, std::string_view bin, VkDevice dev)
 {
     Shader program;
@@ -330,7 +342,9 @@ Shader vk::makeShader(std::string_view src, std::string_view bin, VkDevice dev)
     if(canCompile)
     {
         program.src.path = src;
+#if !STRIP_SHADER_COMPILATION
         program.src.data = readFileWithIncludes(program.src.path);
+#endif // STRIP_SHADER_COMPILATION
     }
 
     bool outdated = canCompile && fs::exists(program.binPath) && std::filesystem::last_write_time(program.src.path).time_since_epoch() > std::filesystem::last_write_time(program.binPath).time_since_epoch();
@@ -342,7 +356,9 @@ Shader vk::makeShader(std::string_view src, std::string_view bin, VkDevice dev)
     if(fs::exists(program.binPath) && !outdated && fs::is_directory(program.binPath))
     {
         collectBinaries(program);
+#if !STRIP_SHADER_COMPILATION
     } else if(canCompile) {
+
         if(!compileSources(program, splitSources(program)))
             return program;
 
@@ -353,27 +369,29 @@ Shader vk::makeShader(std::string_view src, std::string_view bin, VkDevice dev)
             writeFileBinary(bin.path, reinterpret_cast<char const *>(bin.spirv.data()), bin.spirv.size() * sizeof(bin.spirv[0]));
         }
     } else {
+#endif // STRIP_SHADER_COMPILATION
         LOG_ERROR("Cannot find binaries \"{}\" or compile from source \"{}\" shaders!", bin, src);
         return program;
     }
 
     // Create vulkan modules from binaries.
+    program.device = dev;
     for(auto &bin : program.binaries)
     {
         VkShaderModuleCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
         createInfo.codeSize = bin.spirv.size() * sizeof(bin.spirv[0]);
         createInfo.pCode = bin.spirv.data();
-        CHK(vkCreateShaderModule(dev, &createInfo, nullptr, &bin.module));
+        CHK(vkCreateShaderModule(program.device, &createInfo, nullptr, &bin.module));
     }
 
     program.valid = true;
     return program;
 }
 
-void vk::destroy(VkDevice dev, Shader &shader)
+void vk::destroy(Shader &shader)
 {
     for(auto &bin :shader.binaries)
         if(bin.module)
-            vkDestroyShaderModule(dev, bin.module, nullptr);
+            vkDestroyShaderModule(shader.device, bin.module, nullptr);
 }

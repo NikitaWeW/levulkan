@@ -4,13 +4,13 @@ using namespace vk;
 
 std::string _sChkLastFileLine;
 
-#define ALLOCATOR_HERE nullptr
+#define nullptr nullptr
 
 static bool createInstance(InitInfo const &info, InitResult &result)
 {
     VkApplicationInfo appInfo{
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-        .pApplicationName = "levulkan",
+        .pApplicationName = info.appName.c_str(),
         .apiVersion = info.version
     };
 
@@ -19,9 +19,13 @@ static bool createInstance(InitInfo const &info, InitResult &result)
     std::vector<VkExtensionProperties> availableExtensions(numExtensionsAvailable);
     vkEnumerateInstanceExtensionProperties(nullptr, &numExtensionsAvailable, availableExtensions.data());
 
-    uint32_t glfwExtensionCount = 0;
-    const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-    auto requiredExtensions = std::vector<char const *>(glfwExtensions, glfwExtensions + glfwExtensionCount);
+    std::vector<char const *> requiredExtensions;
+    if(!info.offscreen)
+    {
+        uint32_t glfwExtensionCount = 0;
+        const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+        requiredExtensions = std::vector<char const *>(glfwExtensions, glfwExtensions + glfwExtensionCount);
+    }
 
     for(auto const &extension : requiredExtensions)
     {
@@ -44,8 +48,6 @@ static bool createInstance(InitInfo const &info, InitResult &result)
         }
     }
 
-    LOG_TRACE("Instance extensions: {}", result.enabledInstanceExtensions);
-
     uint32_t layerCount;
     vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
     std::vector<VkLayerProperties> availableLayers(layerCount);
@@ -62,9 +64,7 @@ static bool createInstance(InitInfo const &info, InitResult &result)
         }
     }
     if(result.enabledLayers.empty())
-        LOG_WARN("Validation layers disabled!");
-    else
-        LOG_INFO("Layers: {}", result.enabledLayers);
+        LOG_TRACE("Validation layers disabled!");
 
     VkInstanceCreateInfo instanceCI{
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
@@ -75,7 +75,7 @@ static bool createInstance(InitInfo const &info, InitResult &result)
         .ppEnabledExtensionNames = result.enabledInstanceExtensions.data(),
     };
 
-    auto res = vkCreateInstance(&instanceCI, ALLOCATOR_HERE, &result.instance);
+    auto res = vkCreateInstance(&instanceCI, nullptr, &result.instance);
     if(res != VK_SUCCESS)
     {
         LOG_ERROR("Failed to create instance: {}!", string_VkResult(res));
@@ -158,9 +158,10 @@ static bool checkDeviceExtensionSupport(VkPhysicalDevice device, std::vector<cha
     return requiredExtensions.empty();
 }
 
+// A bit janky but works
 static void addToFamilies(QueueFamilies &indices, uint32_t i)
 {
-    float priorities = 1.0f;
+    static float priorities = 1.0f;
     indices.deviceCreateInfo[i] = VkDeviceQueueCreateInfo{
         .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
         .queueFamilyIndex = i,
@@ -170,9 +171,14 @@ static void addToFamilies(QueueFamilies &indices, uint32_t i)
     indices.uniqueFamilies[i] = i;
     ++indices.count;
 }
-static QueueFamilies findQueueFamilies(VkPhysicalDevice const &device, VkSurfaceKHR surface)
+static bool complete(QueueFamilies const &families, std::vector<VkQueueFlagBits> const &queues, bool offscreen)
+{
+    return (offscreen || families.presentQueue) && queues.size() == (offscreen ? families.count : families.count - 1);
+}
+static QueueFamilies findQueueFamilies(VkPhysicalDevice const &device, VkSurfaceKHR surface, std::vector<VkQueueFlagBits> const &queues)
 {
     QueueFamilies indices;
+    bool offscreen = !surface;
     
     uint32_t queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
@@ -182,61 +188,91 @@ static QueueFamilies findQueueFamilies(VkPhysicalDevice const &device, VkSurface
     for(uint32_t i = 0; i < queueFamilies.size(); ++i)
     {
         auto const &family = queueFamilies[i];
-        if(family.queueFlags & VK_QUEUE_GRAPHICS_BIT)
-        {
-            indices.graphics = i;
-            addToFamilies(indices, i);
-        }
-        if(family.queueFlags & VK_QUEUE_TRANSFER_BIT)
-        {
-            indices.transfer = i;
-            addToFamilies(indices, i);
+        
+        for(auto type : queues) {
+            if(type & family.queueFlags)
+            {
+                indices.indices[type] = i;
+                addToFamilies(indices, i);
+            }
         }
 
-        VkBool32 presentSupport;
-        vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
-        if(presentSupport)
+        if(!offscreen)
         {
-            indices.present = i;
-            addToFamilies(indices, i);
+            VkBool32 presentSupport;
+            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
+            if(presentSupport)
+            {
+                indices.presentQueue = i;
+                addToFamilies(indices, i);
+            }
         }
 
-        if(indices.isComplete()) break;
+        if(complete(indices, queues, offscreen))
+            break;
     }
 
-    // FIXME: something is wrong
     return indices;
 }
 
-static bool isDeviceSuitable(VkPhysicalDevice dev, VkSurfaceKHR surface, std::vector<char const *> const &deviceExtensions)
+VkQueue QueueFamilies::getQueue(VkQueueFlagBits type, uint32_t queueIndex) const
 {
+    if(!indices.contains(type)) 
+        return VK_NULL_HANDLE;
+
+    VkQueue queue;
+    vkGetDeviceQueue(device, indices.at(type), queueIndex, &queue);
+    return queue;
+}
+
+static bool isDeviceSuitable(VkPhysicalDevice dev, VkSurfaceKHR surface, InitInfo const &info)
+{
+    bool presentSupport = false;
+    if(!info.offscreen)
+    {
+        std::vector<VkSurfaceFormatKHR> formats;
+        uint32_t formatCount;
+        vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &formatCount, nullptr);
+    
+        if(formatCount != 0) {
+            formats.resize(formatCount);
+            vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &formatCount, formats.data());
+        }
+        std::vector<VkPresentModeKHR> presentModes;
+    
+        uint32_t presentModeCount;
+        vkGetPhysicalDeviceSurfacePresentModesKHR(dev, surface, &presentModeCount, nullptr);
+    
+        if(presentModeCount != 0) {
+            presentModes.resize(presentModeCount);
+            vkGetPhysicalDeviceSurfacePresentModesKHR(dev, surface, &presentModeCount, presentModes.data());
+        }
+        presentSupport = formats.size() > 0 && presentModes.size() > 0;
+    }
+
     VkPhysicalDeviceFeatures2 features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
     vkGetPhysicalDeviceFeatures2(dev, &features);
-    
-    std::vector<VkSurfaceFormatKHR> formats;
-    uint32_t formatCount;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &formatCount, nullptr);
+    bool featureSupport = features.features.geometryShader;
 
-    if(formatCount != 0) {
-        formats.resize(formatCount);
-        vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &formatCount, formats.data());
+    bool queueSupport = complete(findQueueFamilies(dev, surface, info.queues), info.queues, info.offscreen);
+    bool extensionSupport = checkDeviceExtensionSupport(dev, info.deviceExtensions);
+
+    bool suitable = 
+        featureSupport && 
+        queueSupport &&
+        extensionSupport &&
+        (info.offscreen || presentSupport);
+
+    if(!suitable)
+    {
+        LOG_WARN("Device suitability:");
+        LOG_WARN("Feature support:   {}", featureSupport);
+        LOG_WARN("Queue support:     {}", queueSupport);
+        LOG_WARN("Extension support: {}", extensionSupport);
+        LOG_WARN("Present support:   {}", presentSupport);
     }
-    std::vector<VkPresentModeKHR> presentModes;
 
-    uint32_t presentModeCount;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(dev, surface, &presentModeCount, nullptr);
-
-    if(presentModeCount != 0) {
-        presentModes.resize(presentModeCount);
-        vkGetPhysicalDeviceSurfacePresentModesKHR(dev, surface, &presentModeCount, presentModes.data());
-    }
-
-    bool requiredFeatures = features.features.geometryShader;
-    return 
-        requiredFeatures && 
-        findQueueFamilies(dev, surface).isComplete() &&
-        checkDeviceExtensionSupport(dev, deviceExtensions) &&
-        formats.size() > 0 && presentModes.size() > 0;
+    return suitable;
 }
 static bool pickPhysicalDevice(InitInfo const &info, InitResult &result)
 {
@@ -256,7 +292,7 @@ static bool pickPhysicalDevice(InitInfo const &info, InitResult &result)
         vkGetPhysicalDeviceProperties2(dev, &deviceProperties);
         vkGetPhysicalDeviceFeatures2(dev, &deviceFeatures);
 
-        if(!isDeviceSuitable(dev, result.surface, info.deviceExtensions))
+        if(!isDeviceSuitable(dev, result.surface, info))
         {
             LOG_WARN("Physical device \"{}\" is not suitable!", deviceProperties.properties.deviceName);
             continue;
@@ -265,11 +301,10 @@ static bool pickPhysicalDevice(InitInfo const &info, InitResult &result)
         result.physicalDevice = dev;
         result.enabledDeviceExtensions = info.deviceExtensions;
         deviceFound = true;
+        break;
     }    
 
     return deviceFound;
-
-    return false;
 }
 
 
@@ -303,7 +338,7 @@ static VkDevice createDevice(VkPhysicalDevice const &physicalDevice, QueueFamili
         .pEnabledFeatures = &deviceFeatures.features,
     };
     VkDevice device;
-    vkCreateDevice(physicalDevice, &deviceCI, ALLOCATOR_HERE, &device);
+    vkCreateDevice(physicalDevice, &deviceCI, nullptr, &device);
     volkLoadDevice(device);
 
     return device;
@@ -334,9 +369,13 @@ InitResult vk::init(InitInfo info)
         return result;
     }
 
+    LOG_TRACE("Instance extensions: {}", result.enabledInstanceExtensions);
+    LOG_TRACE("Layers: {}", result.enabledLayers);
+
+    if(!info.offscreen) 
     {
         LOG_TRACE("Creating window surface");
-        auto res = glfwCreateWindowSurface(result.instance, info.window, ALLOCATOR_HERE, &result.surface);
+        auto res = glfwCreateWindowSurface(result.instance, info.window, nullptr, &result.surface);
         if(res != VK_SUCCESS)
         {
             LOG_ERROR("Failed to create window surface: {}!", string_VkResult(res));
@@ -354,7 +393,12 @@ InitResult vk::init(InitInfo info)
             .pfnUserCallback = info.debugCallbackOverride ? info.debugCallbackOverride : debugCallback,
             .pUserData = nullptr
         };
-        vkCreateDebugUtilsMessengerEXT(result.instance, &debugMessengerCI, ALLOCATOR_HERE, &result.debugMessenger);
+        vkCreateDebugUtilsMessengerEXT(result.instance, &debugMessengerCI, nullptr, &result.debugMessenger);
+    }
+
+    if(!info.offscreen)
+    {
+        info.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
     }
 
     if(!pickPhysicalDevice(info, result))
@@ -368,8 +412,11 @@ InitResult vk::init(InitInfo info)
     vkGetPhysicalDeviceProperties(result.physicalDevice, &properties);
     LOG_INFO("Physical device: \"{}\"", properties.deviceName);
 
-    result.queueFamilies = findQueueFamilies(result.physicalDevice, result.surface);
+    result.queueFamilies = findQueueFamilies(result.physicalDevice, result.surface, info.queues);
     result.device = createDevice(result.physicalDevice, result.queueFamilies, info.deviceExtensions);
+    result.queueFamilies.device = result.device;
+
+    LOG_TRACE("Device extensions: {}", result.enabledDeviceExtensions);
 
     createAllocator(info, result);
 
