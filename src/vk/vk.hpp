@@ -1,3 +1,13 @@
+/*
+$$\    $$\ $$\   $$\   My vulkan abstraction.
+$$ |   $$ |$$ | $$  |  Copyright (c) 2026 Nikita Martynau 
+$$ |   $$ |$$ |$$  /   https://opensource.org/license/mit 
+\$$\  $$  |$$$$$  /    insert git repo url here
+ \$$\$$  / $$  $$<     
+  \$$$  /  $$ |\$$\    
+   \$  /   $$ | \$$\   
+    \_/    \__|  \__|  
+*/
 #pragma once
 
 #include <bits/stdc++.h>
@@ -34,7 +44,7 @@ struct InitInfo
     std::vector<char const *> instanceExtensions; ///< A list of required instance extensions excluding required extensions.
     std::vector<char const *> deviceExtensions; ///< A list of required device extensions excluding required extensions. VK_KHR_SWAPCHAIN_EXTENSION_NAME is implicitly included if offscreen is not true.
     std::vector<char const *> layers; ///< A list of required layers.
-    std::underlying_type_t<VkQueueFlagBits> queues = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT; ///< A list of required queues. Present queue is searched for implicitly.
+    std::vector<VkQueueFlagBits> queues = { VK_QUEUE_GRAPHICS_BIT, VK_QUEUE_COMPUTE_BIT, VK_QUEUE_TRANSFER_BIT }; ///< A list of required queues. Present queue is searched for implicitly.
 
     VkDebugUtilsMessageSeverityFlagsEXT messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
     PFN_vkDebugUtilsMessengerCallbackEXT debugCallbackOverride = nullptr; ///< Leave nullptr for default callback.

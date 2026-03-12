@@ -155,7 +155,7 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    vk::Shader shader = vk::makeShader("shaders/basic", "shaders-bin");
+    vk::Shader shader = vk::makeShader("shaders/basic.glsl", "shaders-bin/basic");
 
     if(!shader.valid)
     {
