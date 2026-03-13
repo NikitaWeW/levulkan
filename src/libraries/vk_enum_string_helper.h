@@ -7103,6 +7103,8 @@ static inline const char* string_VkShaderStageFlagBits(VkShaderStageFlagBits inp
             return "VK_SHADER_STAGE_SUBPASS_SHADING_BIT_HUAWEI";
         case VK_SHADER_STAGE_CLUSTER_CULLING_BIT_HUAWEI:
             return "VK_SHADER_STAGE_CLUSTER_CULLING_BIT_HUAWEI";
+        case VK_SHADER_STAGE_ALL:
+            return "VK_SHADER_STAGE_ALL";
         default:
             return "Unhandled VkShaderStageFlagBits";
     }

@@ -5,12 +5,12 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 \$$\  $$  |$$$$$  /    insert git repo url here
  \$$\$$  / $$  $$<     
   \$$$  /  $$ |\$$\    Custom GLSL preprocessor.
-   \$  /   $$ | \$$\   Allows to split (#include) and merge (#stage) sources 
+   \$  /   $$ | \$$\   Allows to have all the stages in one file via the new #stage directive
     \_/    \__|  \__|  and manage spirv shader binaries.
 */
 #include "vk.hpp"
 #include "Logging.hpp"
-#include "glslang/Include/glslang_c_interface.h"
+#include "glslang/Public/ShaderLang.h"
 #include "glslang/Public/resource_limits_c.h"
 
 using namespace vk;
@@ -197,24 +197,30 @@ static std::string readFileWithIncludes(std::string path, std::string prevDir = 
 }
 static std::map<VkShaderStageFlagBits, std::string> splitSources(Shader &program)
 {
+    // FIXME: #lines are fucked up.
+    // FIX: Ditch readFileWithIncludes and extensions and use glslang c++ api DirStackFileIncluder
     std::map<VkShaderStageFlagBits, std::string> stages;
     VkShaderStageFlagBits currentStage = VK_SHADER_STAGE_ALL;
     auto &src = program.src.data;
 
     src.insert(0, std::string(STAGE_IDENTIFIER) + " all\n");
 
-    size_t pos = 0;
+    size_t pos = 0, line = 1;
     while(true) 
     {
         auto directive = src.find(STAGE_IDENTIFIER, pos);
         if(directive == std::string::npos)
             break;
 
-        auto stageStart = src.find_first_not_of(" \t", directive) + STAGE_IDENTIFIER.size();
-        auto chunkStart = src.find_first_of('\n', directive);
+        auto stageStart = directive + STAGE_IDENTIFIER.size();
+        auto chunkStart = std::min(src.find_first_of('\n', directive), src.size());
         auto stageName = src.substr(stageStart, chunkStart - stageStart);
         ltrim(stageName);
         rtrim(stageName);
+        auto nextDirective = std::min(src.find(STAGE_IDENTIFIER, chunkStart), src.size());
+        std::string chunk = src.substr(chunkStart, nextDirective - chunkStart);
+        line = std::count(src.begin(), src.begin() + directive, '\n') + 1;
+        pos = nextDirective;
 
         if(gStageNameToVulkanEnum.find(stageName) != gStageNameToVulkanEnum.end())
         {
@@ -224,17 +230,18 @@ static std::map<VkShaderStageFlagBits, std::string> splitSources(Shader &program
         }
 
         auto &stage = stages[currentStage];
-        auto nextDirective = src.find(STAGE_IDENTIFIER, chunkStart);
-        pos = nextDirective;
-        stage.append(src.substr(chunkStart, nextDirective - chunkStart));
+        stage.append("#line " + std::to_string(line) + " \"" + program.src.path + "\"\n");
+        stage.append(chunk);
     }
 
     auto all = stages[VK_SHADER_STAGE_ALL];
+    LOG_VAR(all);
     stages.erase(VK_SHADER_STAGE_ALL);
-    for(auto &[stage, src] : stages)
+    for(auto &[stage, source] : stages)
     {
-        src.insert(0, all);
-        LOG_TRACE("Stage {}:\n{:4}", string_VkShaderStageFlagBits(stage), src);
+        source.insert(source.find_first_of('\n') + 1, all);
+        
+        LOG_TRACE("Stage {}:\n{:4}", string_VkShaderStageFlagBits(stage), source);
     }
 
     return stages;
@@ -269,6 +276,7 @@ static bool compileSources(Shader &program, std::map<VkShaderStageFlagBits, std:
         };
 
         glslang_shader_t *glslShader = glslang_shader_create(&input);
+        glslang_shader_set_preamble(glslShader, "#extension GL_GOOGLE_cpp_style_line_directive : enable\n");
 
         if(!glslang_shader_preprocess(glslShader, &input))	{
             LOG_ERROR("GLSL preprocessing of \"{}\" failed: \n{}\n{}", program.src.path, glslang_shader_get_info_log(glslShader), glslang_shader_get_info_debug_log(glslShader));
