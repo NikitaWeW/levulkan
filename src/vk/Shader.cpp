@@ -224,6 +224,9 @@ static void collectBinaries(Shader &program)
     // Parse the metadata and add binaries.
     for(auto const &directoryEntry : std::filesystem::recursive_directory_iterator{program.binPath})
     {
+        if(!directoryEntry.is_regular_file())
+            continue;
+
         auto binPath = directoryEntry.path().string();
 
         auto stageName = directoryEntry.path().stem().string();
@@ -379,8 +382,8 @@ static std::map<VkShaderStageFlagBits, std::string> splitSources(Shader &program
     std::string line;
     while(std::getline(stream, line)) 
     {
-        auto directive = line.find(STAGE_IDENTIFIER);
-        if(directive == std::string::npos)
+        auto directive = line.find_first_not_of(" \t");
+        if(directive == std::string::npos || line.compare(directive, STAGE_IDENTIFIER.size(), STAGE_IDENTIFIER) != 0)
         {
             stages[currentStage].append(line + '\n');
         } else {
@@ -395,7 +398,8 @@ static std::map<VkShaderStageFlagBits, std::string> splitSources(Shader &program
                 LOG_ERROR("\"{}\": unknown stage name: \"{}\":\n{}", program.src.path, stageName, line);
             }
 
-            stages[currentStage].append("#line " + std::to_string(lineNum++) + '\n');
+            stages[currentStage].append("#line " + std::to_string(lineNum) + " \"" + program.src.path + "\"\n");
+            stages[currentStage].append("\n");
         }
 
         ++lineNum;
@@ -409,10 +413,13 @@ static std::map<VkShaderStageFlagBits, std::string> splitSources(Shader &program
 
         // move #version to top of the source
         size_t versionPos = source.find("#version");
-        auto lineSize = source.find('\n', versionPos) - versionPos + 1;
-        auto version = source.substr(versionPos, lineSize);
-        source.erase(versionPos, lineSize);
-        source.insert(0, version);
+        if(versionPos != std::string::npos)
+        {
+            auto lineSize = source.find('\n', versionPos) - versionPos + 1;
+            auto version = source.substr(versionPos, lineSize);
+            source.erase(versionPos, lineSize);
+            source.insert(0, version);
+        }
     }
 
     return stages;
@@ -451,7 +458,7 @@ static bool compileSources(Shader &program, std::map<VkShaderStageFlagBits, std:
         int l = source.size();
         auto name = program.src.path.c_str();
         glslShader->setStringsWithLengthsAndNames(&cString, &l, &name, 1);
-        glslShader->setPreamble("#extension GL_GOOGLE_include_directive : enable\n"); // 
+        glslShader->setPreamble("#extension GL_GOOGLE_cpp_style_line_directive : enable\n#extension GL_GOOGLE_include_directive : enable\n"); // Parser refuses to process the includer without the extension enabled
 
         if(!glslShader->parse(&resources, 130, false, messages, includer))
         {
@@ -511,21 +518,21 @@ Shader vk::makeShader(std::string_view src, std::string_view bin, VkDevice dev)
     }
 
     bool canCompile = fs::exists(src);
+    bool canCollect = fs::exists(bin) && fs::is_directory(program.binPath);
 
     program.binPath = bin;
-    if(canCompile)
-    {
-        program.src.path = src;
+    program.src.path = src;
+
 #if !STRIP_SHADER_COMPILATION
+    if(canCompile)
         program.src.data = readFileString(program.src.path);
 #endif // STRIP_SHADER_COMPILATION
-    }
 
     bool outdated = fs::exists(src) && fs::exists(program.binPath) && (std::filesystem::last_write_time(program.src.path).time_since_epoch() > std::filesystem::last_write_time(program.binPath).time_since_epoch());
     if(outdated && canCompile)
         LOG_INFO("\"{}\" shader binaries are outdated! Recompiling", program.src.path);
 
-    if(fs::exists(program.binPath) && !outdated && fs::is_directory(program.binPath))
+    if(canCollect && !outdated)
     {
         LOG_TRACE("Collecting binaries from \"{}\"", program.binPath);
         collectBinaries(program);
@@ -561,6 +568,8 @@ Shader vk::makeShader(std::string_view src, std::string_view bin, VkDevice dev)
             createInfo.pCode = bin.spirv.data();
             CHK(vkCreateShaderModule(program.device, &createInfo, nullptr, &bin.module));
         }
+    } else {
+        LOG_WARN("Not creating shader modules for \"{}\"/\"{}\", because device is VK_NULL_HANDLE.", program.src.path, program.binPath);
     }
 
     program.valid = true;

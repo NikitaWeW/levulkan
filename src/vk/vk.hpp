@@ -119,8 +119,8 @@ struct Shader
 /// #stage all will append the block to all the defined stages.
 /// At the beginning of the source the the stage is implicitly "#stage all"
 /// For a full list of valid stage names look into Shader.cpp
-/// @param src The path to the source file. Can be empty.
-/// @param bin The path to the binary root directory.
+/// @param src The path to the source file. Can be empty to disable shader compilation.
+/// @param bin The path to the binary root directory. Can be empty to disable writing and collecting shader binaries.
 /// @param dev The logical device. Leave null to not create shader modules.
 /// @returns Shader with valid flag set to true if successful.
 Shader makeShader(std::string_view src, std::string_view bin, VkDevice dev = VK_NULL_HANDLE);
