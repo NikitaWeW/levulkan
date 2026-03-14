@@ -21,7 +21,6 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 #include "glm/glm.hpp"
 #include "ECS.hpp"
 
-
 #ifndef DONT_CHECK_VK
 extern std::string _sChkLastFileLine;
 #define CHK(x) { _sChkLastFileLine = std::string(__FILE__) + ':' + std::to_string(__LINE__); VkResult _result = x; if(_result != VK_SUCCESS) { LOG_ERROR("{}:{}: Failed to {}: {}.", __FILE__, __LINE__, #x, string_VkResult(_result)); /* LOG_WARN("Aborting..."); abort(); */ }}

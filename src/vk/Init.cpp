@@ -420,7 +420,7 @@ InitResult vk::init(InitInfo info)
 
     VkPhysicalDeviceProperties properties;
     vkGetPhysicalDeviceProperties(result.physicalDevice, &properties);
-    LOG_INFO("Physical device: \"{}\"", properties.deviceName);
+    LOG_TRACE("Physical device: \"{}\"", properties.deviceName);
 
     result.queueFamilies = findQueueFamilies(result.physicalDevice, result.surface, info.queues);
     result.device = createDevice(result.physicalDevice, result.queueFamilies, info.deviceExtensions);
