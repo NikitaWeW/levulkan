@@ -91,6 +91,17 @@ struct InitResult
 /// @brief Initialize vulkan instance together with other stuff.
 InitResult init(InitInfo info);
 
+struct ShaderCreateInfo
+{
+    std::string src; ///< The path to the source file. Can be empty to disable shader compilation.
+    std::string bin; ///< The path to the binary root directory. Can be empty to disable writing and collecting shader binaries.
+    VkDevice device = VK_NULL_HANDLE; ///< The logical device. Leave null to not create shader modules.
+    std::vector<std::string> includeDirs; ///< Local ("") include directories. First most relevant. Source directory added implicitly.
+    std::vector<std::string> systemIncludeDirs; ///< System ("") include directories. First most relevant.
+    std::vector<std::pair<std::string, std::string>> definitions; ///< Preprocessor definitions.
+    bool debugInfo = true;
+};
+
 /// @brief The compiled spirv program.
 struct Shader
 {
@@ -101,27 +112,11 @@ struct Shader
         VkShaderModule module = VK_NULL_HANDLE;
         std::string path;
     };
-    struct Source
-    {
-        std::string data;
-        std::string path; 
-    };
 
     bool valid = false;
-    VkDevice device = VK_NULL_HANDLE;
     std::vector<Binary> binaries;
-    Source src;
-    std::string binPath;
-};
-
-struct ShaderCreateInfo
-{
-    std::string src; ///< The path to the source file. Can be empty to disable shader compilation.
-    std::string bin; ///< The path to the binary root directory. Can be empty to disable writing and collecting shader binaries.
-    VkDevice device = VK_NULL_HANDLE; ///< The logical device. Leave null to not create shader modules.
-    std::vector<std::string> includeDirs; ///< Local ("") include directories. First most relevant. Source directory added implicitly.
-    std::vector<std::string> systemIncludeDirs; ///< System ("") include directories. First most relevant.
-    std::vector<std::pair<std::string, std::string>> definitions; ///< Preprocessor definitions.
+    std::string source;
+    ShaderCreateInfo createInfo;
 };
 
 /// @brief Make a shader program from the file.
@@ -156,6 +151,17 @@ struct Buffer
     void *mapped = nullptr;
 };
 
+struct SwapchainCreateInfo
+{
+
+};
+struct Swapchain
+{
+    SwapchainCreateInfo createInfo;
+};
+// TODO
+Swapchain makeSwapchain(SwapchainCreateInfo const &ci);
+
 /// @brief The vulkan pipeline.
 struct Pipeline
 {
@@ -169,20 +175,22 @@ struct Pipeline
 struct PipelineCreateInfo
 {
     Pipeline::Type type = Pipeline::Type::INVALID;
-    std::vector<VkDynamicState> dynamicState;
-    std::unordered_map<std::string, Image> images;
-    std::unordered_map<std::string, Buffer> buffers;
+    std::vector<VkDynamicState> dynamicState; ///< Dynamic state to enable.
+    std::unordered_map<uint32_t, Image> images; ///< Image resources corresponding to the shader resource name.
+    std::unordered_map<uint32_t, Buffer> buffers; ///< Buffer resources corresponding to the shader resource name.
+    std::unordered_map<uint32_t, VkDescriptorSetLayoutCreateFlagBits> descriptorSetFlags; ///< Optional flags for descriptor sets.
+    bool interleavedVertices = false; ///< Controls whether the vertex input is interleaved (one big buffer) or not (one buffer for each variable)
     struct {
         std::vector<VkFormat> colorFormats;
         VkFormat depthFormat = VK_FORMAT_UNDEFINED;
         VkFormat stencilFormat = VK_FORMAT_UNDEFINED;
-    } graphics;
+    } graphics; ///< Graphics pipeline settings.
     struct {
         // empty
-    } compute;
+    } compute; ///< Compute pipeline settings.
     struct {
         uint32_t maxPipelineRayRecursionDepth = 1;
-    } raytracing;
+    } raytracing; ///< Raytracing pipeline settings.
 };
 
 /// @brief Make a pipeline based on the shader reflection and other stuff.
@@ -223,6 +231,7 @@ struct VulkanModel
 /// @brief Allocate the model.
 VulkanModel processModel(Model const &model);
 
+void destroy(Swapchain &pipeline);
 void destroy(Shader &shader);
 void destroy(Pipeline &pipeline);
 void destroy(VulkanModel &model);

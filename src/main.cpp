@@ -155,7 +155,12 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    vk::Shader shader = vk::makeShader("shaders/basic.glsl", "shaders-bin/basic");
+    vk::ShaderCreateInfo shaderCI{
+        .src = "shaders/basic.glsl", 
+        .bin = "shaders-bin/basic", 
+        .device = initRes.device
+    };
+    vk::Shader shader = vk::makeShader(shaderCI);
 
     if(!shader.valid)
     {
@@ -163,7 +168,12 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    // vk::Pipeline pipeline = vk::makePipeline(shader);
+    vk::PipelineCreateInfo pipelineCI{
+        .type = vk::Pipeline::Type::GRAPHICS,
+        .graphics = {
+        }
+    };
+    vk::Pipeline pipeline = vk::makePipeline(shader, pipelineCI);
 
     // auto suzanne = loadModel("assets/suzanne.glb");
 
@@ -174,7 +184,7 @@ int main(int argc, char **argv)
     //     vk::destroy(e.get<vk::VulkanModel>());
     // }
 
-    // vk::destroy(pipeline);
+    vk::destroy(pipeline);
     vk::destroy(shader);
 
     vmaDestroyAllocator(initRes.vma);
