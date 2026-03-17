@@ -107,11 +107,21 @@ struct Shader
         std::string path; 
     };
 
-    VkDevice device = VK_NULL_HANDLE;
     bool valid = false;
+    VkDevice device = VK_NULL_HANDLE;
     std::vector<Binary> binaries;
     Source src;
     std::string binPath;
+};
+
+struct ShaderCreateInfo
+{
+    std::string src; ///< The path to the source file. Can be empty to disable shader compilation.
+    std::string bin; ///< The path to the binary root directory. Can be empty to disable writing and collecting shader binaries.
+    VkDevice device = VK_NULL_HANDLE; ///< The logical device. Leave null to not create shader modules.
+    std::vector<std::string> includeDirs; ///< Local ("") include directories. First most relevant. Source directory added implicitly.
+    std::vector<std::string> systemIncludeDirs; ///< System ("") include directories. First most relevant.
+    std::vector<std::pair<std::string, std::string>> definitions; ///< Preprocessor definitions.
 };
 
 /// @brief Make a shader program from the file.
@@ -119,25 +129,11 @@ struct Shader
 /// #stage all will append the block to all the defined stages.
 /// At the beginning of the source the the stage is implicitly "#stage all"
 /// For a full list of valid stage names look into Shader.cpp
-/// @param src The path to the source file. Can be empty to disable shader compilation.
-/// @param bin The path to the binary root directory. Can be empty to disable writing and collecting shader binaries.
-/// @param dev The logical device. Leave null to not create shader modules.
 /// @returns Shader with valid flag set to true if successful.
-Shader makeShader(std::string_view src, std::string_view bin, VkDevice dev = VK_NULL_HANDLE);
-
-/// @brief The vulkan pipeline.
-struct Pipeline
-{
-    VkSwapchainKHR swapchain;
-    VkPipeline pipeline;
-    // TODO: add more stuff
-};
-
-/// @brief Make a pipeline based on the shader reflection.
-Pipeline makePipeline(Shader const &shader);
+Shader makeShader(ShaderCreateInfo const &ci);
 
 /// @brief The image allocated on the gpu
-struct ImageAllocation
+struct Image
 {
     VmaAllocation allocation = VK_NULL_HANDLE;
     VkImage image = VK_NULL_HANDLE;
@@ -151,7 +147,7 @@ struct ImageAllocation
     uint numMipLevels = 1;
 };
 /// @brief A buffer data allocated on the gpu
-struct BufferAllocation
+struct Buffer
 {
     VmaAllocation allocation;
     VkBuffer buffer;
@@ -160,6 +156,38 @@ struct BufferAllocation
     void *mapped = nullptr;
 };
 
+/// @brief The vulkan pipeline.
+struct Pipeline
+{
+    enum class Type { INVALID, GRAPHICS, COMPUTE, RAYTRACING };
+    Type type = Type::INVALID;
+    VkSwapchainKHR swapchain;
+    VkPipeline pipeline;
+    std::unordered_map<std::string, Image> images;
+    std::unordered_map<std::string, Buffer> buffers;
+};
+struct PipelineCreateInfo
+{
+    Pipeline::Type type = Pipeline::Type::INVALID;
+    std::vector<VkDynamicState> dynamicState;
+    std::unordered_map<std::string, Image> images;
+    std::unordered_map<std::string, Buffer> buffers;
+    struct {
+        std::vector<VkFormat> colorFormats;
+        VkFormat depthFormat = VK_FORMAT_UNDEFINED;
+        VkFormat stencilFormat = VK_FORMAT_UNDEFINED;
+    } graphics;
+    struct {
+        // empty
+    } compute;
+    struct {
+        uint32_t maxPipelineRayRecursionDepth = 1;
+    } raytracing;
+};
+
+/// @brief Make a pipeline based on the shader reflection and other stuff.
+Pipeline makePipeline(Shader const &shader, PipelineCreateInfo const &ci);
+
 /// @brief The model allocated ons the gpu
 struct VulkanModel
 {
@@ -167,20 +195,20 @@ struct VulkanModel
     {
         struct Textures
         {
-            ImageAllocation albedo;
-            ImageAllocation metallic;
-            ImageAllocation roughness;
-            ImageAllocation ambient;
-            ImageAllocation normal;
-            ImageAllocation displacement;
+            Image albedo;
+            Image metallic;
+            Image roughness;
+            Image ambient;
+            Image normal;
+            Image displacement;
         } textures;
         struct Buffers
         {
-            BufferAllocation pos;
-            BufferAllocation uv;
-            BufferAllocation norm;
-            BufferAllocation tan;
-            BufferAllocation idx;
+            Buffer pos;
+            Buffer uv;
+            Buffer norm;
+            Buffer tan;
+            Buffer idx;
         } buffers;
         size_t indexCount;
         size_t meshIndex;
@@ -195,8 +223,10 @@ struct VulkanModel
 /// @brief Allocate the model.
 VulkanModel processModel(Model const &model);
 
-void destroy(Shader &shader); ///< Destroy the shader
-void destroy(Pipeline &pipeline); ///< Destroy the pipeline
-void destroy(VulkanModel &model); ///< Destroy the model
+void destroy(Shader &shader);
+void destroy(Pipeline &pipeline);
+void destroy(VulkanModel &model);
+void destroy(Image &image);
+void destroy(Buffer &buffer);
 
 }; // namespace vk

@@ -13,25 +13,31 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 #include "glslang/Public/ShaderLang.h"
 #include "glslang/SPIRV/GlslangToSpv.h"
 
+using namespace vk;
+namespace fs = std::filesystem;
+
+#ifndef STRIP_SHADER_COMPILATION
+#define STRIP_SHADER_COMPILATION 0
+#endif // STRIP_SHADER_COMPILATION
+
+#if !STRIP_SHADER_COMPILATION
+
 /// @brief Default include class for normal include convention
 /// of search backward through the stack of active include paths (for nested includes).
 /// Source: https://github.com/KhronosGroup/glslang StandAlone/DirStackFileIncluder.h
+/// Modified to support system includes.
 class DirStackFileIncluder : public glslang::TShader::Includer {
 public:
-    DirStackFileIncluder() : externalLocalDirectoryCount(0) { }
+    DirStackFileIncluder() = default;
 
-    virtual IncludeResult* includeLocal(const char* headerName,
-                                        const char* includerName,
-                                        size_t inclusionDepth) override
+    virtual IncludeResult* includeLocal(const char* headerName, const char* includerName, size_t inclusionDepth) override
     {
-        return readLocalPath(headerName, includerName, (int)inclusionDepth);
+        return readPath(headerName, includerName, externalLocalDirectoryCount, (int)inclusionDepth, localDirectoryStack);
     }
 
-    virtual IncludeResult* includeSystem(const char* headerName,
-                                         const char* /*includerName*/,
-                                         size_t /*inclusionDepth*/) override
+    virtual IncludeResult* includeSystem(const char* headerName, const char* includerName, size_t inclusionDepth) override
     {
-        return readSystemPath(headerName);
+        return readPath(headerName, includerName, externalSystemDirectoryCount, (int)inclusionDepth, systemDirectoryStack);
     }
 
     // Externally set directories. E.g., from a command-line -I<dir>.
@@ -42,8 +48,20 @@ public:
     //  - Makes its own copy of the path.
     virtual void pushExternalLocalDirectory(const std::string& dir)
     {
-        directoryStack.push_back(dir);
-        externalLocalDirectoryCount = (int)directoryStack.size();
+        localDirectoryStack.push_back(dir);
+        externalLocalDirectoryCount = (int)localDirectoryStack.size();
+    }
+
+    // Externally set directories. E.g., from a command-line -I<dir>.
+    //  - Most-recently pushed are checked first.
+    //  - All these are checked after the parse-time stack of local directories
+    //    is checked.
+    //  - This only applies to the <system> form of #include.
+    //  - Makes its own copy of the path.
+    virtual void pushExternalSystemDirectory(std::string const &dir)
+    {
+        systemDirectoryStack.push_back(dir);
+        externalLocalDirectoryCount = (int)systemDirectoryStack.size();
     }
 
     virtual void releaseInclude(IncludeResult* result) override
@@ -63,39 +81,34 @@ public:
 
 protected:
     typedef char tUserDataElement;
-    std::vector<std::string> directoryStack;
-    int externalLocalDirectoryCount;
+    std::vector<std::string> localDirectoryStack;
+    int externalLocalDirectoryCount = 0;
+    std::vector<std::string> systemDirectoryStack;
+    int externalSystemDirectoryCount = 0;
     std::set<std::string> includedFiles;
 
     // Search for a valid "local" path based on combining the stack of include
     // directories and the nominal name of the header.
-    virtual IncludeResult* readLocalPath(const char* headerName, const char* includerName, int depth)
+    virtual IncludeResult* readPath(const char* headerName, const char* includerName, int externalDirectoryCount, int depth, std::vector<std::string> &stack)
     {
         // Discard popped include directories, and
         // initialize when at parse-time first level.
-        directoryStack.resize(depth + externalLocalDirectoryCount);
+        stack.resize(depth + externalDirectoryCount);
         if (depth == 1)
-            directoryStack.back() = getDirectory(includerName);
+            stack.back() = getDirectory(includerName);
 
         // Find a directory that works, using a reverse search of the include stack.
-        for (auto it = directoryStack.rbegin(); it != directoryStack.rend(); ++it) {
+        for (auto it = stack.rbegin(); it != stack.rend(); ++it) {
             std::string path = *it + '/' + headerName;
             std::replace(path.begin(), path.end(), '\\', '/');
             std::ifstream file(path, std::ios_base::binary | std::ios_base::ate);
             if (file) {
-                directoryStack.push_back(getDirectory(path));
+                stack.push_back(getDirectory(path));
                 includedFiles.insert(path);
                 return newIncludeResult(path, file, (int)file.tellg());
             }
         }
 
-        return nullptr;
-    }
-
-    // Search for a valid <system> path.
-    // Not implemented yet; returning nullptr signals failure to find.
-    virtual IncludeResult* readSystemPath(const char* /*headerName*/) const
-    {
         return nullptr;
     }
 
@@ -117,14 +130,6 @@ protected:
     }
 };
 
-using namespace vk;
-namespace fs = std::filesystem;
-
-#ifndef STRIP_SHADER_COMPILATION
-#define STRIP_SHADER_COMPILATION 0
-#endif // STRIP_SHADER_COMPILATION
-
-#if !STRIP_SHADER_COMPILATION
 static const std::unordered_map<std::string, VkShaderStageFlagBits> gStageNameToVulkanEnum = {
     {"vertex"       , VK_SHADER_STAGE_VERTEX_BIT                 },
     {"geometry"     , VK_SHADER_STAGE_GEOMETRY_BIT               },
@@ -156,8 +161,6 @@ static const std::unordered_map<VkShaderStageFlagBits, EShLanguage /* glslang_st
     {VK_SHADER_STAGE_CALLABLE_BIT_KHR           ,  EShLangCallable       /* GLSLANG_STAGE_CALLABLE       */},
     {VK_SHADER_STAGE_MESH_BIT_EXT               ,  EShLangMesh           /* GLSLANG_STAGE_MESH           */},
 };
-// static constexpr std::string_view INCLUDE_IDENTIFIER = "#include";
-// static constexpr std::string_view LINE_IDENTIFIER = "#line";
 static constexpr std::string_view STAGE_IDENTIFIER = "#stage";
 #endif // STRIP_SHADER_COMPILATION
 
@@ -371,7 +374,7 @@ static void rtrim(std::string &s) {
         return !std::isspace(ch);
     }).base(), s.end());
 }
-static std::map<VkShaderStageFlagBits, std::string> splitSources(Shader &program)
+static std::map<VkShaderStageFlagBits, std::string> preprocess(Shader &program)
 {
     std::map<VkShaderStageFlagBits, std::string> stages;
     VkShaderStageFlagBits currentStage = VK_SHADER_STAGE_ALL;
@@ -424,7 +427,7 @@ static std::map<VkShaderStageFlagBits, std::string> splitSources(Shader &program
 
     return stages;
 }
-static bool compileSources(Shader &program, std::map<VkShaderStageFlagBits, std::string> const &sources)
+static bool compileSources(Shader &program, std::map<VkShaderStageFlagBits, std::string> const &sources, ShaderCreateInfo const &ci)
 {
     [[maybe_unused]] static class GlslangProcess
     {
@@ -433,9 +436,14 @@ static bool compileSources(Shader &program, std::map<VkShaderStageFlagBits, std:
         ~GlslangProcess() { glslang::FinalizeProcess(); }
     } process;
 
-    glslang::TProgram glslProgram;
     DirStackFileIncluder includer;
+    for(auto const &dir : ci.includeDirs | std::views::reverse)
+        includer.pushExternalLocalDirectory(dir);
+    for(auto const &dir : ci.systemIncludeDirs | std::views::reverse)
+        includer.pushExternalSystemDirectory(dir);
     includer.pushExternalLocalDirectory(fs::path(program.src.path).parent_path().string());
+
+    glslang::TProgram glslProgram;
     EShMessages messages = EShMessages(EShMsgSpvRules | EShMsgVulkanRules);
     std::vector<std::unique_ptr<glslang::TShader>> glslShaders;
     static auto resources = InitResources();
@@ -458,7 +466,13 @@ static bool compileSources(Shader &program, std::map<VkShaderStageFlagBits, std:
         int l = source.size();
         auto name = program.src.path.c_str();
         glslShader->setStringsWithLengthsAndNames(&cString, &l, &name, 1);
-        glslShader->setPreamble("#extension GL_GOOGLE_cpp_style_line_directive : enable\n#extension GL_GOOGLE_include_directive : enable\n"); // Parser refuses to process the includer without the extension enabled
+
+        std::stringstream preamble;
+        preamble << "#extension GL_GOOGLE_cpp_style_line_directive : enable\n";
+        preamble << "#extension GL_GOOGLE_include_directive : enable\n"; // Parser refuses to process the includer without the extension enabled
+        for(auto const &[name, value] : ci.definitions)
+            preamble << "#define " << name << ' ' << value << '\n';
+        glslShader->setPreamble(preamble.str().c_str());
 
         if(!glslShader->parse(&resources, 130, false, messages, includer))
         {
@@ -503,32 +517,32 @@ static bool compileSources(Shader &program, std::map<VkShaderStageFlagBits, std:
 
 #endif // STRIP_SHADER_COMPILATION
 
-Shader vk::makeShader(std::string_view src, std::string_view bin, VkDevice dev)
+Shader vk::makeShader(ShaderCreateInfo const &ci)
 {
     Shader program;
-    if(!fs::exists(src) || !fs::is_regular_file(src))
+    if(!fs::exists(ci.src) || !fs::is_regular_file(ci.src))
     {
-        LOG_ERROR("Invalid src path: \"{}\"", src);
+        LOG_ERROR("Invalid src path: \"{}\"", ci.src);
         return program;
     }
-    if(fs::exists(bin) && !fs::is_directory(bin))
+    if(fs::exists(ci.bin) && !fs::is_directory(ci.bin))
     {
-        LOG_ERROR("Invalid bin path: \"{}\"", bin);
+        LOG_ERROR("Invalid bin path: \"{}\"", ci.bin);
         return program;
     }
 
-    bool canCompile = fs::exists(src);
-    bool canCollect = fs::exists(bin) && fs::is_directory(program.binPath);
+    bool canCompile = fs::exists(ci.src);
+    bool canCollect = fs::exists(ci.bin) && fs::is_directory(program.binPath);
 
-    program.binPath = bin;
-    program.src.path = src;
+    program.binPath = ci.bin;
+    program.src.path = ci.src;
 
 #if !STRIP_SHADER_COMPILATION
     if(canCompile)
         program.src.data = readFileString(program.src.path);
 #endif // STRIP_SHADER_COMPILATION
 
-    bool outdated = fs::exists(src) && fs::exists(program.binPath) && (std::filesystem::last_write_time(program.src.path).time_since_epoch() > std::filesystem::last_write_time(program.binPath).time_since_epoch());
+    bool outdated = fs::exists(ci.src) && fs::exists(program.binPath) && (std::filesystem::last_write_time(program.src.path).time_since_epoch() > std::filesystem::last_write_time(program.binPath).time_since_epoch());
     if(outdated && canCompile)
         LOG_INFO("\"{}\" shader binaries are outdated! Recompiling", program.src.path);
 
@@ -540,7 +554,7 @@ Shader vk::makeShader(std::string_view src, std::string_view bin, VkDevice dev)
     } else if(canCompile) {
         LOG_TRACE("Compiling from source \"{}\"", program.src.path);
 
-        if(!compileSources(program, splitSources(program)))
+        if(!compileSources(program, preprocess(program), ci))
             return program;
 
         for(auto &bin : program.binaries)
@@ -552,14 +566,14 @@ Shader vk::makeShader(std::string_view src, std::string_view bin, VkDevice dev)
         fs::last_write_time(program.binPath, std::chrono::file_clock::now());
     } else {
 #endif // STRIP_SHADER_COMPILATION
-        LOG_ERROR("Cannot find binaries in \"{}\" or compile from source \"{}\" shaders!", bin, src);
+        LOG_ERROR("Cannot find binaries in \"{}\" or compile from source \"{}\" shaders!", ci.bin, ci.src);
         return program;
     }
 
     // Create vulkan modules from binaries.
-    if(dev)
+    program.device = ci.device;
+    if(program.device)
     {
-        program.device = dev;
         for(auto &bin : program.binaries)
         {
             VkShaderModuleCreateInfo createInfo{};
