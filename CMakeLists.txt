@@ -11,7 +11,7 @@ foreach(LOADER GLTF)
 endforeach()
 set(BUILD_SHARED_LIBS OFF)
 
-CPMAddPackage("gh:nikitawew/nicecs#06df83d")
+CPMAddPackage("gh:nikitawew/nicecs#c78f357")
 CPMAddPackage(
     NAME assimp
     VERSION 6.0.2

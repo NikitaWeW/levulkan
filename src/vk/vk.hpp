@@ -166,24 +166,84 @@ Swapchain makeSwapchain(SwapchainCreateInfo const &ci);
 struct Pipeline
 {
     enum class Type { INVALID, GRAPHICS, COMPUTE, RAYTRACING };
+    struct DescriptorBinding
+    {
+        uint32_t set = 0;
+        uint32_t binding = 0;
+        auto operator<=>(DescriptorBinding const &other) const = default;
+    };
+
     Type type = Type::INVALID;
-    VkSwapchainKHR swapchain;
+    bool valid = false;
+
+    // Owning
     VkPipeline pipeline;
-    std::unordered_map<std::string, Image> images;
-    std::unordered_map<std::string, Buffer> buffers;
+    std::vector<VkDescriptorSetLayout> descLayouts;
+    std::vector<SparseSet<VkDescriptorSet>> descSets; // one per frame
+    VkDescriptorPool descPool;
+    struct {
+        std::vector<Image> colorAttachments;
+        Image depthAttachment;
+    } graphics;
+
+    // Not owning
+    VkDevice device;
+    std::map<DescriptorBinding, Image> images;
+    std::map<DescriptorBinding, Buffer> buffers;
 };
 struct PipelineCreateInfo
 {
+    struct DescriptorWrite
+    {
+        Pipeline::DescriptorBinding binding;
+        uint32_t dstArrayElement = 0;
+        uint32_t count = 1;
+
+        // One of
+        std::vector<VkDescriptorImageInfo> imageInfo;
+        std::vector<VkDescriptorBufferInfo> bufferInfo;
+        std::vector<VkBufferView> texelBufferView;
+    };
+
     Pipeline::Type type = Pipeline::Type::INVALID;
+
+    // Descriptors
     std::vector<VkDynamicState> dynamicState; ///< Dynamic state to enable.
-    std::unordered_map<uint32_t, Image> images; ///< Image resources corresponding to the shader resource name.
-    std::unordered_map<uint32_t, Buffer> buffers; ///< Buffer resources corresponding to the shader resource name.
-    std::unordered_map<uint32_t, VkDescriptorSetLayoutCreateFlagBits> descriptorSetFlags; ///< Optional flags for descriptor sets.
-    bool interleavedVertices = false; ///< Controls whether the vertex input is interleaved (one big buffer) or not (one buffer for each variable)
+    std::map<Pipeline::DescriptorBinding, Image> images; ///< Image resources corresponding to the shader resource name.
+    std::map<Pipeline::DescriptorBinding, Buffer> buffers; ///< Buffer resources corresponding to the shader resource name.
+    std::map<uint32_t, VkDescriptorSetLayoutCreateFlags> descriptorSetFlags; ///< Optional flags for descriptor sets.
+    std::map<Pipeline::DescriptorBinding, VkDescriptorBindingFlags> descriptorBindingFlags; ///< Optional additional flags for descriptor bindings. VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT is set automatically.s
+    std::vector<DescriptorWrite> descriptorWrites;
+
+    // Vertex inputs
+    std::vector<VkVertexInputBindingDescription> vertexInputBindings;
+    std::vector<VkVertexInputAttributeDescription> vertexInputAttributes;
+    VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    bool primitiveRestart = false;
+
+    // Limits
+    uint32_t maxVariableCountSize = 100;
+    uint32_t maxDescriptorSets = 100;
+    uint32_t framesInFlight = 3; ///< Used to determine the descriptor count
+
     struct {
         std::vector<VkFormat> colorFormats;
         VkFormat depthFormat = VK_FORMAT_UNDEFINED;
         VkFormat stencilFormat = VK_FORMAT_UNDEFINED;
+        uint32_t viewportCount = 1;
+        uint32_t scissorCount = 1;
+        struct DepthStencil
+        {
+            bool depthTestEnable = true;
+            bool depthWriteEnable = true;
+            VkCompareOp depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+            bool depthBoundsTestEnable = false;
+            bool stencilTestEnable = false;
+            VkStencilOpState front = {};
+            VkStencilOpState back = {};
+            float minDepthBounds = 0;
+            float maxDepthBounds = 1;
+        };
     } graphics; ///< Graphics pipeline settings.
     struct {
         // empty
@@ -195,6 +255,8 @@ struct PipelineCreateInfo
 
 /// @brief Make a pipeline based on the shader reflection and other stuff.
 Pipeline makePipeline(Shader const &shader, PipelineCreateInfo const &ci);
+
+// TODO: Render graph
 
 /// @brief The model allocated ons the gpu
 struct VulkanModel
@@ -230,6 +292,8 @@ struct VulkanModel
 
 /// @brief Allocate the model.
 VulkanModel processModel(Model const &model);
+
+// TODO: render graph
 
 void destroy(Swapchain &pipeline);
 void destroy(Shader &shader);

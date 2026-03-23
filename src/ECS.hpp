@@ -8,7 +8,7 @@
 class Entity;
 
 template<typename... T>
-using exclude = ecs::exclude_t<T...>;
+using exclude = ecs::exclude<T...>;
 
 /// @brief A thin layer above the ecs::registry with support for thread synchronization.
 class Registry

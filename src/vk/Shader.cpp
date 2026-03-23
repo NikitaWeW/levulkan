@@ -4,7 +4,7 @@ $$ |   $$ |$$ | $$  |  Copyright (c) 2026 Nikita Martynau
 $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit 
 \$$\  $$  |$$$$$  /    insert git repo url here
  \$$\$$  / $$  $$<     
-  \$$$  /  $$ |\$$\    Custom GLSL preprocessor.
+  \$$$  /  $$ |\$$\    Custom GLSL preprocessor and glslang utility.
    \$  /   $$ | \$$\   Allows to have all the stages in one file via the new #stage directive
     \_/    \__|  \__|  and manage spirv shader binaries.
 */
