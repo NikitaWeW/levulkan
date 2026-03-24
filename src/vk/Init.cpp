@@ -5,8 +5,8 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 \$$\  $$  |$$$$$  /    insert git repo url here
  \$$\$$  / $$  $$<     
   \$$$  /  $$ |\$$\    
-   \$  /   $$ | \$$\   Convenience function to init vulkan painlessly.
-    \_/    \__|  \__|  Using single easy-to-fill struct.
+   \$  /   $$ | \$$\   Convenience function to init vulkan painlessly
+    \_/    \__|  \__|  using single easy-to-fill struct.
 */
 #include "vk.hpp"
 #include "Logging.hpp"
@@ -234,7 +234,70 @@ VkQueue QueueFamilies::getQueue(VkQueueFlagBits type, uint32_t queueIndex) const
     vkGetDeviceQueue(device, indices.at(type), queueIndex, &queue);
     return queue;
 }
+// Its now time, for our FEATURE presentation!.. Feacher?.. 
+// Coming straight from your house! Coming straight from your house! Coming! 
+// He's the one! (Coming!) The king of only!
+// She's groovy, and never glooby!
+// You cant get this from an egg!
+// A sensation of your screen! A show that makes you scream!
+// Say it with him folks!
+static InitInfo::DeviceFeatures getFeaturesSupport(VkPhysicalDevice dev)
+{
+    InitInfo::DeviceFeatures features;
 
+    features.vulkan14 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES,
+        .pNext = nullptr
+    };
+    features.vulkan13 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+        .pNext = &features.vulkan14
+    };
+    features.vulkan12 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .pNext = &features.vulkan13
+    };
+    features.vulkan11 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+        .pNext = &features.vulkan12
+    };
+    VkPhysicalDeviceFeatures2 devFeatures = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        .pNext = &features.vulkan11
+    };
+    vkGetPhysicalDeviceFeatures2(dev, &devFeatures);
+    features.features = devFeatures.features;
+
+    return features;
+}
+
+/// @brief Checks if a structure that contains n bool fields of the same type has all the required bools.
+/// IMPORTANT: The structure must not contain other fields or the offset must be set accordingly.
+/// @param start The offset to start the comparison in bytes
+template<typename T, typename B = VkBool32>
+static bool checkFeaturesSupport(T const &required, T const &supported, size_t start = 0)
+{
+    B const *pReq = reinterpret_cast<B const *>(&required);
+    B const *pSup = reinterpret_cast<B const *>(&supported);
+
+    size_t count = sizeof(T) / sizeof(B);
+
+    for(size_t i = start; i < count; ++i)
+    {
+        if(pReq[i] && !pSup[i])
+            return false;
+    }
+
+    return true;
+}
+static bool checkFeaturesSupport(InitInfo::DeviceFeatures const &required, InitInfo::DeviceFeatures const &supported)
+{
+    return checkFeaturesSupport(required.features, supported.features, 0) &&
+           checkFeaturesSupport(required.vulkan11, supported.vulkan11, sizeof(VkStructureType)+sizeof(void*)) && // skip sType and pNext
+           checkFeaturesSupport(required.vulkan12, supported.vulkan12, sizeof(VkStructureType)+sizeof(void*)) &&
+           checkFeaturesSupport(required.vulkan13, supported.vulkan13, sizeof(VkStructureType)+sizeof(void*)) &&
+           checkFeaturesSupport(required.vulkan14, supported.vulkan14, sizeof(VkStructureType)+sizeof(void*));
+}
 static bool isDeviceSuitable(VkPhysicalDevice dev, VkSurfaceKHR surface, InitInfo const &info)
 {
     bool presentSupport = false;
@@ -260,9 +323,7 @@ static bool isDeviceSuitable(VkPhysicalDevice dev, VkSurfaceKHR surface, InitInf
         presentSupport = formats.size() > 0 && presentModes.size() > 0;
     }
 
-    VkPhysicalDeviceFeatures2 features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
-    vkGetPhysicalDeviceFeatures2(dev, &features);
-    bool featureSupport = features.features.geometryShader;
+    bool featureSupport = checkFeaturesSupport(info.deviceFeatures, getFeaturesSupport(dev));
 
     bool queueSupport = complete(findQueueFamilies(dev, surface, info.queues), info.queues, info.offscreen);
     bool extensionSupport = checkDeviceExtensionSupport(dev, info.deviceExtensions);
