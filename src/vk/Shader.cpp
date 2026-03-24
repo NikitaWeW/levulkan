@@ -16,12 +16,6 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 using namespace vk;
 namespace fs = std::filesystem;
 
-#ifndef STRIP_SHADER_COMPILATION
-#define STRIP_SHADER_COMPILATION 0
-#endif // STRIP_SHADER_COMPILATION
-
-#if !STRIP_SHADER_COMPILATION
-
 /// @brief Default include class for normal include convention
 /// of search backward through the stack of active include paths (for nested includes).
 /// Source: https://github.com/KhronosGroup/glslang StandAlone/DirStackFileIncluder.h
@@ -162,7 +156,7 @@ static const std::unordered_map<VkShaderStageFlagBits, EShLanguage /* glslang_st
     {VK_SHADER_STAGE_MESH_BIT_EXT                , EShLangMesh           /* GLSLANG_STAGE_MESH           */},
 };
 static constexpr std::string_view STAGE_IDENTIFIER = "#stage";
-#endif // STRIP_SHADER_COMPILATION
+static constexpr std::string_view VERSION_IDENTIFIER = "#version";
 
 static const std::unordered_map<std::string, VkShaderStageFlagBits> gVulkanStageStringToEnum = {
     {"VK_SHADER_STAGE_VERTEX_BIT"                  , VK_SHADER_STAGE_VERTEX_BIT                 },
@@ -248,7 +242,6 @@ static void collectBinaries(Shader &program)
     }
 }
 
-#if !STRIP_SHADER_COMPILATION
 // Thanks to https://github.com/KhronosGroup/glslang/issues/2207#issuecomment-632927839
 static TBuiltInResource InitResources()
 {
@@ -381,15 +374,18 @@ static std::map<VkShaderStageFlagBits, std::string> preprocess(Shader &program)
     VkShaderStageFlagBits currentStage = VK_SHADER_STAGE_ALL;
     std::istringstream stream(program.source);
 
+    std::string preamble;
+    preamble.append("#extension GL_GOOGLE_cpp_style_line_directive : enable\n");
+    preamble.append("#extension GL_GOOGLE_include_directive : enable\n"); // Parser refuses to process the includer without the extension enabled
+    for(auto const &[name, value] : program.createInfo.definitions)
+        preamble.append("#define " + name + ' ' + value + '\n');
+
     size_t lineNum = 1;
     std::string line;
     while(std::getline(stream, line)) 
     {
         auto directive = line.find_first_not_of(" \t");
-        if(directive == std::string::npos || line.compare(directive, STAGE_IDENTIFIER.size(), STAGE_IDENTIFIER) != 0)
-        {
-            stages[currentStage].append(line + '\n');
-        } else {
+        if(directive != std::string::npos && line.compare(directive, STAGE_IDENTIFIER.size(), STAGE_IDENTIFIER) == 0) {
             auto stageName = line.substr(directive + STAGE_IDENTIFIER.size());
             ltrim(stageName);
             rtrim(stageName);
@@ -401,8 +397,12 @@ static std::map<VkShaderStageFlagBits, std::string> preprocess(Shader &program)
                 LOG_ERROR("\"{}\": unknown stage name: \"{}\":\n{}", program.createInfo.src, stageName, line);
             }
 
-            stages[currentStage].append("#line " + std::to_string(lineNum) + " \"" + program.createInfo.src + "\"\n");
-            stages[currentStage].append("\n");
+            stages[currentStage].append("#line " + std::to_string(lineNum) + " \"" + program.createInfo.src + "\"\n\n");
+        } else if(directive != std::string::npos && line.compare(directive, VERSION_IDENTIFIER.size(), VERSION_IDENTIFIER) == 0) {
+            stages[currentStage].insert(0, line + '\n' + preamble);
+            stages[currentStage].append("#line " + std::to_string(lineNum) + " \"" + program.createInfo.src + "\"\n\n");
+        } else {
+            stages[currentStage].append(line + '\n');
         }
 
         ++lineNum;
@@ -462,19 +462,13 @@ static bool compileSources(Shader &program, std::map<VkShaderStageFlagBits, std:
         int l = source.size();
         auto name = program.createInfo.src.c_str();
 
-        std::stringstream preamble;
-        preamble << "#extension GL_GOOGLE_cpp_style_line_directive : enable\n";
-        preamble << "#extension GL_GOOGLE_include_directive : enable\n"; // Parser refuses to process the includer without the extension enabled
-        for(auto const &[name, value] : program.createInfo.definitions)
-            preamble << "#define " << name << ' ' << value << '\n';
-
         glslShader->setEnvInput(glslang::EShSourceGlsl, gVulkanStageToGlslang.at(stage), glslang::EShClientVulkan, 100);
         glslShader->setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_3);
         glslShader->setEnvTarget(glslang::EshTargetSpv, glslang::EShTargetSpv_1_6);
         glslShader->setDebugInfo(program.createInfo.debugInfo);
         glslShader->setSourceFile(program.createInfo.src.c_str());
+        // glslShader->setPreamble(preamble.c_str());
         glslShader->setStringsWithLengthsAndNames(&cString, &l, &name, 1);
-        glslShader->setPreamble(preamble.str().c_str());
 
         if(!glslShader->parse(&resources, 130, false, messages, includer))
         {
@@ -484,7 +478,6 @@ static bool compileSources(Shader &program, std::map<VkShaderStageFlagBits, std:
 
         glslProgram.addShader(glslShader.get());
         glslShaders.emplace_back(std::move(glslShader));
-
     }
     if(!glslProgram.link(messages))
     {
@@ -517,12 +510,11 @@ static bool compileSources(Shader &program, std::map<VkShaderStageFlagBits, std:
     return true;
 }
 
-#endif // STRIP_SHADER_COMPILATION
 
 Shader vk::makeShader(ShaderCreateInfo const &ci)
 {
     Shader program;
-    program.createInfo = program.createInfo;
+    program.createInfo = ci;
     if(!fs::exists(program.createInfo.src) || !fs::is_regular_file(program.createInfo.src))
     {
         LOG_ERROR("Invalid src path: \"{}\"", program.createInfo.src);
@@ -538,20 +530,17 @@ Shader vk::makeShader(ShaderCreateInfo const &ci)
     bool canCollect = fs::exists(program.createInfo.bin) && fs::is_directory(program.createInfo.bin);
 
 
-#if !STRIP_SHADER_COMPILATION
     if(canCompile)
         program.source = readFileString(program.createInfo.src);
-#endif // STRIP_SHADER_COMPILATION
 
     bool outdated = fs::exists(program.createInfo.src) && fs::exists(program.createInfo.bin) && (std::filesystem::last_write_time(program.createInfo.src).time_since_epoch() > std::filesystem::last_write_time(program.createInfo.bin).time_since_epoch());
     if(outdated && canCompile)
-        LOG_INFO("\"{}\" shader binaries are outdated! Recompiling", program.createInfo.src);
+        LOG_INFO("\"{}\" shader binaries are outdated! Recompiling", program.createInfo.bin);
 
-    if(canCollect && !outdated)
+    if(canCollect && !outdated) 
     {
         LOG_TRACE("Collecting binaries from \"{}\"", program.createInfo.bin);
         collectBinaries(program);
-#if !STRIP_SHADER_COMPILATION
     } else if(canCompile) {
         LOG_TRACE("Compiling from source \"{}\"", program.createInfo.src);
 
@@ -566,7 +555,6 @@ Shader vk::makeShader(ShaderCreateInfo const &ci)
 
         fs::last_write_time(program.createInfo.bin, std::chrono::file_clock::now());
     } else {
-#endif // STRIP_SHADER_COMPILATION
         LOG_ERROR("Cannot find binaries in \"{}\" or compile from source \"{}\" shaders!", program.createInfo.bin, program.createInfo.src);
         return program;
     }
