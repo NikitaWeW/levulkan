@@ -381,22 +381,25 @@ static bool pickPhysicalDevice(InitInfo const &info, InitResult &result)
 
 static VkDevice createDevice(VkPhysicalDevice const &physicalDevice, QueueFamilies const &families, std::vector<char const *> extensions)
 {
+    VkPhysicalDeviceVulkan12Features enabledVk11Features{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+        .pNext = nullptr
+    };
     VkPhysicalDeviceVulkan12Features enabledVk12Features{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-        .descriptorIndexing = true,
-        .descriptorBindingVariableDescriptorCount = true,
-        .runtimeDescriptorArray = true,
-        .bufferDeviceAddress = true
+        .pNext = &enabledVk11Features,
     };
     VkPhysicalDeviceVulkan13Features enabledVk13Features{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
         .pNext = &enabledVk12Features,
-        .synchronization2 = true,
-        .dynamicRendering = true,
+    };
+    VkPhysicalDeviceVulkan14Features enabledVk14Features{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES,
+        .pNext = &enabledVk13Features,
     };
     VkPhysicalDeviceFeatures2 deviceFeatures{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-        .pNext = &enabledVk13Features
+        .pNext = &enabledVk14Features
     };
     vkGetPhysicalDeviceFeatures2(physicalDevice, &deviceFeatures);
     VkDeviceCreateInfo deviceCI{

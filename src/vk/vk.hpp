@@ -179,133 +179,93 @@ struct Pipeline
         uint32_t binding = 0;
         auto operator<=>(DescriptorBinding const &other) const = default;
     };
+    struct Layout
+    {
+        VkPipelineLayout layout;
+        std::vector<VkDescriptorSetLayout> descLayouts;
+        SparseSet<VkDescriptorSet> descSets; ///< 
+        VkDescriptorPool descPool;
+    };
 
     Type type = Type::INVALID;
     bool valid = false;
 
     // Owning
     VkPipeline pipeline;
-    std::vector<VkDescriptorSetLayout> descLayouts;
-    std::vector<SparseSet<VkDescriptorSet>> descSets; // one per frame
-    VkDescriptorPool descPool;
-    struct {
-        std::vector<Image> colorAttachments;
-        Image depthAttachment;
-    } graphics;
+    Layout layout;
+    std::map<DescriptorBinding, std::vector<Buffer>> buffers;
+    std::map<DescriptorBinding, std::vector<Image>> images;
 
     // Not owning
     VkDevice device;
-    std::map<DescriptorBinding, Image> images;
-    std::map<DescriptorBinding, Buffer> buffers;
 };
-struct PipelineCreateInfo
+struct PipelineLayoutCreateInfo
 {
     struct DescriptorWrite
     {
-        Pipeline::DescriptorBinding binding;
         uint32_t dstArrayElement = 0;
-        uint32_t count = 1;
 
         // One of
         std::vector<VkDescriptorImageInfo> imageInfo;
         std::vector<VkDescriptorBufferInfo> bufferInfo;
         std::vector<VkBufferView> texelBufferView;
+
+        inline uint32_t size() const { return std::max(imageInfo.size(), std::max(bufferInfo.size(), texelBufferView.size())); }
     };
 
-    Pipeline::Type type = Pipeline::Type::INVALID;
-
-    // Descriptors
-    std::vector<VkDynamicState> dynamicState; ///< Dynamic state to enable. VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR are enabled automatically.
-    std::map<Pipeline::DescriptorBinding, Image> images; ///< Image resources corresponding to the shader resource name.
-    std::map<Pipeline::DescriptorBinding, Buffer> buffers; ///< Buffer resources corresponding to the shader resource name.
     std::map<uint32_t, VkDescriptorSetLayoutCreateFlags> descriptorSetFlags; ///< Optional flags for descriptor sets.
     std::map<Pipeline::DescriptorBinding, VkDescriptorBindingFlags> descriptorBindingFlags; ///< Optional additional flags for descriptor bindings. VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT is set automatically.s
-    std::vector<DescriptorWrite> descriptorWrites;
+    std::map<Pipeline::DescriptorBinding, DescriptorWrite> descriptorWrites; ///< Descriptor data for static descriptors. If no write, creates the resource for each frame in flight.
 
-    // Vertex inputs
-    std::vector<VkVertexInputBindingDescription> vertexInputBindings;
-    std::vector<VkVertexInputAttributeDescription> vertexInputAttributes;
-    VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    bool primitiveRestart = false;
-
-    // Limits
     uint32_t maxVariableCountSize = 100;
     uint32_t maxDescriptorSets = 100;
-    uint32_t framesInFlight = 3; ///< Used to determine the descriptor count
+    uint32_t framesInFlight = 1; ///< Used to determine the descriptor count
 
+};
+struct GraphicsPipelineCreateInfo
+{
+    PipelineLayoutCreateInfo layout; ///< Pipeline layout create info
+    std::vector<VkDynamicState> dynamicState; ///< Dynamic state to enable.
+
+    // Vertex inputs
     struct {
-        std::vector<VkFormat> colorFormats;
-        VkFormat depthFormat = VK_FORMAT_UNDEFINED;
-        VkFormat stencilFormat = VK_FORMAT_UNDEFINED;
-        uint32_t viewportCount = 1;
-        uint32_t scissorCount = 1;
-        struct DepthStencil
-        {
-            bool depthTestEnable = true;
-            bool depthWriteEnable = true;
-            VkCompareOp depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-            bool depthBoundsTestEnable = false;
-            bool stencilTestEnable = false;
-            VkStencilOpState front = {};
-            VkStencilOpState back = {};
-            float minDepthBounds = 0;
-            float maxDepthBounds = 1;
-        };
-    } graphics; ///< Graphics pipeline settings.
+        std::vector<VkVertexInputBindingDescription> bindings;
+        std::vector<VkVertexInputAttributeDescription> attributes;
+        VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        bool primitiveRestart = false;
+    } input;
+
+    // Attachment formats
     struct {
-        // empty
-    } compute; ///< Compute pipeline settings.
+        std::vector<VkFormat> color;
+        VkFormat depth = VK_FORMAT_UNDEFINED;
+        VkFormat stencil = VK_FORMAT_UNDEFINED;
+    } attachments;
+
+    // Other state
+    VkPipelineDepthStencilStateCreateInfo depthStencil;
+    VkPipelineRasterizationStateCreateInfo rasterization;
+    VkPipelineMultisampleStateCreateInfo multisample;
+    struct { 
+        std::vector<VkViewport> viewports;
+        std::vector<VkRect2D> scissors;
+    } viewport;
     struct {
-        uint32_t maxPipelineRayRecursionDepth = 1;
-    } raytracing; ///< Raytracing pipeline settings.
+        bool logicOpEnable;
+        VkLogicOp logicOp;
+        std::vector<VkPipelineColorBlendAttachmentState> attachments;
+        glm::vec4 constant;
+    } blending;
 };
 
 /// @brief Make a pipeline based on the shader reflection and other stuff.
-Pipeline makePipeline(Shader const &shader, PipelineCreateInfo const &ci);
+Pipeline makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const &ci);
 
 // TODO: Render graph
-
-/// @brief The model allocated ons the gpu
-struct VulkanModel
-{
-    struct Mesh 
-    {
-        struct Textures
-        {
-            Image albedo;
-            Image metallic;
-            Image roughness;
-            Image ambient;
-            Image normal;
-            Image displacement;
-        } textures;
-        struct Buffers
-        {
-            Buffer pos;
-            Buffer uv;
-            Buffer norm;
-            Buffer tan;
-            Buffer idx;
-        } buffers;
-        size_t indexCount;
-        size_t meshIndex;
-    };
-
-    // TODO: add animation support
-
-    Entity eModel;
-    std::vector<Mesh> meshes;
-};
-
-/// @brief Allocate the model.
-VulkanModel processModel(Model const &model);
-
-// TODO: render graph
 
 void destroy(Swapchain &pipeline);
 void destroy(Shader &shader);
 void destroy(Pipeline &pipeline);
-void destroy(VulkanModel &model);
 void destroy(Image &image);
 void destroy(Buffer &buffer);
 

@@ -52,102 +52,6 @@ static std::string string_PipelineType(Pipeline::Type type)
         default: return "Unhandled Pipeline::Type";
     };
 }
-// Only vertex-capable
-static uint32_t formatSize(VkFormat format)
-{
-    switch (format)
-    {
-        case VK_FORMAT_R8_UNORM:
-        case VK_FORMAT_R8_SNORM:
-        case VK_FORMAT_R8_UINT:
-        case VK_FORMAT_R8_SINT:
-        case VK_FORMAT_R8_SRGB:
-            return 1;
-        case VK_FORMAT_R8G8_UNORM:
-        case VK_FORMAT_R8G8_SNORM:
-        case VK_FORMAT_R8G8_UINT:
-        case VK_FORMAT_R8G8_SINT:
-        case VK_FORMAT_R8G8_SRGB:
-            return 2;
-        case VK_FORMAT_R8G8B8_UNORM:
-        case VK_FORMAT_R8G8B8_SNORM:
-        case VK_FORMAT_R8G8B8_UINT:
-        case VK_FORMAT_R8G8B8_SINT:
-        case VK_FORMAT_R8G8B8_SRGB:
-            return 3;
-
-        case VK_FORMAT_R8G8B8A8_SNORM:
-        case VK_FORMAT_R8G8B8A8_UINT:
-        case VK_FORMAT_R8G8B8A8_SINT:
-        case VK_FORMAT_R8G8B8A8_SRGB:
-            return 4;
-        case VK_FORMAT_R16_UNORM:
-        case VK_FORMAT_R16_SNORM:
-        case VK_FORMAT_R16_UINT:
-        case VK_FORMAT_R16_SINT:
-        case VK_FORMAT_R16_SFLOAT:
-            return 2;
-        case VK_FORMAT_R16G16_UNORM:
-        case VK_FORMAT_R16G16_SNORM:
-        case VK_FORMAT_R16G16_UINT:
-        case VK_FORMAT_R16G16_SINT:
-        case VK_FORMAT_R16G16_SFLOAT:
-            return 4;
-        case VK_FORMAT_R16G16B16_UNORM:
-        case VK_FORMAT_R16G16B16_SNORM:
-        case VK_FORMAT_R16G16B16_UINT:
-        case VK_FORMAT_R16G16B16_SINT:
-        case VK_FORMAT_R16G16B16_SFLOAT:
-            return 6;
-        case VK_FORMAT_R16G16B16A16_UNORM:
-        case VK_FORMAT_R16G16B16A16_SNORM:
-        case VK_FORMAT_R16G16B16A16_UINT:
-        case VK_FORMAT_R16G16B16A16_SINT:
-        case VK_FORMAT_R16G16B16A16_SFLOAT:
-            return 8;
-        case VK_FORMAT_R32_UINT:
-        case VK_FORMAT_R32_SINT:
-        case VK_FORMAT_R32_SFLOAT:
-            return 4;
-        case VK_FORMAT_R32G32_UINT:
-        case VK_FORMAT_R32G32_SINT:
-        case VK_FORMAT_R32G32_SFLOAT:
-            return 8;
-        case VK_FORMAT_R32G32B32_UINT:
-        case VK_FORMAT_R32G32B32_SINT:
-        case VK_FORMAT_R32G32B32_SFLOAT:
-            return 12;
-        case VK_FORMAT_R32G32B32A32_UINT:
-        case VK_FORMAT_R32G32B32A32_SINT:
-        case VK_FORMAT_R32G32B32A32_SFLOAT:
-            return 16;
-        case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
-        case VK_FORMAT_A2R10G10B10_UINT_PACK32:
-        case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
-        case VK_FORMAT_A2B10G10R10_UINT_PACK32:
-            return 4;
-        case VK_FORMAT_B10G11R11_UFLOAT_PACK32:
-            return 4;
-        case VK_FORMAT_R64_UINT:
-        case VK_FORMAT_R64_SINT:
-        case VK_FORMAT_R64_SFLOAT:
-            return 8;
-        case VK_FORMAT_R64G64_UINT:
-        case VK_FORMAT_R64G64_SINT:
-        case VK_FORMAT_R64G64_SFLOAT:
-            return 16;
-        case VK_FORMAT_R64G64B64_UINT:
-        case VK_FORMAT_R64G64B64_SINT:
-        case VK_FORMAT_R64G64B64_SFLOAT:
-            return 24;
-        case VK_FORMAT_R64G64B64A64_UINT:
-        case VK_FORMAT_R64G64B64A64_SINT:
-        case VK_FORMAT_R64G64B64A64_SFLOAT:
-            return 32;
-        default:
-            return 0;
-    }
-}
 
 #define SPV_CHK(x, name, action) { SpvReflectResult _result = x; if(_result != SPV_REFLECT_RESULT_SUCCESS) { LOG_ERROR("{}:{}: Failed to {}: {} for binary \"{}\".", __FILE__, __LINE__, #x, string_SpvReflectResult(_result), name); action; } }
 static Pipeline::Type determineType(Shader const &shader)
@@ -318,12 +222,15 @@ static Reflection reflect(Shader const &shader)
     return reflection;
 }
 
-static void makeDescriptors(Pipeline &pipeline, PipelineCreateInfo const &ci, Reflection const &reflection)
+static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Reflection reflection)
 {
-    auto &dev = pipeline.device;
+    Pipeline::Layout layout;
+
+    for(auto [binding, flag] : ci.descriptorBindingFlags)
+        reflection.descFlags[binding.set][binding.binding] |= flag;
+
     // Descriptor set layouts
-    pipeline.descLayouts.reserve(reflection.descSets.size());
-    uint32_t descCount = 0;
+    layout.descLayouts.reserve(reflection.descSets.size());
     std::unordered_map<uint32_t, size_t> setToLayoutIndex;
     // Just hope the order is right and the set indices are consecutive
     for(auto const &[set, bindings] : reflection.descSets)
@@ -340,11 +247,9 @@ static void makeDescriptors(Pipeline &pipeline, PipelineCreateInfo const &ci, Re
             .bindingCount = (uint32_t) bindings.size(),
             .pBindings = bindings.dense().data(),
         };
-        setToLayoutIndex[set] = pipeline.descLayouts.size();
-        vkCreateDescriptorSetLayout(dev, &layoutCI, nullptr, &pipeline.descLayouts.emplace_back());
-        descCount += bindings.size();
+        setToLayoutIndex[set] = layout.descLayouts.size();
+        vkCreateDescriptorSetLayout(dev, &layoutCI, nullptr, &layout.descLayouts.emplace_back());
     }
-    descCount *= ci.framesInFlight;
 
     // Descriptor pool
     SparseSet<VkDescriptorPoolSize> poolSizes;
@@ -366,10 +271,10 @@ static void makeDescriptors(Pipeline &pipeline, PipelineCreateInfo const &ci, Re
         .poolSizeCount = (uint32_t) poolSizes.size(),
         .pPoolSizes = poolSizes.dense().data()
     };
-    CHK(vkCreateDescriptorPool(dev, &poolCI, nullptr, &pipeline.descPool));
+    CHK(vkCreateDescriptorPool(dev, &poolCI, nullptr, &layout.descPool));
 
     // Allocate descriptors
-    pipeline.descSets.resize(ci.framesInFlight);
+    layout.descSets.resize(ci.framesInFlight);
     for(auto const &[set, bindings] : reflection.descSets)
     {
         uint32_t count;
@@ -382,13 +287,13 @@ static void makeDescriptors(Pipeline &pipeline, PipelineCreateInfo const &ci, Re
                 auto countIter = std::find_if(
                     ci.descriptorWrites.begin(), 
                     ci.descriptorWrites.end(), 
-                    [&](PipelineCreateInfo::DescriptorWrite const &write){ 
+                    [&](PipelineLayoutCreateInfo::DescriptorWrite const &write){ 
                         return write.binding == Pipeline::DescriptorBinding{set, binding.binding}; 
                 });
 
                 if(countIter != ci.descriptorWrites.end())
                 {
-                    count = countIter->count;
+                    count = countIter->size();
                     variableSizedBinding = {
                         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO,
                         .descriptorSetCount = 1,
@@ -403,12 +308,12 @@ static void makeDescriptors(Pipeline &pipeline, PipelineCreateInfo const &ci, Re
         VkDescriptorSetAllocateInfo descSetAlloc{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
             .pNext = variableSizedBinding.has_value() ? &variableSizedBinding.value() : nullptr,
-            .descriptorPool = pipeline.descPool,
+            .descriptorPool = layout.descPool,
             .descriptorSetCount = 1,
-            .pSetLayouts = &pipeline.descLayouts[setToLayoutIndex.at(set)]
+            .pSetLayouts = &layout.descLayouts[setToLayoutIndex.at(set)]
         };
         for(uint i = 0; i < ci.framesInFlight; ++i)
-            CHK(vkAllocateDescriptorSets(dev, &descSetAlloc, &pipeline.descSets[i][set]));
+            CHK(vkAllocateDescriptorSets(dev, &descSetAlloc, &layout.descSets[i][set]));
     }
 
     // Write descriptors
@@ -416,68 +321,114 @@ static void makeDescriptors(Pipeline &pipeline, PipelineCreateInfo const &ci, Re
     descWrites.reserve(ci.descriptorWrites.size() * ci.framesInFlight);
     for(auto const &write : ci.descriptorWrites)
     {
-        for(uint i = 0; i < ci.framesInFlight; ++i)
-        {
-            descWrites.emplace_back(VkWriteDescriptorSet{
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = pipeline.descSets[i].get(write.binding.set),
-                .dstBinding = write.binding.binding,
-                .dstArrayElement = write.dstArrayElement,
-                .descriptorCount = write.count,
-                .descriptorType = reflection.descSets.at(write.binding.set).get(write.binding.binding).descriptorType,
-                .pImageInfo = write.imageInfo.data(),
-                .pBufferInfo = write.bufferInfo.data(),
-                .pTexelBufferView = write.texelBufferView.data(),
-            });
-        }
+        descWrites.emplace_back(VkWriteDescriptorSet{
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = layout.descSets.get(write.binding.set),
+            .dstBinding = write.binding.binding,
+            .dstArrayElement = write.dstArrayElement,
+            .descriptorCount = write.size(),
+            .descriptorType = reflection.descSets.at(write.binding.set).get(write.binding.binding).descriptorType,
+            .pImageInfo = write.imageInfo.data(),
+            .pBufferInfo = write.bufferInfo.data(),
+            .pTexelBufferView = write.texelBufferView.data(),
+        });
     }
     vkUpdateDescriptorSets(dev, descWrites.size(), descWrites.data(), 0, nullptr);
-}
-static Pipeline makeGraphicsPipeline(Shader const &shader, PipelineCreateInfo const &ci)
-{
-    auto const &dev = shader.createInfo.device;
-    Reflection reflection = reflect(shader);
-    for(auto [binding, flag] : ci.descriptorBindingFlags)
-        reflection.descFlags[binding.set][binding.binding] |= flag;
 
-    Pipeline pipeline{
-        .type = Pipeline::Type::GRAPHICS,
-        .device = shader.createInfo.device,
-        .images = ci.images,
-        .buffers = ci.buffers,
-    };
-
-
-    makeDescriptors(pipeline, ci, reflection);
-
-    // Push constants
     std::vector<VkPushConstantRange> pushConstants;
     pushConstants.reserve(reflection.pushConstants.size());
     for(auto const &pair : reflection.pushConstants)
         pushConstants.emplace_back(pair.second);
 
-    // Pipeline layout
     VkPipelineLayoutCreateInfo pipelineLayoutCI{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = (uint32_t) pipeline.descLayouts.size(),
-        .pSetLayouts = pipeline.descLayouts.data(),
+        .setLayoutCount = (uint32_t) layout.descLayouts.size(),
+        .pSetLayouts = layout.descLayouts.data(),
         .pushConstantRangeCount = (uint32_t) pushConstants.size(),
         .pPushConstantRanges = pushConstants.data(),
+    };
+    CHK(vkCreatePipelineLayout(dev, &pipelineLayoutCI, nullptr, &layout.layout));
+
+    return layout;
+}
+static Pipeline makeGraphicsPipeline(Shader const &shader, GraphicsPipelineCreateInfo ci)
+{
+    auto const &dev = shader.createInfo.device;
+    Reflection reflection = reflect(shader);
+
+    Pipeline pipeline{
+        .type = Pipeline::Type::GRAPHICS,
+        .layout = makePipelineLayout(dev, ci.layout, reflection),
+        .device = shader.createInfo.device
     };
 
     VkPipelineVertexInputStateCreateInfo vertexInputState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-        .vertexBindingDescriptionCount = static_cast<uint32_t>(ci.vertexInputBindings.size()),
-        .pVertexBindingDescriptions = ci.vertexInputBindings.data(),
-        .vertexAttributeDescriptionCount = static_cast<uint32_t>(ci.vertexInputAttributes.size()),
-        .pVertexAttributeDescriptions = ci.vertexInputAttributes.data(),
+        .vertexBindingDescriptionCount = static_cast<uint32_t>(ci.input.bindings.size()),
+        .pVertexBindingDescriptions = ci.input.bindings.data(),
+        .vertexAttributeDescriptionCount = static_cast<uint32_t>(ci.input.attributes.size()),
+        .pVertexAttributeDescriptions = ci.input.attributes.data(),
     };
+    VkPipelineInputAssemblyStateCreateInfo inputAssemblyState{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = ci.input.topology,
+        .primitiveRestartEnable = ci.input.primitiveRestart
+    };
+
+    VkPipelineViewportStateCreateInfo viewportState{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .viewportCount = (uint32_t) ci.viewport.viewports.size(),
+        .pViewports = ci.viewport.viewports.data(),
+        .scissorCount = (uint32_t) ci.viewport.scissors.size(),
+        .pScissors = ci.viewport.scissors.data(),
+    };
+
+    VkPipelineRenderingCreateInfo renderingCI{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+        .colorAttachmentCount = (uint32_t) ci.attachments.color.size(),
+        .pColorAttachmentFormats = ci.attachments.color.data(),
+        .depthAttachmentFormat = ci.attachments.depth,
+        .stencilAttachmentFormat = ci.attachments.stencil
+    };
+    VkPipelineDynamicStateCreateInfo dynamicState{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .dynamicStateCount = (uint32_t) ci.dynamicState.size(),
+        .pDynamicStates = ci.dynamicState.data()
+    };
+    VkPipelineColorBlendStateCreateInfo blendState{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .logicOpEnable = ci.blending.logicOpEnable,
+        .logicOp = ci.blending.logicOp,
+        .attachmentCount = (uint32_t) ci.blending.attachments.size(),
+        .pAttachments = ci.blending.attachments.data(),
+        .blendConstants = {ci.blending.constant.r, ci.blending.constant.g, ci.blending.constant.b, ci.blending.constant.a}
+    };
+
+    ci.rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    ci.multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    ci.depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    VkGraphicsPipelineCreateInfo pipelineCI{
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext = &renderingCI,
+        .stageCount = (uint32_t) reflection.stages.size(),
+        .pStages = reflection.stages.data(),
+        .pVertexInputState = &vertexInputState,
+        .pInputAssemblyState = &inputAssemblyState,
+        .pViewportState = &viewportState,
+        .pRasterizationState = &ci.rasterization,
+        .pMultisampleState = &ci.multisample,
+        .pDepthStencilState = &ci.depthStencil,
+        .pColorBlendState = &blendState,
+        .pDynamicState = &dynamicState,
+        .layout = pipeline.layout.layout
+    };
+    CHK(vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &pipeline.pipeline));
 
     pipeline.valid = true;
     return pipeline;
 }
 
-Pipeline vk::makePipeline(Shader const &shader, PipelineCreateInfo const &ci)
+Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const &ci)
 {
     auto type = determineType(shader);
 
@@ -493,5 +444,16 @@ Pipeline vk::makePipeline(Shader const &shader, PipelineCreateInfo const &ci)
 
 void vk::destroy(Pipeline &pipeline)
 {
+    if(!pipeline.device)
+        return;
+    if(pipeline.layout.descPool != VK_NULL_HANDLE)
+        vkDestroyDescriptorPool(pipeline.device, pipeline.layout.descPool, nullptr);
 
+    for(auto layout : pipeline.layout.descLayouts)
+    {
+        if(layout != VK_NULL_HANDLE)
+            vkDestroyDescriptorSetLayout(pipeline.device, layout, nullptr);
+    }
+
+    vkDestroyPipeline(pipeline.device, pipeline.pipeline, nullptr);
 }

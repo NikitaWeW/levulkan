@@ -11,7 +11,9 @@
 #include "IO.hpp"
 #include "Controller.hpp"   
 
+extern Registry sReg;
 Registry sReg;
+constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
 
 struct Transform
 {
@@ -26,34 +28,6 @@ struct ModelInstance
 {
     ecs::entity eModel = 0;
 };
-
-static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
-{
-    ecs::registry &reg = *static_cast<ecs::registry *>(glfwGetWindowUserPointer(window));
-    for(auto e : reg.view<EventListener>())
-        reg.get<EventListener>(e).keyEvents.emplace(window, key, scancode, action, mods);
-}
-static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
-{
-    ecs::registry &reg = *static_cast<ecs::registry *>(glfwGetWindowUserPointer(window));
-    auto cursorPos = glm::dvec2{xpos, ypos};
-    for(auto e : reg.view<EventListener>())
-    {
-        glm::dvec2 delta{0};
-        auto &listener = reg.get<EventListener>(e);
-        if(listener.prevCursorPos != glm::dvec2{-1})
-            delta = cursorPos - listener.prevCursorPos;
-        listener.prevCursorPos = cursorPos;
-        listener.cursorPosEvents.emplace(window, cursorPos, delta);
-    }
-}
-static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
-{
-    ecs::registry &reg = *static_cast<ecs::registry *>(glfwGetWindowUserPointer(window));
-    for(auto e : reg.view<EventListener>())
-        reg.get<EventListener>(e).scrollEvents.emplace(window, glm::dvec2{xoffset, yoffset});
-}
-
 
 
 inline Transform lookat(glm::vec3 pos, glm::vec3 center)
@@ -101,6 +75,7 @@ static Entity loadModel(std::string_view path, ModelLoaderOptions options = {}, 
         if(material->textures.albedo       == INVALID_ENTITY) material->textures.albedo       = defaultMaterial.textures.albedo;
         if(material->textures.metallic     == INVALID_ENTITY) material->textures.metallic     = defaultMaterial.textures.metallic;
         if(material->textures.roughness    == INVALID_ENTITY) material->textures.roughness    = defaultMaterial.textures.roughness;
+        if(material->textures.ambient      == INVALID_ENTITY) material->textures.ambient      = defaultMaterial.textures.ambient;
         if(material->textures.normal       == INVALID_ENTITY) material->textures.normal       = defaultMaterial.textures.normal;
         if(material->textures.displacement == INVALID_ENTITY) material->textures.displacement = defaultMaterial.textures.displacement;
 
@@ -110,14 +85,61 @@ static Entity loadModel(std::string_view path, ModelLoaderOptions options = {}, 
 
     return eModel;
 }
-
-static void processModels()
+static Entity makeWindow(Registry &reg, std::string_view name)
 {
-    for(auto eModel : sReg.view<Model>(exclude<vk::VulkanModel>{}))
-        eModel.emplace<vk::VulkanModel>(vk::processModel(eModel.get<Model>()));
+    auto eWindow = reg.create<Window>();
+    auto &window = eWindow.get<Window>();
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    window.handle = glfwCreateWindow(800, 600, name.data(), nullptr, nullptr);
+    glfwGetWindowSize(window.handle, reinterpret_cast<int *>(&window.size.x), reinterpret_cast<int *>(&window.size.y));
+    if(glfwRawMouseMotionSupported())
+        glfwSetInputMode(window.handle, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+    io::setCallbacks(window.handle, reg.getReg());
+
+    return eWindow;
 }
 
-extern Registry sReg;
+struct VulkanModel
+{
+    struct Mesh 
+    {
+        struct Textures
+        {
+            vk::Image albedo;
+            vk::Image metallic;
+            vk::Image roughness;
+            vk::Image ambient;
+            vk::Image normal;
+            vk::Image displacement;
+        } textures;
+        struct Buffers
+        {
+            vk::Buffer pos;
+            vk::Buffer uv;
+            vk::Buffer norm;
+            vk::Buffer tan;
+            vk::Buffer idx;
+        } buffers;
+        size_t indexCount;
+        size_t meshIndex;
+    };
+
+    // TODO: add animation support
+
+    Entity eModel;
+    std::vector<Mesh> meshes;
+};
+
+static VulkanModel &processModel(Entity eModel)
+{
+    if(!eModel.has<VulkanModel>())
+    {
+        // ...
+        eModel.emplace<VulkanModel>();
+    }
+
+    return eModel.get<VulkanModel>();
+}
 
 int main(int argc, char **argv)
 {
@@ -128,21 +150,27 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    Window &window = sReg.create<Window>().get<Window>();
-
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    window.handle = glfwCreateWindow(800, 600, "levulkan", nullptr, nullptr);
-    glfwGetWindowSize(window.handle, reinterpret_cast<int *>(&window.size.x), reinterpret_cast<int *>(&window.size.y));
-    if(glfwRawMouseMotionSupported())
-        glfwSetInputMode(window.handle, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
-    glfwSetWindowUserPointer(window.handle, &sReg);
-    glfwSetKeyCallback(window.handle, keyCallback);
-    glfwSetCursorPosCallback(window.handle, cursorPosCallback);
-    glfwSetScrollCallback(window.handle, scrollCallback);
+    Window &window = makeWindow(sReg, "levulkan").get<Window>();
 
     vk::InitInfo initInfo{
         .appName = "levulkan",
         .window = window.handle,
+        .deviceFeatures = {
+            .features = {
+                .geometryShader = true,
+                .shaderSampledImageArrayDynamicIndexing = true,
+            },
+            .vulkan12 = {
+                .descriptorIndexing = true,
+                .descriptorBindingVariableDescriptorCount = true,
+                .runtimeDescriptorArray = true,
+                .bufferDeviceAddress = true,
+            },
+            .vulkan13 = {
+                .synchronization2 = true,
+                .dynamicRendering = true,
+            },
+        }
     };
 
     vk::enableValidationLayers(initInfo);
@@ -168,16 +196,23 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    vk::PipelineCreateInfo pipelineCI{
-        .type = vk::Pipeline::Type::GRAPHICS,
-        .graphics = {
+    vk::GraphicsPipelineCreateInfo pipelineCI{
+        .layout = {
+            .descriptorWrites = {
+                vk::PipelineLayoutCreateInfo::DescriptorWrite{
+                    .binding = {.set = 0, .binding = 1},
+                    .bufferInfo = {}
+                }
+            },
+            .framesInFlight = MAX_FRAMES_IN_FLIGHT,
         }
     };
     vk::Pipeline pipeline = vk::makePipeline(shader, pipelineCI);
 
-    // auto suzanne = loadModel("assets/suzanne.glb");
+    auto suzanne = loadModel("assets/suzanne.glb");
 
-    // processModels();
+    // for(auto eModel : sReg.view<Model>(exclude<VulkanModel>{}))
+    //     processModel(eModel);
 
     // for(auto e : sReg.view<vk::VulkanModel>())
     // {

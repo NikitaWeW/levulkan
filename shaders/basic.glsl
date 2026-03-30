@@ -8,16 +8,15 @@ layout(location = 1) in vec2 aUV;
 layout(location = 2) in vec3 aNormal;
 layout(location = 3) in vec3 aTangent;
 
-layout (buffer_reference, scalar) readonly buffer MatrixDataReference {
+layout(set = 0, binding = 0) uniform MatrixData {
     mat4 uProjMat;
     mat4 uViewMat;
     mat4 uModelMat;
     mat4 uNormMat;
 };
-layout(push_constant) uniform PushConstants
-{
-	MatrixDataReference uMatrixDataReference;
-};
+// layout(push_constant) uniform PushConstants
+// {
+// };
 
 layout(location = 0) out VS_OUT {
     vec2 uv;
@@ -32,12 +31,12 @@ void main()
     vec3 normal = aNormal;
     vec3 tangent = aTangent;
 
-    vs_out.pos = vec3(uMatrixDataReference.uModelMat * vec4(aPosition, 1));
-    gl_Position = uMatrixDataReference.uProjMat * uMatrixDataReference.uViewMat * vec4(vs_out.pos, 1);
+    vs_out.pos = vec3(uModelMat * vec4(aPosition, 1));
+    gl_Position = uProjMat * uViewMat * vec4(vs_out.pos, 1);
     vs_out.uv = aUV;
     
-    normal = vec3(normalize(uMatrixDataReference.uNormMat * vec4(normal, 0)));
-    tangent = vec3(normalize(uMatrixDataReference.uNormMat * vec4(tangent, 0)));
+    normal = vec3(normalize(uNormMat * vec4(normal, 0)));
+    tangent = vec3(normalize(uNormMat * vec4(tangent, 0)));
     tangent = normalize(tangent - dot(tangent, normal) * normal);
     vec3 bitangent = cross(tangent, normal);
     vs_out.tbn = mat3(tangent, bitangent, normal);
@@ -51,17 +50,13 @@ layout(location = 0) in VS_OUT {
     mat3 tbn;
 } fs_in;
 
-layout(set = 0, binding = 0) uniform sampler2D textures[];
+layout(set = 0, binding = 1) uniform sampler2D textures[];
 
-layout (buffer_reference, scalar) readonly buffer MatrixDataReference {
+layout(set = 0, binding = 0) uniform MatrixData {
     mat4 uProjMat;
     mat4 uViewMat;
     mat4 uModelMat;
     mat4 uNormMat;
-};
-layout(push_constant) uniform PushConstants
-{
-	MatrixDataReference uMatrixDataReference;
 };
 
 layout(location = 0) out vec4 oColor;
@@ -73,7 +68,7 @@ void main()
     // Phong lighting
     vec3 N = normalize(fs_in.tbn[2]);
     vec3 L = -normalize(uSunDir);
-    vec3 V = normalize(-uMatrixDataReference.uViewMat[2].xyz);
+    vec3 V = normalize(-uViewMat[2].xyz);
     vec3 R = reflect(-L, N);
     vec3 diffuse = vec3(max(dot(N, L), 0.0025));
     vec3 specular = vec3(pow(max(dot(R, V), 0.0), 16.0) * 0.75);
