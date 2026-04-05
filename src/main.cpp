@@ -6,7 +6,7 @@
 
 #include "vk/vk.hpp"
 #include "Logging.hpp"
-#include "resource/Model.hpp"
+#include "resource/Resources.hpp"
 #include "resource/Loaders.hpp"
 #include "IO.hpp"
 #include "Controller.hpp"   

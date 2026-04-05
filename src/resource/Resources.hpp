@@ -17,9 +17,14 @@ struct Bitmap
 
 struct Texture
 {
-    Bitmap<unsigned char> bitmap;
+    Bitmap<uint8_t> bitmap;
     bool srgb = false;
     unsigned numMipLevels = 1;
+    std::string path;
+};
+struct Cubemap
+{
+    std::array<Bitmap<float>, 6> faces;
     std::string path;
 };
 

@@ -1,11 +1,11 @@
-// Source: github.com/nikitawew/breakout
 #pragma once
 #include "nicecs/ecs.hpp"
-#include "Model.hpp"
+#include "Resources.hpp"
 
 struct TextureLoaderOptions
 {
     bool flip = true; /// Flip the image vertically, so the first pixel in the output array is the bottom left.
+    uint8_t desiredChannels = 4; // if non-zero, # of image components requested in result
 };
 struct ModelLoaderOptions
 {

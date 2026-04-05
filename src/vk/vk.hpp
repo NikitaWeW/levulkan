@@ -19,6 +19,7 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 
 #include "glm/glm.hpp" // Vector types
 #include "ECS.hpp" // SparseSet
+#include "resource/Resources.hpp" // Texture struct
 
 #ifndef DONT_CHECK_VK
 extern std::string _sChkLastFileLine;
@@ -35,7 +36,7 @@ namespace vk
 struct InitInfo
 {
     std::string appName; ///< The name of the application.
-    GLFWwindow *window = nullptr; ///< The window handle. 
+    GLFWwindow *window = VK_NULL_HANDLE; ///< The window handle. 
     uint32_t version = VK_API_VERSION_1_3; ///< Vulkan api version,
     bool offscreen = false; ///< Controls whether presentation is required.
     
@@ -52,7 +53,7 @@ struct InitInfo
     } deviceFeatures; ///< Required device features. No need to set sType of pNext
 
     VkDebugUtilsMessageSeverityFlagsEXT messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-    PFN_vkDebugUtilsMessengerCallbackEXT debugCallbackOverride = nullptr; ///< Leave nullptr for default callback.
+    PFN_vkDebugUtilsMessengerCallbackEXT debugCallbackOverride = VK_NULL_HANDLE; ///< Leave VK_NULL_HANDLE for default callback.
 };
 
 /// @brief Add necessary extensions and layers to enable validation layers.
@@ -136,6 +137,8 @@ Shader makeShader(ShaderCreateInfo const &ci);
 /// @brief The image allocated on the gpu
 struct Image
 {
+    VmaAllocator allocator = VK_NULL_HANDLE;
+
     VmaAllocation allocation = VK_NULL_HANDLE;
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
@@ -144,42 +147,69 @@ struct Image
     VkImageCreateInfo createInfo;
     VmaAllocationCreateInfo allocationInfo;
     
+    VkImageUsageFlags usage = 0;
     VkFormat format = VK_FORMAT_UNDEFINED;
-    glm::uvec2 size;
-    uint numComponents = 0;
-    uint numMipLevels = 1;
-};
+    struct Dimensions {
+        uint32_t width = 1;
+        uint32_t height = 1;
+        uint32_t depth = 1;
+        uint32_t mipLevels = 1;
+        uint32_t arrayLayers = 1;
+        uint32_t samples = 1;
+    } dimensions;
 
+    /// @brief A small helper function that checks if necessary members handles are not null
+    bool valid(); 
+};
 struct ImageCreateInfo
 {
-    
+    VmaAllocator allocator = VK_NULL_HANDLE;
+
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    Image::Dimensions dimensions;
+    VkImageUsageFlags usage = 0; // VK_IMAGE_USAGE_TRANSFER_DST_BIT is added automatically if data is not nullptr
+
+    void const *data = nullptr;
 };
+
+Image makeImage(ImageCreateInfo const &ci);
+/// @brief Make a sampled 2d texture, uses makeImage
+Image makeTexture(VmaAllocator allocator, Texture const &texture);;
+/// @brief Make a sampled cubemap, uses makeImage
+Image makeCubemap(VmaAllocator allocator, Cubemap const &cubemap);
 
 /// @brief A buffer data allocated on the gpu
 struct Buffer
 {
-    VmaAllocation allocator = VK_NULL_HANDLE;
     VkBuffer buffer = VK_NULL_HANDLE;
-
+    VmaAllocation allocation = VK_NULL_HANDLE;
+    
+    VmaAllocator allocator = VK_NULL_HANDLE;
+    VmaPool pool = VK_NULL_HANDLE;
     VkBufferCreateInfo createInfo;
     VmaAllocationCreateInfo allocationInfo;
 
+    /// The size of the active data in the buffer. Similar to std::vector::size(). 
+    /// To get the capacity of the buffer see #createInfo.size.
+    uint32_t size = 0; 
     VkDeviceAddress deviceAddress = 0;
-    void *mapped = nullptr;
+    void *mapped = VK_NULL_HANDLE;
 
-    /// @brief A small helper function that checks if all necessary member handles are not null
     bool valid(); 
-    /// @brief Maps the buffer contents to #mapped if valid.
-    void map();
-    /// @brief Unmaps the buffer and sets mapped to nullptr.
-    void unmap();
+    void map(); ///< vmaMapMemory #mapped
+    void unmap(); ///< vmaUnmapMemory #mapped
 };
 
 struct BufferCreateInfo
 {
     VmaAllocator allocator = VK_NULL_HANDLE;
+    VmaPool pool = VK_NULL_HANDLE;
+
     VkBufferUsageFlags usage = 0;
-    VkMemoryAllocateFlags flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    VkBufferCreateFlags createFlags = 0;
+    VkMemoryAllocateFlags allocFlags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    VkMemoryPropertyFlags requiredFlags = 0;
+    VkMemoryPropertyFlags preferredFlags = 0;
 
     void const *data = nullptr;
     uint32_t size = 0; // In bytes

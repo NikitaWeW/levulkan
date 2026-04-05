@@ -1,5 +1,4 @@
-// Source: github.com/nikitawew/breakout
-#include "Model.hpp" 
+#include "Resources.hpp" 
 #include "Loaders.hpp"
 #include "Logging.hpp"
 #include <filesystem>
