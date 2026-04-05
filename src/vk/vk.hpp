@@ -17,9 +17,8 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 #include "vk_mem_alloc.h"
 #include "GLFW/glfw3.h"
 
-#include "resource/Model.hpp"
-#include "glm/glm.hpp"
-#include "ECS.hpp"
+#include "glm/glm.hpp" // Vector types
+#include "ECS.hpp" // SparseSet
 
 #ifndef DONT_CHECK_VK
 extern std::string _sChkLastFileLine;
@@ -37,7 +36,7 @@ struct InitInfo
 {
     std::string appName; ///< The name of the application.
     GLFWwindow *window = nullptr; ///< The window handle. 
-    uint32_t version = VK_API_VERSION_1_3;
+    uint32_t version = VK_API_VERSION_1_3; ///< Vulkan api version,
     bool offscreen = false; ///< Controls whether presentation is required.
     
     std::vector<char const *> instanceExtensions; ///< A list of required instance extensions excluding required extensions.
@@ -141,22 +140,74 @@ struct Image
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
     VkSampler sampler = VK_NULL_HANDLE;
+    
+    VkImageCreateInfo createInfo;
+    VmaAllocationCreateInfo allocationInfo;
+    
     VkFormat format = VK_FORMAT_UNDEFINED;
-    VkImageCreateInfo imageCreateInfo;
-
     glm::uvec2 size;
     uint numComponents = 0;
     uint numMipLevels = 1;
 };
+
+struct ImageCreateInfo
+{
+    
+};
+
 /// @brief A buffer data allocated on the gpu
 struct Buffer
 {
-    VmaAllocation allocation;
-    VkBuffer buffer;
-    size_t size = 0;
+    VmaAllocation allocator = VK_NULL_HANDLE;
+    VkBuffer buffer = VK_NULL_HANDLE;
+
+    VkBufferCreateInfo createInfo;
+    VmaAllocationCreateInfo allocationInfo;
+
     VkDeviceAddress deviceAddress = 0;
     void *mapped = nullptr;
+
+    /// @brief A small helper function that checks if all necessary member handles are not null
+    bool valid(); 
+    /// @brief Maps the buffer contents to #mapped if valid.
+    void map();
+    /// @brief Unmaps the buffer and sets mapped to nullptr.
+    void unmap();
 };
+
+struct BufferCreateInfo
+{
+    VmaAllocator allocator = VK_NULL_HANDLE;
+    VkBufferUsageFlags usage = 0;
+    VkMemoryAllocateFlags flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+    void const *data = nullptr;
+    uint32_t size = 0; // In bytes
+    bool keepMapped = false;
+};
+
+Buffer makeBuffer(BufferCreateInfo const &ci);
+
+template<typename T>
+inline Buffer makeBuffer(VmaAllocator allocator, T const &obj, VkBufferUsageFlags usage)
+{
+    return makeBuffer(BufferCreateInfo{
+        .allocator = allocator,
+        .usage = usage,
+        .data = &obj,
+        .size = sizeof(T),
+    });
+}
+template<typename T>
+inline Buffer makeBuffer(VmaAllocator allocator, std::vector<T> const &vec, VkBufferUsageFlags usage)
+{
+    return makeBuffer(BufferCreateInfo{
+        .allocator = allocator,
+        .usage = usage,
+        .data = vec.data(),
+        .size = vec.size() * sizeof(T),
+    });
+}
 
 struct SwapchainCreateInfo
 {
@@ -172,18 +223,24 @@ Swapchain makeSwapchain(SwapchainCreateInfo const &ci);
 /// @brief The vulkan pipeline.
 struct Pipeline
 {
-    enum class Type { INVALID, GRAPHICS, COMPUTE, RAYTRACING };
+    enum class Type { INVALID = 0, GRAPHICS, COMPUTE, RAYTRACING };
     struct DescriptorBinding
     {
         uint32_t set = 0;
         uint32_t binding = 0;
         auto operator<=>(DescriptorBinding const &other) const = default;
     };
+    struct DescriptorResource
+    {
+        enum { INVALID = 0, IMAGE, BUFFER } type = INVALID;
+        Buffer buffer; // One large buffer for array descriptors
+        std::vector<Image> image;
+    };
     struct Layout
     {
         VkPipelineLayout layout;
         std::vector<VkDescriptorSetLayout> descLayouts;
-        SparseSet<VkDescriptorSet> descSets; ///< 
+        std::vector<SparseSet<VkDescriptorSet>> descSets; ///< Per frame in flight
         VkDescriptorPool descPool;
     };
 
@@ -193,11 +250,11 @@ struct Pipeline
     // Owning
     VkPipeline pipeline;
     Layout layout;
-    std::map<DescriptorBinding, std::vector<Buffer>> buffers;
-    std::map<DescriptorBinding, std::vector<Image>> images;
+    std::map<DescriptorBinding, std::vector<DescriptorResource>> descResources; ///< Descriptor resources allocated automatically. One per frame in flight.
 
     // Not owning
     VkDevice device;
+    VmaAllocator allocator;
 };
 struct PipelineLayoutCreateInfo
 {
@@ -218,14 +275,14 @@ struct PipelineLayoutCreateInfo
     std::map<Pipeline::DescriptorBinding, DescriptorWrite> descriptorWrites; ///< Descriptor data for static descriptors. If no write, creates the resource for each frame in flight.
 
     uint32_t maxVariableCountSize = 100;
-    uint32_t maxDescriptorSets = 100;
+    uint32_t maxDescriptorSets = 16;
     uint32_t framesInFlight = 1; ///< Used to determine the descriptor count
-
 };
 struct GraphicsPipelineCreateInfo
 {
     PipelineLayoutCreateInfo layout; ///< Pipeline layout create info
     std::vector<VkDynamicState> dynamicState; ///< Dynamic state to enable.
+    VmaAllocator allocator;
 
     // Vertex inputs
     struct {

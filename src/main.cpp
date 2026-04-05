@@ -52,7 +52,7 @@ static bool init()
         return false;
     }
 
-    auto res = volkInitialize();
+    VkResult res = volkInitialize();
     if(res != VK_SUCCESS)
     {
         LOG_ERROR("Failed to init volk: {}!", string_VkResult(res));
@@ -155,6 +155,7 @@ int main(int argc, char **argv)
     vk::InitInfo initInfo{
         .appName = "levulkan",
         .window = window.handle,
+        .version = VK_VERSION_1_3,
         .deviceFeatures = {
             .features = {
                 .geometryShader = true,
@@ -184,8 +185,8 @@ int main(int argc, char **argv)
     }
 
     vk::ShaderCreateInfo shaderCI{
-        .src = "shaders/basic.glsl", 
-        .bin = "shaders-bin/basic", 
+        .src = "shaders/basic.glsl",
+        .bin = "shaders-bin/basic",
         .device = initRes.device
     };
     vk::Shader shader = vk::makeShader(shaderCI);
@@ -199,10 +200,8 @@ int main(int argc, char **argv)
     vk::GraphicsPipelineCreateInfo pipelineCI{
         .layout = {
             .descriptorWrites = {
-                vk::PipelineLayoutCreateInfo::DescriptorWrite{
-                    .binding = {.set = 0, .binding = 1},
-                    .bufferInfo = {}
-                }
+                {{.set = 0, .binding = 0}, vk::PipelineLayoutCreateInfo::DescriptorWrite{
+                }}
             },
             .framesInFlight = MAX_FRAMES_IN_FLIGHT,
         }

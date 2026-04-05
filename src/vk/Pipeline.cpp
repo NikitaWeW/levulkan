@@ -1,6 +1,6 @@
 /*
 $$\    $$\ $$\   $$\   My vulkan abstraction.
-$$ |   $$ |$$ | $$  |  Copyright (c) 2026 Nikita Martynau 
+$$ |   $$ |$$ | $$  |  Copyright(c) 2026 Nikita Martynau 
 $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit 
 \$$\  $$  |$$$$$  /    insert git repo url here
  \$$\$$  / $$  $$<     
@@ -16,7 +16,7 @@ using namespace vk;
 
 static std::string string_SpvReflectResult(SpvReflectResult res)
 {
-    switch (res) {
+    switch(res) {
         case SPV_REFLECT_RESULT_SUCCESS                                    : return "SPV_REFLECT_RESULT_SUCCESS";                                   
         case SPV_REFLECT_RESULT_NOT_READY                                  : return "SPV_REFLECT_RESULT_NOT_READY";                                 
         case SPV_REFLECT_RESULT_ERROR_PARSE_FAILED                         : return "SPV_REFLECT_RESULT_ERROR_PARSE_FAILED";                        
@@ -44,7 +44,7 @@ static std::string string_SpvReflectResult(SpvReflectResult res)
 }
 static std::string string_PipelineType(Pipeline::Type type)
 {
-    switch (type) {
+    switch(type) {
         case Pipeline::Type::INVALID:    return "Pipeline::Type::INVALID";   
         case Pipeline::Type::GRAPHICS:   return "Pipeline::Type::GRAPHICS";  
         case Pipeline::Type::COMPUTE:    return "Pipeline::Type::COMPUTE";   
@@ -100,7 +100,7 @@ static VkDescriptorType toVulkanDescriptorType(SpvReflectDescriptorType const &t
         case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:     return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
         case SPV_REFLECT_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:           return VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
         case SPV_REFLECT_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR: return VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-        default: return (VkDescriptorType) 0;
+        default: return(VkDescriptorType) 0;
     }
 }
 static VkFormat toVulkanFormat(SpvReflectFormat const &format)
@@ -148,12 +148,13 @@ static VkFormat toVulkanFormat(SpvReflectFormat const &format)
     }
 }
 
+using Binding = Pipeline::DescriptorBinding;
 struct Reflection 
 {
     std::vector<VkPipelineShaderStageCreateInfo> stages;
-    std::map<uint32_t, SparseSet<VkDescriptorSetLayoutBinding>> descSets; // ordered
-    std::map<uint32_t, SparseSet<VkDescriptorBindingFlags>> descFlags; 
-    std::map<std::pair<uint32_t, uint32_t>, VkPushConstantRange> pushConstants;
+    std::map<uint32_t, SparseSet<VkDescriptorSetLayoutBinding>> descSets;
+    std::map<Binding, SpvReflectDescriptorBinding> descBindings;
+    std::map<Binding, VkPushConstantRange> pushConstants;
     std::unordered_map<uint32_t, VkFormat> input;
     std::unordered_map<uint32_t, VkFormat> output;
 };
@@ -179,15 +180,13 @@ static Reflection reflect(Shader const &shader)
         SPV_CHK(spvReflectEnumerateDescriptorBindings(&module, &count, descBindings.data()), bin.path, continue);
         for(auto descBinding : descBindings)
         {
+            reflection.descBindings[{descBinding->set, descBinding->binding}] = *descBinding;
+
             auto &binding = reflection.descSets[descBinding->set][descBinding->binding];
             binding.binding = descBinding->binding;
             binding.descriptorType = toVulkanDescriptorType(descBinding->descriptor_type);
             binding.descriptorCount = std::max(descBinding->count, binding.descriptorCount);
             binding.stageFlags |= bin.stage;
-
-            reflection.descFlags[descBinding->set][descBinding->binding]; // Create if doesent contain
-            if(descBinding->array.dims_count > 0 && descBinding->array.dims[0] == 0)
-                reflection.descFlags[descBinding->set][descBinding->binding] |= VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
         }
 
         // Push constants
@@ -221,13 +220,65 @@ static Reflection reflect(Shader const &shader)
 
     return reflection;
 }
+static Buffer createBufferFromBinding(SpvReflectDescriptorBinding const &binding, VmaAllocator allocator)
+{
+    Buffer buffer;
 
-static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Reflection reflection)
+    VkBufferUsageFlags usage = 0;
+    if(binding.descriptor_type == SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER || 
+       binding.descriptor_type == SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
+        usage |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    else
+        usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+
+    buffer.createInfo = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = binding.block.size * binding.count,
+        .usage = usage,
+    };
+
+    buffer.allocationInfo = {
+        .usage = VMA_MEMORY_USAGE_AUTO,
+    };
+
+    vmaCreateBuffer(ci.allocator, &buffer.createInfo, &buffer.allocationInfo, &buffer.buffer, &buffer.allocation, nullptr);
+}
+static std::string string_SpvReflectDescriptorType(SpvReflectDescriptorType const &type)
+{
+    switch(type)
+    {
+    case SPV_REFLECT_DESCRIPTOR_TYPE_SAMPLER:                    return "SPV_REFLECT_DESCRIPTOR_TYPE_SAMPLER";                   
+    case SPV_REFLECT_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:     return "SPV_REFLECT_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER";    
+    case SPV_REFLECT_DESCRIPTOR_TYPE_SAMPLED_IMAGE:              return "SPV_REFLECT_DESCRIPTOR_TYPE_SAMPLED_IMAGE";             
+    case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_IMAGE:              return "SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_IMAGE";             
+    case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:       return "SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER";      
+    case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:       return "SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER";      
+    case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER:             return "SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER";            
+    case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER:             return "SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER";            
+    case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:     return "SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC";    
+    case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:     return "SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC";    
+    case SPV_REFLECT_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:           return "SPV_REFLECT_DESCRIPTOR_TYPE_INPUT_ATTACHMENT";          
+    case SPV_REFLECT_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR: return "SPV_REFLECT_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR";
+    default: return "unhandled SpvReflectDescriptorType";
+    }
+}
+
+static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Reflection const &reflection)
 {
     Pipeline::Layout layout;
-
+    std::map<uint32_t, SparseSet<VkDescriptorBindingFlags>> descFlags;
+ 
+    // Descriptor flags
+    for(auto [binding, desc] : reflection.descBindings)
+    {
+        auto &flags = descFlags[binding.set][binding.binding];
+        if(ci.descriptorBindingFlags.contains(binding))
+            flags |= ci.descriptorBindingFlags.at(binding);
+        if(desc.array.dims_count > 0 && desc.array.dims[0] == 0)
+            flags |= VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+    }
     for(auto [binding, flag] : ci.descriptorBindingFlags)
-        reflection.descFlags[binding.set][binding.binding] |= flag;
+        descFlags[binding.set][binding.binding] |= flag;
 
     // Descriptor set layouts
     layout.descLayouts.reserve(reflection.descSets.size());
@@ -237,14 +288,14 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
     {
         VkDescriptorSetLayoutBindingFlagsCreateInfo flagsCI{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
-            .bindingCount = (uint32_t) reflection.descFlags.at(set).size(),
-            .pBindingFlags = reflection.descFlags.at(set).dense().data(),
+            .bindingCount =(uint32_t) descFlags.at(set).size(),
+            .pBindingFlags = descFlags.at(set).dense().data(),
         };
         VkDescriptorSetLayoutCreateInfo layoutCI{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
             .pNext = &flagsCI,
             .flags = ci.descriptorSetFlags.contains(set) ? ci.descriptorSetFlags.at(set) : 0,
-            .bindingCount = (uint32_t) bindings.size(),
+            .bindingCount =(uint32_t) bindings.size(),
             .pBindings = bindings.dense().data(),
         };
         setToLayoutIndex[set] = layout.descLayouts.size();
@@ -257,7 +308,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
     {
         for(auto const &binding : bindings.dense())
         {
-            auto const &flags = reflection.descFlags.at(set).get(binding.binding);
+            auto const &flags = descFlags.at(set).get(binding.binding);
             auto &size = poolSizes[binding.descriptorType];
             size.type = binding.descriptorType;
             size.descriptorCount += flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT ? ci.maxVariableCountSize : binding.descriptorCount;
@@ -268,7 +319,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
     VkDescriptorPoolCreateInfo poolCI{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .maxSets = ci.maxDescriptorSets * ci.framesInFlight,
-        .poolSizeCount = (uint32_t) poolSizes.size(),
+        .poolSizeCount =(uint32_t) poolSizes.size(),
         .pPoolSizes = poolSizes.dense().data()
     };
     CHK(vkCreateDescriptorPool(dev, &poolCI, nullptr, &layout.descPool));
@@ -281,19 +332,14 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
         std::optional<VkDescriptorSetVariableDescriptorCountAllocateInfo> variableSizedBinding;
         for(auto binding : bindings.dense())
         {
-            auto const &flags = reflection.descFlags.at(set).get(binding.binding);
+            bool hasWrite = ci.descriptorWrites.contains({set, binding.binding});
+            auto const &flags = descFlags.at(set).get(binding.binding);
             if(flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT)
             {
-                auto countIter = std::find_if(
-                    ci.descriptorWrites.begin(), 
-                    ci.descriptorWrites.end(), 
-                    [&](PipelineLayoutCreateInfo::DescriptorWrite const &write){ 
-                        return write.binding == Pipeline::DescriptorBinding{set, binding.binding}; 
-                });
-
-                if(countIter != ci.descriptorWrites.end())
+                if(hasWrite)
                 {
-                    count = countIter->size();
+                    auto const &write = ci.descriptorWrites.at({set, binding.binding});
+                    count = write.size();
                     variableSizedBinding = {
                         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO,
                         .descriptorSetCount = 1,
@@ -302,6 +348,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
                     break;
                 } else {
                     LOG_ERROR("You must specify a write for a variable sized array descriptor binding layout(set={}, binding={})", set, binding.binding);
+                    continue;
                 }
             }
         }
@@ -319,19 +366,51 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
     // Write descriptors
     std::vector<VkWriteDescriptorSet> descWrites;
     descWrites.reserve(ci.descriptorWrites.size() * ci.framesInFlight);
-    for(auto const &write : ci.descriptorWrites)
+    for(auto const &[set, bindings] : reflection.descSets)
     {
-        descWrites.emplace_back(VkWriteDescriptorSet{
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = layout.descSets.get(write.binding.set),
-            .dstBinding = write.binding.binding,
-            .dstArrayElement = write.dstArrayElement,
-            .descriptorCount = write.size(),
-            .descriptorType = reflection.descSets.at(write.binding.set).get(write.binding.binding).descriptorType,
-            .pImageInfo = write.imageInfo.data(),
-            .pBufferInfo = write.bufferInfo.data(),
-            .pTexelBufferView = write.texelBufferView.data(),
-        });
+        for(auto const &binding : bindings.dense())
+        {
+            for(uint i = 0; i < ci.framesInFlight; ++i)
+            {
+                PipelineLayoutCreateInfo::DescriptorWrite write;
+        
+                if(ci.descriptorWrites.contains({set, binding.binding})) {
+                    write = ci.descriptorWrites.at({set, binding.binding});
+                } else {
+                    auto const &descBinding = reflection.descBindings.at({set, binding.binding});
+                    switch(descBinding.descriptor_type)
+                    {
+                        case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+                        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+                        case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+                        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
+                        createBufferFromBinding(descBinding, ci);
+
+                        case SPV_REFLECT_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+                        case SPV_REFLECT_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+                        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+                        LOG_ERROR("Automatic image creation is not supported! Make sure to pass a PipelineLayoutCreateInfo::DescriptorWrite!");
+                        return std::nullopt;
+
+                        default:
+                        LOG_ERROR("Unsupported resource of type {}", string_SpvReflectDescriptorType(binding.descriptor_type));
+                        return std::nullopt;
+                    }
+                }
+        
+                descWrites.emplace_back(VkWriteDescriptorSet{
+                    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet = layout.descSets[i].get({set, }),
+                    .dstBinding = binding.binding,
+                    .dstArrayElement = write.dstArrayElement,
+                    .descriptorCount = write.size(),
+                    .descriptorType = reflection.descSets.at(set).get(binding.binding).descriptorType,
+                    .pImageInfo = write.imageInfo.data(),
+                    .pBufferInfo = write.bufferInfo.data(),
+                    .pTexelBufferView = write.texelBufferView.data(),
+                });
+            }
+        }
     }
     vkUpdateDescriptorSets(dev, descWrites.size(), descWrites.data(), 0, nullptr);
 
@@ -342,9 +421,9 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
 
     VkPipelineLayoutCreateInfo pipelineLayoutCI{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = (uint32_t) layout.descLayouts.size(),
+        .setLayoutCount =(uint32_t) layout.descLayouts.size(),
         .pSetLayouts = layout.descLayouts.data(),
-        .pushConstantRangeCount = (uint32_t) pushConstants.size(),
+        .pushConstantRangeCount =(uint32_t) pushConstants.size(),
         .pPushConstantRanges = pushConstants.data(),
     };
     CHK(vkCreatePipelineLayout(dev, &pipelineLayoutCI, nullptr, &layout.layout));
@@ -377,29 +456,29 @@ static Pipeline makeGraphicsPipeline(Shader const &shader, GraphicsPipelineCreat
 
     VkPipelineViewportStateCreateInfo viewportState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-        .viewportCount = (uint32_t) ci.viewport.viewports.size(),
+        .viewportCount =(uint32_t) ci.viewport.viewports.size(),
         .pViewports = ci.viewport.viewports.data(),
-        .scissorCount = (uint32_t) ci.viewport.scissors.size(),
+        .scissorCount =(uint32_t) ci.viewport.scissors.size(),
         .pScissors = ci.viewport.scissors.data(),
     };
 
     VkPipelineRenderingCreateInfo renderingCI{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-        .colorAttachmentCount = (uint32_t) ci.attachments.color.size(),
+        .colorAttachmentCount =(uint32_t) ci.attachments.color.size(),
         .pColorAttachmentFormats = ci.attachments.color.data(),
         .depthAttachmentFormat = ci.attachments.depth,
         .stencilAttachmentFormat = ci.attachments.stencil
     };
     VkPipelineDynamicStateCreateInfo dynamicState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-        .dynamicStateCount = (uint32_t) ci.dynamicState.size(),
+        .dynamicStateCount =(uint32_t) ci.dynamicState.size(),
         .pDynamicStates = ci.dynamicState.data()
     };
     VkPipelineColorBlendStateCreateInfo blendState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
         .logicOpEnable = ci.blending.logicOpEnable,
         .logicOp = ci.blending.logicOp,
-        .attachmentCount = (uint32_t) ci.blending.attachments.size(),
+        .attachmentCount =(uint32_t) ci.blending.attachments.size(),
         .pAttachments = ci.blending.attachments.data(),
         .blendConstants = {ci.blending.constant.r, ci.blending.constant.g, ci.blending.constant.b, ci.blending.constant.a}
     };
@@ -410,7 +489,7 @@ static Pipeline makeGraphicsPipeline(Shader const &shader, GraphicsPipelineCreat
     VkGraphicsPipelineCreateInfo pipelineCI{
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .pNext = &renderingCI,
-        .stageCount = (uint32_t) reflection.stages.size(),
+        .stageCount =(uint32_t) reflection.stages.size(),
         .pStages = reflection.stages.data(),
         .pVertexInputState = &vertexInputState,
         .pInputAssemblyState = &inputAssemblyState,
