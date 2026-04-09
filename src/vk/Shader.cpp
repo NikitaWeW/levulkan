@@ -581,6 +581,12 @@ Shader vk::makeShader(ShaderCreateInfo const &ci)
 void vk::destroy(Shader &shader)
 {
     for(auto &bin : shader.binaries)
+    {
         if(bin.module && shader.createInfo.device)
+        {
             vkDestroyShaderModule(shader.createInfo.device, bin.module, nullptr);
+            bin.module = VK_NULL_HANDLE;
+        }
+    }
+    shader.valid = false;
 }

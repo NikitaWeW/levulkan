@@ -1,15 +1,14 @@
 #include <bits/stdc++.h>
 
+#include "vk/vk.hpp"
 #include "ECS.hpp"
 #include "glm/glm.hpp"
 #include "glm/gtc/quaternion.hpp"
 
-#include "vk/vk.hpp"
 #include "Logging.hpp"
-#include "resource/Resources.hpp"
-#include "resource/Loaders.hpp"
 #include "IO.hpp"
 #include "Controller.hpp"   
+#include "ResourceProcessing.hpp"
 
 extern Registry sReg;
 Registry sReg;
@@ -62,29 +61,6 @@ static bool init()
     return true;
 }
 
-static Entity loadModel(std::string_view path, ModelLoaderOptions options = {}, std::optional<Material> material = {})
-{
-    static ModelLoader loader(sReg.getReg());
-    
-    auto eModel = Entity{&sReg, loader.loadFromFile(path, options)};
-    auto &model = eModel.get<Model>();
-    
-    if(material.has_value())
-    {
-        auto defaultMaterial = loader.getDefaultMaterial();
-        if(material->textures.albedo       == INVALID_ENTITY) material->textures.albedo       = defaultMaterial.textures.albedo;
-        if(material->textures.metallic     == INVALID_ENTITY) material->textures.metallic     = defaultMaterial.textures.metallic;
-        if(material->textures.roughness    == INVALID_ENTITY) material->textures.roughness    = defaultMaterial.textures.roughness;
-        if(material->textures.ambient      == INVALID_ENTITY) material->textures.ambient      = defaultMaterial.textures.ambient;
-        if(material->textures.normal       == INVALID_ENTITY) material->textures.normal       = defaultMaterial.textures.normal;
-        if(material->textures.displacement == INVALID_ENTITY) material->textures.displacement = defaultMaterial.textures.displacement;
-
-        for(auto &mesh : model.meshes)
-            mesh.material = material.value();
-    }
-
-    return eModel;
-}
 static Entity makeWindow(Registry &reg, std::string_view name)
 {
     auto eWindow = reg.create<Window>();
@@ -99,47 +75,6 @@ static Entity makeWindow(Registry &reg, std::string_view name)
     return eWindow;
 }
 
-struct VulkanModel
-{
-    struct Mesh 
-    {
-        struct Textures
-        {
-            vk::Image albedo;
-            vk::Image metallic;
-            vk::Image roughness;
-            vk::Image ambient;
-            vk::Image normal;
-            vk::Image displacement;
-        } textures;
-        struct Buffers
-        {
-            vk::Buffer pos;
-            vk::Buffer uv;
-            vk::Buffer norm;
-            vk::Buffer tan;
-            vk::Buffer idx;
-        } buffers;
-        size_t indexCount;
-        size_t meshIndex;
-    };
-
-    // TODO: add animation support
-
-    Entity eModel;
-    std::vector<Mesh> meshes;
-};
-
-static VulkanModel &processModel(Entity eModel)
-{
-    if(!eModel.has<VulkanModel>())
-    {
-        // ...
-        eModel.emplace<VulkanModel>();
-    }
-
-    return eModel.get<VulkanModel>();
-}
 
 int main(int argc, char **argv)
 {
@@ -197,10 +132,29 @@ int main(int argc, char **argv)
         return -1;
     }
 
+    auto suzanne = loadModel("assets/suzanne.glb");
+    
+    ResourceAllocator alloc;
+    alloc.alloc = initRes.vma;
+    for(auto eModel : sReg.view<Model>(exclude<VulkanModel>{}))
+        processModel(alloc, eModel);
+
+
+    std::vector<VkDescriptorImageInfo> imageInfos;
+    for(auto eImage : alloc.images)
+    {
+        auto &image = eImage.get<vk::Image>();
+        imageInfos.emplace_back(VkDescriptorImageInfo{
+            .sampler = image.sampler,
+            .imageView = image.view,
+            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        });
+    }
     vk::GraphicsPipelineCreateInfo pipelineCI{
         .layout = {
             .descriptorWrites = {
                 {{.set = 0, .binding = 0}, vk::PipelineLayoutCreateInfo::DescriptorWrite{
+                    .
                 }}
             },
             .framesInFlight = MAX_FRAMES_IN_FLIGHT,
@@ -208,15 +162,23 @@ int main(int argc, char **argv)
     };
     vk::Pipeline pipeline = vk::makePipeline(shader, pipelineCI);
 
-    auto suzanne = loadModel("assets/suzanne.glb");
+    ////////////////////////////////////////////////////////////////
 
-    // for(auto eModel : sReg.view<Model>(exclude<VulkanModel>{}))
-    //     processModel(eModel);
-
-    // for(auto e : sReg.view<vk::VulkanModel>())
-    // {
-    //     vk::destroy(e.get<vk::VulkanModel>());
-    // }
+    for(auto e : sReg.view<VulkanModel>())
+    {
+        for(auto &mesh : e.get<VulkanModel>().meshes)
+        {
+            vk::destroy(mesh.buffers.pos);
+            vk::destroy(mesh.buffers.uv);
+            vk::destroy(mesh.buffers.norm);
+            vk::destroy(mesh.buffers.tan);
+            vk::destroy(mesh.buffers.idx);
+        }
+    }
+    for(auto e : sReg.view<vk::Image>())
+        vk::destroy(e.get<vk::Image>());
+    for(auto e : sReg.view<vk::Buffer>())
+        vk::destroy(e.get<vk::Buffer>());
 
     vk::destroy(pipeline);
     vk::destroy(shader);

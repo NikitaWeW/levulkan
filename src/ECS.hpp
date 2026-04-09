@@ -10,7 +10,7 @@ class Entity;
 template<typename... T>
 using exclude = ecs::exclude<T...>;
 
-/// @brief A thin layer above the ecs::registry with support for thread synchronization.
+/// @brief A thin layer above the ecs::registry with extended syntax and cool stuff.
 class Registry
 {
 private:
@@ -59,7 +59,7 @@ public:
     void merge(Registry const &other);
 };
 
-/// @brief A helper class to group the entity and the registry it belongs to.
+/// @brief A lightweight helper class to group the entity and the registry it belongs to.
 /// Invalidates if the registry is moved or if the entity invalidates obviously.
 class Entity
 {

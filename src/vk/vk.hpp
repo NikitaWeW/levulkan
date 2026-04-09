@@ -17,7 +17,7 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 #include "vk_mem_alloc.h"
 #include "GLFW/glfw3.h"
 
-#include "glm/glm.hpp" // Vector types
+#include "glm/glm.hpp" // Vector types, TODO: get rid of them
 #include "ECS.hpp" // SparseSet
 #include "resource/Resources.hpp" // Texture struct
 
@@ -134,49 +134,26 @@ struct Shader
 /// @returns Shader with valid flag set to true if successful.
 Shader makeShader(ShaderCreateInfo const &ci);
 
-/// @brief The image allocated on the gpu
-struct Image
+struct AllocationCreateInfo
 {
     VmaAllocator allocator = VK_NULL_HANDLE;
-
-    VmaAllocation allocation = VK_NULL_HANDLE;
-    VkImage image = VK_NULL_HANDLE;
-    VkImageView view = VK_NULL_HANDLE;
-    VkSampler sampler = VK_NULL_HANDLE;
-    
-    VkImageCreateInfo createInfo;
-    VmaAllocationCreateInfo allocationInfo;
-    
-    VkImageUsageFlags usage = 0;
-    VkFormat format = VK_FORMAT_UNDEFINED;
-    struct Dimensions {
-        uint32_t width = 1;
-        uint32_t height = 1;
-        uint32_t depth = 1;
-        uint32_t mipLevels = 1;
-        uint32_t arrayLayers = 1;
-        uint32_t samples = 1;
-    } dimensions;
-
-    /// @brief A small helper function that checks if necessary members handles are not null
-    bool valid(); 
+    VmaPool pool = VK_NULL_HANDLE;
+    VkMemoryAllocateFlags allocFlags = 0;
+    VkMemoryPropertyFlags requiredFlags = 0;
+    VkMemoryPropertyFlags preferredFlags = 0;
 };
-struct ImageCreateInfo
+
+struct BufferCreateInfo
 {
-    VmaAllocator allocator = VK_NULL_HANDLE;
+    VkBufferUsageFlags usage = 0;
+    VkBufferCreateFlags createFlags = 0;
+    AllocationCreateInfo allocInfo;
+    VkSharingMode sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    VkFormat format = VK_FORMAT_UNDEFINED;
-    Image::Dimensions dimensions;
-    VkImageUsageFlags usage = 0; // VK_IMAGE_USAGE_TRANSFER_DST_BIT is added automatically if data is not nullptr
-
-    void const *data = nullptr;
+    void const *data = nullptr; ///< If not nullptr, appropriate memory flags are added automatically and the data is copied to mapped location.
+    uint32_t size = 0; // In bytes
+    bool map = true; ///< Map if appropriate flags are set or data is written.
 };
-
-Image makeImage(ImageCreateInfo const &ci);
-/// @brief Make a sampled 2d texture, uses makeImage
-Image makeTexture(VmaAllocator allocator, Texture const &texture);;
-/// @brief Make a sampled cubemap, uses makeImage
-Image makeCubemap(VmaAllocator allocator, Cubemap const &cubemap);
 
 /// @brief A buffer data allocated on the gpu
 struct Buffer
@@ -185,45 +162,26 @@ struct Buffer
     VmaAllocation allocation = VK_NULL_HANDLE;
     
     VmaAllocator allocator = VK_NULL_HANDLE;
-    VmaPool pool = VK_NULL_HANDLE;
     VkBufferCreateInfo createInfo;
     VmaAllocationCreateInfo allocationInfo;
 
-    /// The size of the active data in the buffer. Similar to std::vector::size(). 
-    /// To get the capacity of the buffer see #createInfo.size.
-    uint32_t size = 0; 
     VkDeviceAddress deviceAddress = 0;
     void *mapped = VK_NULL_HANDLE;
 
-    bool valid(); 
-    void map(); ///< vmaMapMemory #mapped
-    void unmap(); ///< vmaUnmapMemory #mapped
-};
-
-struct BufferCreateInfo
-{
-    VmaAllocator allocator = VK_NULL_HANDLE;
-    VmaPool pool = VK_NULL_HANDLE;
-
-    VkBufferUsageFlags usage = 0;
-    VkBufferCreateFlags createFlags = 0;
-    VkMemoryAllocateFlags allocFlags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-    VkMemoryPropertyFlags requiredFlags = 0;
-    VkMemoryPropertyFlags preferredFlags = 0;
-
-    void const *data = nullptr;
-    uint32_t size = 0; // In bytes
-    bool keepMapped = false;
+    bool valid();
 };
 
 Buffer makeBuffer(BufferCreateInfo const &ci);
+void resizeBuffer(Buffer &buffer);
 
 template<typename T>
 inline Buffer makeBuffer(VmaAllocator allocator, T const &obj, VkBufferUsageFlags usage)
 {
     return makeBuffer(BufferCreateInfo{
-        .allocator = allocator,
         .usage = usage,
+        .allocInfo = {
+            .allocator = allocator,
+        },
         .data = &obj,
         .size = sizeof(T),
     });
@@ -238,6 +196,72 @@ inline Buffer makeBuffer(VmaAllocator allocator, std::vector<T> const &vec, VkBu
         .size = vec.size() * sizeof(T),
     });
 }
+
+/// @brief The image allocated on the gpu
+struct Image
+{
+    VmaAllocator allocator = VK_NULL_HANDLE;
+
+    VmaAllocation allocation = VK_NULL_HANDLE;
+    VkImage image = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
+    VkSampler sampler = VK_NULL_HANDLE;
+
+    /// The transfer buffer.
+    /// Free anytime after submitting the command buffer.
+    Buffer srcBuffer;
+    
+    VkImageCreateInfo createInfo;
+    VmaAllocationCreateInfo allocationInfo;
+    
+    VkImageUsageFlags usage = 0;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+
+    /// @brief A small helper function that checks if necessary members handles are not null
+    bool valid(); 
+};
+struct ImageCreateInfo
+{
+    /// VK_IMAGE_USAGE_TRANSFER_XXX_BIT is added automatically if data is not nullptr.
+    /// VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER or VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE will create the sampler.
+    VkImageUsageFlags usage = 0; 
+    AllocationCreateInfo allocInfo;
+    VkSharingMode sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    // Command buffer to record transfer commands to
+    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+    
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    struct Dimensions {
+        uint32_t width = 1;
+        uint32_t height = 1;
+        uint32_t depth = 1;
+        uint32_t mipLevels = 1;
+        uint32_t arrayLayers = 1;
+        VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
+    } dimensions;
+    struct Sampler {
+        VkDevice device = VK_NULL_HANDLE;
+        VkSamplerCreateFlags flags = 0;
+        VkFilter magFilter = VK_FILTER_NEAREST;
+        VkFilter minFilter = VK_FILTER_NEAREST;
+        VkSamplerMipmapMode mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        VkSamplerAddressMode addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        VkSamplerAddressMode addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        VkSamplerAddressMode addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        float mipLodBias = 0;
+        bool anisotropyEnable = true;
+        float maxAnisotropy = 8;
+        bool compareEnable = false;
+        VkCompareOp compareOp;
+        float minLod = 0;
+        VkBorderColor borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+        bool unnormalizedCoordinates = false;
+    } sampler;
+    void const *data = nullptr;
+};
+
+Image makeImage(ImageCreateInfo const &ci);
 
 struct SwapchainCreateInfo
 {

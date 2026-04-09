@@ -10,11 +10,159 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 */
 #include "vk.hpp"
 #include "Logging.hpp"
+#include "libraries/vk_format_utils.h"
 using namespace vk;
 
+static void insertImageMemoryBarrier(
+    VkCommandBuffer         command_buffer,
+    VkImage                 image,
+    VkAccessFlags           src_access_mask,
+    VkAccessFlags           dst_access_mask,
+    VkImageLayout           old_layout,
+    VkImageLayout           new_layout,
+    VkPipelineStageFlags    src_stage_mask,
+    VkPipelineStageFlags    dst_stage_mask,
+    VkImageSubresourceRange subresource_range)
+{
+    VkImageMemoryBarrier2 barrier{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+        .srcStageMask = src_stage_mask,
+        .srcAccessMask = src_access_mask,
+        .dstStageMask = dst_stage_mask,
+        .dstAccessMask = dst_access_mask,
+        .oldLayout = old_layout,
+        .newLayout = new_layout,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = image,
+        .subresourceRange = subresource_range
+    };
+    VkDependencyInfo dependency{
+        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .imageMemoryBarrierCount = 1,
+        .pImageMemoryBarriers = &barrier,
+    };
+    vkCmdPipelineBarrier2(command_buffer, &dependency);
+}
+static VmaAllocationCreateInfo makeAllocInfo(AllocationCreateInfo const &ci)
+{
+    return {
+        .flags = ci.allocFlags,
+        .usage = VMA_MEMORY_USAGE_AUTO,
+        .requiredFlags = ci.requiredFlags,
+        .preferredFlags = ci.preferredFlags,
+        .pool = ci.pool
+    };
+}
+static void writeImage(Image &image, ImageCreateInfo const &ci)
+{
+    image.srcBuffer = vk::makeBuffer(BufferCreateInfo{
+        .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        .allocInfo = {
+            .allocator = image.allocator,
+            .allocFlags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT
+        },
+        .data = ci.data,
+        .size = ci.dimensions.width * 
+                ci.dimensions.height * 
+                ci.dimensions.depth * 
+                ci.dimensions.arrayLayers * 
+                ci.dimensions.samples * 
+                vkuGetFormatInfo(ci.format).texel_block_size,
+    });
+
+    VkBufferImageCopy2 bufferCopyRegion = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
+        .bufferOffset = 0,
+        .imageSubresource = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .mipLevel = 0,
+            .baseArrayLayer = 0,
+            .layerCount = image.createInfo.arrayLayers,
+        },
+        .imageExtent = image.createInfo.extent
+    };
+    VkCopyBufferToImageInfo2 copyInfo{
+        .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2,
+        .srcBuffer = image.srcBuffer.buffer, 
+        .dstImage = image.image, 
+        .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
+        .regionCount = 1, 
+        .pRegions = &bufferCopyRegion
+    };
+
+    insertImageMemoryBarrier(ci.commandBuffer, image.image,
+        VK_ACCESS_NONE,
+        VK_ACCESS_TRANSFER_WRITE_BIT,
+        VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        VK_PIPELINE_STAGE_NONE,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        {VK_IMAGE_ASPECT_COLOR_BIT, 0, image.createInfo.mipLevels, 0, 1}
+    );
+    
+    vkCmdCopyBufferToImage2(ci.commandBuffer, &copyInfo);
+
+    insertImageMemoryBarrier(ci.commandBuffer, image.image, 
+        VK_ACCESS_TRANSFER_WRITE_BIT,
+        VK_ACCESS_TRANSFER_READ_BIT,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+    );
+
+    for(uint32_t i = 1; i < image.createInfo.mipLevels; i++)
+    {
+        VkImageBlit2 imageBlit{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
+            .srcSubresource = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .mipLevel   = i - 1,
+                .layerCount = 1,
+            },
+            .srcOffsets = {
+                { 0, 0, 0 },
+                { int32_t(image.createInfo.extent.width >> (i - 1)), int32_t(image.createInfo.extent.height >> (i - 1)), 1 }
+            },
+            .dstSubresource = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .mipLevel   = i,
+                .layerCount = 1,
+            },
+            .dstOffsets = {
+                { 0, 0, 0 },
+                { int32_t(image.createInfo.extent.width >> i), int32_t(image.createInfo.extent.height >> i), 1 }
+            }
+        };
+        VkBlitImageInfo2 imageBlitInfo{
+            .sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
+            .srcImage = image.image,
+            .srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            .dstImage = image.image,
+            .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .regionCount = 1,
+            .pRegions = &imageBlit,
+            .filter = VK_FILTER_LINEAR
+        };
+
+        vkCmdBlitImage2(ci.commandBuffer, &imageBlitInfo);
+
+        insertImageMemoryBarrier(ci.commandBuffer, image.image, 
+            VK_ACCESS_TRANSFER_WRITE_BIT,
+            VK_ACCESS_TRANSFER_READ_BIT,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            {VK_IMAGE_ASPECT_COLOR_BIT, i, 1, 0, 1}
+        );
+    }
+}
 Image vk::makeImage(ImageCreateInfo const &ci)
 {
-    if(ci.allocator == nullptr)
+    if(ci.allocInfo.allocator == nullptr)
     {
         LOG_ERROR("ImageCreateInfo::allocator is null!");
         return {};
@@ -31,17 +179,67 @@ Image vk::makeImage(ImageCreateInfo const &ci)
     }
 
     Image image{
-        .allocator = ci.allocator,
+        .allocator = ci.allocInfo.allocator,
         .usage = ci.usage,
         .format = ci.format,
-        .dimensions = ci.dimensions,
     };
+
+    if(ci.data)
+        image.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    if(ci.dimensions.mipLevels > 1)
+        image.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+
+    image.createInfo = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = image.format,
+        .extent = {
+            .width = ci.dimensions.width, 
+            .height = ci.dimensions.height, 
+            .depth = ci.dimensions.depth 
+        },
+        .mipLevels = ci.dimensions.mipLevels,
+        .arrayLayers = ci.dimensions.arrayLayers,
+        .samples = ci.dimensions.samples,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = image.usage,
+        .sharingMode = ci.sharingMode,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    image.allocationInfo = makeAllocInfo(ci.allocInfo);
+
+    CHK(vmaCreateImage(image.allocator, &image.createInfo, &image.allocationInfo, &image.image, &image.allocation, nullptr));
+
+    if(ci.data)
+        writeImage(image, ci);
+
+    if(image.usage & VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER || image.usage & VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE)
+    {
+        if(!ci.allocInfo.device)
+        {
+            LOG_ERROR("ci.allocInfo.device is null!");
+        } else {
+
+            // FIXME
+            VkSamplerCreateInfo samplerCI{
+                .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+                .magFilter = VK_FILTER_LINEAR,
+                .minFilter = VK_FILTER_LINEAR,
+                .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+                .anisotropyEnable = VK_TRUE,
+                .maxAnisotropy = 8.0f, // 8 is a widely supported value for max anisotropy
+                .minLod = ci.sampler.minLod,
+                .maxLod =(float) image.createInfo.mipLevels,
+            };
+            CHK(vkCreateSampler(ci.allocInfo.device, &samplerCI, nullptr, &image.sampler));
+        }
+    }
 
     return image;
 }
 Buffer vk::makeBuffer(BufferCreateInfo const &ci)
 {
-    if(ci.allocator == nullptr)
+    if(ci.allocInfo.allocator == nullptr)
     {
         LOG_ERROR("BufferCreateInfo::allocator is null!");
         return {};
@@ -53,95 +251,37 @@ Buffer vk::makeBuffer(BufferCreateInfo const &ci)
     }
 
     Buffer buffer{
-        .allocator = ci.allocator,
-        .pool = ci.pool
+        .allocator = ci.allocInfo.allocator,
     };
 
     buffer.createInfo = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = ci.size,
         .usage = ci.usage,
+        .sharingMode = ci.sharingMode
     };
+    buffer.allocationInfo = makeAllocInfo(ci.allocInfo);
 
-    buffer.allocationInfo = {
-        .flags = ci.allocFlags,
-        .usage = VMA_MEMORY_USAGE_AUTO,
-        .requiredFlags = ci.requiredFlags,
-        .preferredFlags = ci.preferredFlags,
-        .pool = ci.pool
-    };
+    if(ci.data || ci.map)
+        buffer.allocationInfo.flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
-    vmaCreateBuffer(ci.allocator, &buffer.createInfo, &buffer.allocationInfo, &buffer.buffer, &buffer.allocation, nullptr);
-
-    if(ci.data) {
-        buffer.map();
-        std::memcpy(buffer.mapped, ci.data, buffer.size);
-    } else if(ci.keepMapped) {
-        buffer.map();
-    }
-    if(!ci.keepMapped)
-        buffer.unmap();
+    vmaCreateBuffer(ci.allocInfo.allocator, &buffer.createInfo, &buffer.allocationInfo, &buffer.buffer, &buffer.allocation, nullptr);
+    
+    if(ci.data || ci.map)
+        CHK(vmaMapMemory(buffer.allocator, buffer.allocation, &buffer.mapped)); 
+    if(ci.data)
+        std::memcpy(buffer.mapped, ci.data, buffer.createInfo.size);
 
     return buffer;
 }
-
-template<typename T>
-VkFormat getVkFormat(Bitmap<T> const& bmp, bool srgb)
+void resizeBuffer(Buffer &buffer)
 {
-    if constexpr (std::is_same_v<T, uint8_t>)
+    if(!buffer.valid())
     {
-        switch (bmp.numComponents)
-        {
-            case 1: return srgb ? VK_FORMAT_R8_SRGB       : VK_FORMAT_R8_UNORM;
-            case 2: return srgb ? VK_FORMAT_R8G8_SRGB     : VK_FORMAT_R8G8_UNORM;
-            case 3: return srgb ? VK_FORMAT_R8G8B8_SRGB   : VK_FORMAT_R8G8B8_UNORM;
-            case 4: return srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-        }
-    }
-    else if constexpr (std::is_same_v<T, float>)
-    {
-        switch (bmp.numComponents)
-        {
-            case 1: return VK_FORMAT_R32_SFLOAT;
-            case 2: return VK_FORMAT_R32G32_SFLOAT;
-            case 3: return VK_FORMAT_R32G32B32_SFLOAT;
-            case 4: return VK_FORMAT_R32G32B32A32_SFLOAT;
-        }
-    }
-    else if constexpr (std::is_same_v<T, uint16_t>)
-    {
-        switch (bmp.numComponents)
-        {
-            case 1: return VK_FORMAT_R16_UNORM;
-            case 2: return VK_FORMAT_R16G16_UNORM;
-            case 3: return VK_FORMAT_R16G16B16_UNORM;
-            case 4: return VK_FORMAT_R16G16B16A16_UNORM;
-        }
+        LOG_WARN("Resizing invalid buffer!");
+        return;
     }
 
-    LOG_ERROR("Unsupported Bitmap format");
-    return VK_FORMAT_UNDEFINED;
-}
-Image vk::makeTexture(VmaAllocator allocator, Texture const &texture)
-{
-    if(texture.bitmap.numComponents == 3)
-        LOG_WARN("Making R32G32B32 texture \"{}\". Maybe change it to 32 bits or smth...");
-
-    return makeImage({
-        .format = getVkFormat(texture.bitmap, texture.srgb),
-        .dimensions = {
-            .width = texture.bitmap.size.x,
-            .height = texture.bitmap.size.y,
-            .mipLevels = texture.numMipLevels
-        },
-        .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
-        .data = texture.bitmap.pixels.data()
-    });
-}
-Image vk::makeCubemap(VmaAllocator allocator, Cubemap const &cubemap)
-{
-    // FIXME: How to pass a layered texture
-    // https://github.khronos.org/Vulkan-Site/spec/latest/chapters/copies.html#copies-buffers-images-addressing
 }
 
 bool vk::Image::valid()
@@ -152,35 +292,22 @@ bool vk::Buffer::valid()
 {
     return buffer != VK_NULL_HANDLE && allocation != VK_NULL_HANDLE;
 }
-void vk::Buffer::map()
-{
-    if(!!valid())
-    {
-        LOG_WARN("mapping an invalid buffer!");
-        return;
-    }
-    if(mapped)
-        return;
-    CHK(vmaMapMemory(allocator, allocation, &mapped)); 
-}
-void vk::Buffer::unmap()
-{
-    if(!!valid())
-    {
-        LOG_WARN("unmapping an invalid buffer!");
-        return;
-    }
-    if(!mapped)
-        return;
-    vmaUnmapMemory(allocator, allocation); 
-    mapped = nullptr;
-}
 
 void vk::destroy(Image &image)
 {
+    destroy(image.srcBuffer);
+    if(!image.valid())
+        return;
 
+    vmaDestroyImage(image.allocator, image.image, image.allocation);
+    image.image = VK_NULL_HANDLE;
+    image.allocation = VK_NULL_HANDLE;
 }
 void vk::destroy(Buffer &buffer)
 {
+    if(!buffer.valid())
+        return;
     vmaDestroyBuffer(buffer.allocator, buffer.buffer, buffer.allocation);
+    buffer.buffer = VK_NULL_HANDLE;
+    buffer.allocation = VK_NULL_HANDLE;
 }
