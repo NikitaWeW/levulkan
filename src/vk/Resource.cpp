@@ -180,6 +180,7 @@ Image vk::makeImage(ImageCreateInfo const &ci)
 
     Image image{
         .allocator = ci.allocInfo.allocator,
+        .device = ci.allocInfo.device,
         .usage = ci.usage,
         .format = ci.format,
     };
@@ -219,17 +220,24 @@ Image vk::makeImage(ImageCreateInfo const &ci)
         {
             LOG_ERROR("ci.allocInfo.device is null!");
         } else {
-
-            // FIXME
             VkSamplerCreateInfo samplerCI{
                 .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-                .magFilter = VK_FILTER_LINEAR,
-                .minFilter = VK_FILTER_LINEAR,
-                .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
-                .anisotropyEnable = VK_TRUE,
-                .maxAnisotropy = 8.0f, // 8 is a widely supported value for max anisotropy
+                .flags = ci.sampler.flags,
+                .magFilter = ci.sampler.magFilter,
+                .minFilter = ci.sampler.minFilter,
+                .mipmapMode = ci.sampler.mipmapMode,
+                .addressModeU = ci.sampler.addressModeU,
+                .addressModeV = ci.sampler.addressModeV,
+                .addressModeW = ci.sampler.addressModeW,
+                .mipLodBias = ci.sampler.mipLodBias,
+                .anisotropyEnable = ci.sampler.anisotropyEnable,
+                .maxAnisotropy = ci.sampler.maxAnisotropy,
+                .compareEnable = ci.sampler.compareEnable,
+                .compareOp = ci.sampler.compareOp,
                 .minLod = ci.sampler.minLod,
-                .maxLod =(float) image.createInfo.mipLevels,
+                .maxLod = (float) image.createInfo.mipLevels,
+                .borderColor = ci.sampler.borderColor,
+                .unnormalizedCoordinates = ci.sampler.unnormalizedCoordinates,
             };
             CHK(vkCreateSampler(ci.allocInfo.device, &samplerCI, nullptr, &image.sampler));
         }
@@ -286,6 +294,10 @@ void resizeBuffer(Buffer &buffer)
 
 bool vk::Image::valid()
 {
+    bool sampled = usage & VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER || usage & VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    if(sampled && !sampler)
+        return false;
+
     return image != VK_NULL_HANDLE && view != VK_NULL_HANDLE && allocation != VK_NULL_HANDLE;
 }
 bool vk::Buffer::valid()

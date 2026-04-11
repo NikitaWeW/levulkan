@@ -14,7 +14,7 @@ using namespace vk;
 
 Swapchain vk::makeSwapchain(SwapchainCreateInfo const &ci)
 {
-
+    
 }
 
 void vk::destroy(Swapchain &swapchain)

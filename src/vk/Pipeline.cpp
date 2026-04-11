@@ -220,50 +220,31 @@ static Reflection reflect(Shader const &shader)
 
     return reflection;
 }
-static Buffer createBufferFromBinding(SpvReflectDescriptorBinding const &binding, VmaAllocator allocator)
+
+static VkBufferUsageFlags descriptorUsage(SpvReflectDescriptorType type)
 {
-    Buffer buffer;
+    switch (type) {
+        case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+        case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+            return VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 
-    VkBufferUsageFlags usage = 0;
-    if(binding.descriptor_type == SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER || 
-       binding.descriptor_type == SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
-        usage |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-    else
-        usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
+            return VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 
-    buffer.createInfo = {
-        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = binding.block.size * binding.count,
-        .usage = usage,
-    };
+        case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+            return VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT;
 
-    buffer.allocationInfo = {
-        .usage = VMA_MEMORY_USAGE_AUTO,
-    };
+        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+            return VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT;
 
-    vmaCreateBuffer(ci.allocator, &buffer.createInfo, &buffer.allocationInfo, &buffer.buffer, &buffer.allocation, nullptr);
-}
-static std::string string_SpvReflectDescriptorType(SpvReflectDescriptorType const &type)
-{
-    switch(type)
-    {
-    case SPV_REFLECT_DESCRIPTOR_TYPE_SAMPLER:                    return "SPV_REFLECT_DESCRIPTOR_TYPE_SAMPLER";                   
-    case SPV_REFLECT_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:     return "SPV_REFLECT_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER";    
-    case SPV_REFLECT_DESCRIPTOR_TYPE_SAMPLED_IMAGE:              return "SPV_REFLECT_DESCRIPTOR_TYPE_SAMPLED_IMAGE";             
-    case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_IMAGE:              return "SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_IMAGE";             
-    case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:       return "SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER";      
-    case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:       return "SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER";      
-    case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER:             return "SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER";            
-    case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER:             return "SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER";            
-    case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:     return "SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC";    
-    case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:     return "SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC";    
-    case SPV_REFLECT_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:           return "SPV_REFLECT_DESCRIPTOR_TYPE_INPUT_ATTACHMENT";          
-    case SPV_REFLECT_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR: return "SPV_REFLECT_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR";
-    default: return "unhandled SpvReflectDescriptorType";
+        default:
+            return 0;
     }
 }
 
-static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Reflection const &reflection)
+// too many arguments
+static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Reflection const &reflection, VmaAllocator allocator, std::vector<std::map<Pipeline::DescriptorBinding, Pipeline::DescriptorResource>> &resources, uint framesInFlight)
 {
     Pipeline::Layout layout;
     std::map<uint32_t, SparseSet<VkDescriptorBindingFlags>> descFlags;
@@ -324,6 +305,8 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
     };
     CHK(vkCreateDescriptorPool(dev, &poolCI, nullptr, &layout.descPool));
 
+    // WARNING: nested spaghetti code incoming
+
     // Allocate descriptors
     layout.descSets.resize(ci.framesInFlight);
     for(auto const &[set, bindings] : reflection.descSets)
@@ -378,24 +361,29 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
                     write = ci.descriptorWrites.at({set, binding.binding});
                 } else {
                     auto const &descBinding = reflection.descBindings.at({set, binding.binding});
-                    switch(descBinding.descriptor_type)
+                    
+                    if(descriptorUsage(descBinding.descriptor_type))
                     {
-                        case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
-                        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER:
-                        case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
-                        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
-                        createBufferFromBinding(descBinding, ci);
-
-                        case SPV_REFLECT_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-                        case SPV_REFLECT_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
-                        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-                        LOG_ERROR("Automatic image creation is not supported! Make sure to pass a PipelineLayoutCreateInfo::DescriptorWrite!");
-                        return std::nullopt;
-
-                        default:
-                        LOG_ERROR("Unsupported resource of type {}", string_SpvReflectDescriptorType(binding.descriptor_type));
-                        return std::nullopt;
+                        LOG_ERROR("Cannot create resource for descriptor of type {}, layout(set = {}, binding = {}), frame index: {}", set, binding.binding, i, string_VkDescriptorType(toVulkanDescriptorType(descBinding.descriptor_type)));
+                        continue;
                     }
+
+                    auto &buffer = resources[i].at({set, binding.binding}).buffer;
+                    buffer = makeBuffer(BufferCreateInfo{
+                        .allocInfo = {
+                            .allocator = allocator
+                        },
+                        .size = descBinding.block.size,
+                    });
+                    assert(resource.buffer.valid());
+
+                    write = {
+                        .dstFrame = i,
+                        .bufferInfo = {VkDescriptorBufferInfo{
+                            .buffer = buffer.buffer,
+                            .range = VK_WHOLE_SIZE
+                        }}
+                    };
                 }
         
                 descWrites.emplace_back(VkWriteDescriptorSet{
@@ -437,9 +425,9 @@ static Pipeline makeGraphicsPipeline(Shader const &shader, GraphicsPipelineCreat
 
     Pipeline pipeline{
         .type = Pipeline::Type::GRAPHICS,
-        .layout = makePipelineLayout(dev, ci.layout, reflection),
         .device = shader.createInfo.device
     };
+    pipeline.layout = makePipelineLayout(dev, ci.layout, reflection, ci.allocator, pipeline.descResources, ci.layout.framesInFlight);
 
     VkPipelineVertexInputStateCreateInfo vertexInputState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -533,6 +521,10 @@ void vk::destroy(Pipeline &pipeline)
         if(layout != VK_NULL_HANDLE)
             vkDestroyDescriptorSetLayout(pipeline.device, layout, nullptr);
     }
+
+    for(auto &bindings : pipeline.descResources)
+        for(auto &[binding, resource] : bindings)
+            destroy(resource.buffer);
 
     vkDestroyPipeline(pipeline.device, pipeline.pipeline, nullptr);
 }

@@ -136,6 +136,7 @@ Shader makeShader(ShaderCreateInfo const &ci);
 
 struct AllocationCreateInfo
 {
+    VkDevice device = VK_NULL_HANDLE;
     VmaAllocator allocator = VK_NULL_HANDLE;
     VmaPool pool = VK_NULL_HANDLE;
     VkMemoryAllocateFlags allocFlags = 0;
@@ -201,6 +202,7 @@ inline Buffer makeBuffer(VmaAllocator allocator, std::vector<T> const &vec, VkBu
 struct Image
 {
     VmaAllocator allocator = VK_NULL_HANDLE;
+    VkDevice device = VK_NULL_HANDLE;
 
     VmaAllocation allocation = VK_NULL_HANDLE;
     VkImage image = VK_NULL_HANDLE;
@@ -241,7 +243,6 @@ struct ImageCreateInfo
         VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
     } dimensions;
     struct Sampler {
-        VkDevice device = VK_NULL_HANDLE;
         VkSamplerCreateFlags flags = 0;
         VkFilter magFilter = VK_FILTER_NEAREST;
         VkFilter minFilter = VK_FILTER_NEAREST;
@@ -265,14 +266,28 @@ Image makeImage(ImageCreateInfo const &ci);
 
 struct SwapchainCreateInfo
 {
-
+    VkExtent2D size = {0, 0};
 };
 struct Swapchain
 {
-    SwapchainCreateInfo createInfo;
+    VkSwapchainKHR swapchain;
+    std::vector<VkImage> images;
+    std::vector<VkImageView> imageViews;
+
+    VkSwapchainCreateInfoKHR createInfo;
+
+    struct SupportDetails {
+        VkSurfaceCapabilitiesKHR capabilities;
+        std::vector<VkSurfaceFormatKHR> formats;
+        std::vector<VkPresentModeKHR> presentModes;
+        VkSurfaceFormatKHR surfaceFormat;
+        VkPresentModeKHR surfacePresentMode;
+    } swapchainSupport;
+    
+    uint32_t imageCount;
 };
-// TODO
 Swapchain makeSwapchain(SwapchainCreateInfo const &ci);
+void resizeSwapchain(Swapchain &swapchain);
 
 /// @brief The vulkan pipeline.
 struct Pipeline
@@ -286,9 +301,7 @@ struct Pipeline
     };
     struct DescriptorResource
     {
-        enum { INVALID = 0, IMAGE, BUFFER } type = INVALID;
         Buffer buffer; // One large buffer for array descriptors
-        std::vector<Image> image;
     };
     struct Layout
     {
@@ -304,7 +317,7 @@ struct Pipeline
     // Owning
     VkPipeline pipeline;
     Layout layout;
-    std::map<DescriptorBinding, std::vector<DescriptorResource>> descResources; ///< Descriptor resources allocated automatically. One per frame in flight.
+    std::vector<std::map<Pipeline::DescriptorBinding, Pipeline::DescriptorResource>> descResources; ///< Descriptor resources allocated automatically. One per frame in flight.
 
     // Not owning
     VkDevice device;
@@ -314,6 +327,7 @@ struct PipelineLayoutCreateInfo
 {
     struct DescriptorWrite
     {
+        uint32_t dstFrame = 0;
         uint32_t dstArrayElement = 0;
 
         // One of
