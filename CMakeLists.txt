@@ -50,6 +50,7 @@ endif()
 
 set(LEVULKAN_SOURCE
     "src/main.cpp"
+    "src/Controller.cpp"
     "src/libraries/stb.c"
     "src/libraries/vk_mem_alloc.cpp"
 
@@ -57,9 +58,10 @@ set(LEVULKAN_SOURCE
     "src/resource/TextureLoader.cpp"
 
     "src/vk/Init.cpp"
-    "src/vk/Swapchain.cpp"
     "src/vk/Pipeline.cpp"
+    "src/vk/Resource.cpp"
     "src/vk/Shader.cpp"
+    "src/vk/Swapchain.cpp"
 )
 
 add_executable(levulkan ${LEVULKAN_SOURCE})

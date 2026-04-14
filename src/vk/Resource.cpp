@@ -177,22 +177,27 @@ Image vk::makeImage(ImageCreateInfo const &ci)
         LOG_ERROR("ImageCreateInfo::format is VK_FORMAT_UNDEFINED!");
         return {};
     }
+    if(!ci.allocInfo.device)
+    {
+        LOG_ERROR("ImageCreateInfo::allocInfo::device is null!");
+        return {};
+    }
 
     Image image{
         .allocator = ci.allocInfo.allocator,
         .device = ci.allocInfo.device,
+        .imageType = ci.view.imageType,
+        .viewType = ci.view.viewType,
         .usage = ci.usage,
         .format = ci.format,
     };
 
     if(ci.data)
-        image.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    if(ci.dimensions.mipLevels > 1)
-        image.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        image.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
     image.createInfo = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-        .imageType = VK_IMAGE_TYPE_2D,
+        .imageType = image.imageType,
         .format = image.format,
         .extent = {
             .width = ci.dimensions.width, 
@@ -216,31 +221,44 @@ Image vk::makeImage(ImageCreateInfo const &ci)
 
     if(image.usage & VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER || image.usage & VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE)
     {
-        if(!ci.allocInfo.device)
-        {
-            LOG_ERROR("ci.allocInfo.device is null!");
-        } else {
-            VkSamplerCreateInfo samplerCI{
-                .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-                .flags = ci.sampler.flags,
-                .magFilter = ci.sampler.magFilter,
-                .minFilter = ci.sampler.minFilter,
-                .mipmapMode = ci.sampler.mipmapMode,
-                .addressModeU = ci.sampler.addressModeU,
-                .addressModeV = ci.sampler.addressModeV,
-                .addressModeW = ci.sampler.addressModeW,
-                .mipLodBias = ci.sampler.mipLodBias,
-                .anisotropyEnable = ci.sampler.anisotropyEnable,
-                .maxAnisotropy = ci.sampler.maxAnisotropy,
-                .compareEnable = ci.sampler.compareEnable,
-                .compareOp = ci.sampler.compareOp,
-                .minLod = ci.sampler.minLod,
-                .maxLod = (float) image.createInfo.mipLevels,
-                .borderColor = ci.sampler.borderColor,
-                .unnormalizedCoordinates = ci.sampler.unnormalizedCoordinates,
-            };
-            CHK(vkCreateSampler(ci.allocInfo.device, &samplerCI, nullptr, &image.sampler));
-        }
+        VkSamplerCreateInfo samplerCI{
+            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .flags = ci.sampler.flags,
+            .magFilter = ci.sampler.magFilter,
+            .minFilter = ci.sampler.minFilter,
+            .mipmapMode = ci.sampler.mipmapMode,
+            .addressModeU = ci.sampler.addressModeU,
+            .addressModeV = ci.sampler.addressModeV,
+            .addressModeW = ci.sampler.addressModeW,
+            .mipLodBias = ci.sampler.mipLodBias,
+            .anisotropyEnable = ci.sampler.anisotropyEnable,
+            .maxAnisotropy = ci.sampler.maxAnisotropy,
+            .compareEnable = ci.sampler.compareEnable,
+            .compareOp = ci.sampler.compareOp,
+            .minLod = ci.sampler.minLod,
+            .maxLod = (float) image.createInfo.mipLevels,
+            .borderColor = ci.sampler.borderColor,
+            .unnormalizedCoordinates = ci.sampler.unnormalizedCoordinates,
+        };
+        CHK(vkCreateSampler(ci.allocInfo.device, &samplerCI, nullptr, &image.sampler));
+    }
+
+    if(ci.view.aspectMask != VK_IMAGE_ASPECT_NONE)
+    {
+        VkImageViewCreateInfo viewCI{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = image.image,
+            .viewType = image.viewType,
+            .format = image.format,
+            .subresourceRange = {
+                .aspectMask = ci.view.aspectMask,
+                .baseMipLevel = 0,
+                .levelCount = image.createInfo.mipLevels,
+                .baseArrayLayer = 0,
+                .layerCount = image.createInfo.arrayLayers,
+            }
+        };
+        CHK(vkCreateImageView(ci.allocInfo.device, &viewCI, nullptr, &image.view));
     }
 
     return image;
@@ -249,7 +267,7 @@ Buffer vk::makeBuffer(BufferCreateInfo const &ci)
 {
     if(ci.allocInfo.allocator == nullptr)
     {
-        LOG_ERROR("BufferCreateInfo::allocator is null!");
+        LOG_ERROR("BufferCreateInfo::allocInfo::allocator is null!");
         return {};
     }
     if(ci.usage == 0)
@@ -272,8 +290,15 @@ Buffer vk::makeBuffer(BufferCreateInfo const &ci)
 
     if(ci.data || ci.map)
         buffer.allocationInfo.flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    if(buffer.createInfo.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
+        buffer.allocationInfo.requiredFlags |= VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
 
-    vmaCreateBuffer(ci.allocInfo.allocator, &buffer.createInfo, &buffer.allocationInfo, &buffer.buffer, &buffer.allocation, nullptr);
+    if(buffer.createInfo.size == 0)
+    {
+        LOG_ERROR("Creating a buffer with size of 0!");
+        return buffer;
+    }
+    CHK(vmaCreateBuffer(ci.allocInfo.allocator, &buffer.createInfo, &buffer.allocationInfo, &buffer.buffer, &buffer.allocation, nullptr));
     
     if(ci.data || ci.map)
         CHK(vmaMapMemory(buffer.allocator, buffer.allocation, &buffer.mapped)); 
@@ -282,15 +307,6 @@ Buffer vk::makeBuffer(BufferCreateInfo const &ci)
 
     return buffer;
 }
-void resizeBuffer(Buffer &buffer)
-{
-    if(!buffer.valid())
-    {
-        LOG_WARN("Resizing invalid buffer!");
-        return;
-    }
-
-}
 
 bool vk::Image::valid()
 {
@@ -298,7 +314,7 @@ bool vk::Image::valid()
     if(sampled && !sampler)
         return false;
 
-    return image != VK_NULL_HANDLE && view != VK_NULL_HANDLE && allocation != VK_NULL_HANDLE;
+    return image != VK_NULL_HANDLE && allocation != VK_NULL_HANDLE;
 }
 bool vk::Buffer::valid()
 {
@@ -312,13 +328,17 @@ void vk::destroy(Image &image)
         return;
 
     vmaDestroyImage(image.allocator, image.image, image.allocation);
+    vkDestroyImageView(image.device, image.view, nullptr);
     image.image = VK_NULL_HANDLE;
     image.allocation = VK_NULL_HANDLE;
+    image.view = VK_NULL_HANDLE;
 }
 void vk::destroy(Buffer &buffer)
 {
     if(!buffer.valid())
         return;
+    if(buffer.mapped)
+        vmaUnmapMemory(buffer.allocator, buffer.allocation);
     vmaDestroyBuffer(buffer.allocator, buffer.buffer, buffer.allocation);
     buffer.buffer = VK_NULL_HANDLE;
     buffer.allocation = VK_NULL_HANDLE;

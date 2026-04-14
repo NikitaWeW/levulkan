@@ -1,14 +1,14 @@
 #include "Controller.hpp"
 #include "Logging.hpp"
 
-#define CAMERA_COMPONENTS Controller::Camera, EventListener
+#define CAMERA_COMPONENTS Controller::Camera, io::EventListener
 
-ecs::entity Controller::createCamera(ecs::registry &reg, glm::vec3 pos, glm::vec3 target)
+Entity Controller::createCamera(Registry &reg, glm::vec3 pos, glm::vec3 target)
 {
     auto e = reg.create<CAMERA_COMPONENTS>();
     auto up = glm::abs(glm::dot(glm::normalize(target - pos), glm::vec3{0,1,0})) > 0.99 ? glm::vec3{1,0,0} : glm::vec3{0,1,0};
     auto q = glm::quat_cast(glm::lookAt(pos, target, up));
-    reg.get<Controller::Camera>(e) = {
+    e.get<Controller::Camera>() = {
         .window = reg.view<Window>().at(0),
         .position = pos,
         // .pitchYaw = glm::vec2(glm::degrees(glm::pitch(q)), glm::degrees(glm::yaw(q)))
@@ -17,13 +17,13 @@ ecs::entity Controller::createCamera(ecs::registry &reg, glm::vec3 pos, glm::vec
     return e;
 }
 
-void Controller::update(ecs::registry &reg, float dt)
+void Controller::update(Registry &reg, float dt)
 {
-    for(ecs::entity e_camera : reg.view<CAMERA_COMPONENTS>())
+    for(Entity eCamera : reg.view<CAMERA_COMPONENTS>())
     {
-        auto &camera = reg.get<Controller::Camera>(e_camera);
-        auto &listener = reg.get<EventListener>(e_camera);
-        auto &window = reg.get<Window>(camera.window);
+        auto &camera = eCamera.get<Controller::Camera>();
+        auto &listener = eCamera.get<io::EventListener>();
+        auto &window = camera.window.get<Window>();
 
         auto invView = glm::mat3(glm::inverse(camera.viewMat));
         glm::vec3 right   = invView * glm::vec3{1, 0, 0};

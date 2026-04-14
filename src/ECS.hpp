@@ -118,7 +118,7 @@ inline Entity Registry::create()
 template <typename... Components_t> 
 inline Entity Registry::create(Components_t&&... components)
 {
-    return { this, getReg().create<Components_t...>(std::forward<Components_t...>(components...)) };
+    return { this, getReg().create(std::forward<Components_t>(components)...) };
 }
 /// @copydoc ecs::registry::destroy
 inline void Registry::destroy(Entity const &entity)

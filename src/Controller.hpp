@@ -2,13 +2,14 @@
 #include "IO.hpp"
 #include "GLFW/glfw3.h"
 #include "glm/gtc/quaternion.hpp"
+#include "ECS.hpp"
 
 class Controller
 {
 public:
     struct Camera
     {
-        ecs::entity window;
+        Entity window;
         glm::mat4 projMat{1.0f};
         glm::mat4 viewMat{1.0f};
         glm::vec3 position;
@@ -25,7 +26,7 @@ public:
         bool locked = true;
     };
 
-    static ecs::entity createCamera(ecs::registry &reg, glm::vec3 pos = {0, 0, 0}, glm::vec3 target = {0, 0, -10});
+    static Entity createCamera(Registry &reg, glm::vec3 pos = {0, 0, 0}, glm::vec3 target = {0, 0, -10});
 
-    void update(ecs::registry &reg, float dt);
+    void update(Registry &reg, float dt);
 };

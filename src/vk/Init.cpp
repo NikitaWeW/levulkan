@@ -421,7 +421,7 @@ static VkDevice createDevice(VkPhysicalDevice const &physicalDevice, QueueFamili
 static void createAllocator(InitInfo const &info, InitResult &result)
 {
     VmaAllocatorCreateInfo allocatorCI{
-        .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT, 
+        .flags = info.allocatorFlags, 
         .physicalDevice = result.physicalDevice,
         .device = result.device,
         .instance = result.instance,

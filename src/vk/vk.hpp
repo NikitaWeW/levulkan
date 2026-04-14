@@ -17,9 +17,7 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 #include "vk_mem_alloc.h"
 #include "GLFW/glfw3.h"
 
-#include "glm/glm.hpp" // Vector types, TODO: get rid of them
 #include "ECS.hpp" // SparseSet
-#include "resource/Resources.hpp" // Texture struct
 
 #ifndef DONT_CHECK_VK
 extern std::string _sChkLastFileLine;
@@ -43,7 +41,7 @@ struct InitInfo
     std::vector<char const *> instanceExtensions; ///< A list of required instance extensions excluding required extensions.
     std::vector<char const *> deviceExtensions; ///< A list of required device extensions excluding required extensions. VK_KHR_SWAPCHAIN_EXTENSION_NAME is implicitly included if offscreen is not true.
     std::vector<char const *> layers; ///< A list of required layers.
-    std::vector<VkQueueFlagBits> queues = { VK_QUEUE_GRAPHICS_BIT, VK_QUEUE_COMPUTE_BIT, VK_QUEUE_TRANSFER_BIT }; ///< A list of required queues. Present queue is searched for implicitly.
+    std::vector<VkQueueFlagBits> queues = { VK_QUEUE_GRAPHICS_BIT, VK_QUEUE_COMPUTE_BIT }; ///< A list of required queues. Present queue is searched for implicitly.
     struct DeviceFeatures {
         VkPhysicalDeviceFeatures         features;
         VkPhysicalDeviceVulkan11Features vulkan11;
@@ -51,6 +49,8 @@ struct InitInfo
         VkPhysicalDeviceVulkan13Features vulkan13;
         VkPhysicalDeviceVulkan14Features vulkan14;
     } deviceFeatures; ///< Required device features. No need to set sType of pNext
+
+    VmaAllocatorCreateFlags allocatorFlags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT; ///< The allocator flags.
 
     VkDebugUtilsMessageSeverityFlagsEXT messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
     PFN_vkDebugUtilsMessengerCallbackEXT debugCallbackOverride = VK_NULL_HANDLE; ///< Leave VK_NULL_HANDLE for default callback.
@@ -146,14 +146,15 @@ struct AllocationCreateInfo
 
 struct BufferCreateInfo
 {
+    ///
     VkBufferUsageFlags usage = 0;
     VkBufferCreateFlags createFlags = 0;
     AllocationCreateInfo allocInfo;
     VkSharingMode sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    void const *data = nullptr; ///< If not nullptr, appropriate memory flags are added automatically and the data is copied to mapped location.
+    void const *data = nullptr; ///< If not nullptr, appropriate memory flags are added automatically and the data is copied to mapped location. Adds appropriate flags.
     uint32_t size = 0; // In bytes
-    bool map = true; ///< Map if appropriate flags are set or data is written.
+    bool map = true; ///< Map the buffer to host memory persistently. Adds appropriate flags.
 };
 
 /// @brief A buffer data allocated on the gpu
@@ -173,7 +174,6 @@ struct Buffer
 };
 
 Buffer makeBuffer(BufferCreateInfo const &ci);
-void resizeBuffer(Buffer &buffer);
 
 template<typename T>
 inline Buffer makeBuffer(VmaAllocator allocator, T const &obj, VkBufferUsageFlags usage)
@@ -191,10 +191,12 @@ template<typename T>
 inline Buffer makeBuffer(VmaAllocator allocator, std::vector<T> const &vec, VkBufferUsageFlags usage)
 {
     return makeBuffer(BufferCreateInfo{
-        .allocator = allocator,
         .usage = usage,
+        .allocInfo = {
+            .allocator = allocator,
+        },
         .data = vec.data(),
-        .size = vec.size() * sizeof(T),
+        .size = static_cast<uint32_t>(vec.size() * sizeof(T)),
     });
 }
 
@@ -206,7 +208,7 @@ struct Image
 
     VmaAllocation allocation = VK_NULL_HANDLE;
     VkImage image = VK_NULL_HANDLE;
-    VkImageView view = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE; ///< A view on the entire texture in the original format.
     VkSampler sampler = VK_NULL_HANDLE;
 
     /// The transfer buffer.
@@ -215,6 +217,8 @@ struct Image
     
     VkImageCreateInfo createInfo;
     VmaAllocationCreateInfo allocationInfo;
+    VkImageType imageType = VK_IMAGE_TYPE_2D;
+    VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D;
     
     VkImageUsageFlags usage = 0;
     VkFormat format = VK_FORMAT_UNDEFINED;
@@ -259,6 +263,11 @@ struct ImageCreateInfo
         VkBorderColor borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
         bool unnormalizedCoordinates = false;
     } sampler;
+    struct View {
+        VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_NONE; ///< Leave at VK_IMAGE_ASPECT_NONE to skip view creation.
+        VkImageType imageType = VK_IMAGE_TYPE_2D;
+        VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D;
+    } view;
     void const *data = nullptr;
 };
 
@@ -266,28 +275,34 @@ Image makeImage(ImageCreateInfo const &ci);
 
 struct SwapchainCreateInfo
 {
+    struct AllocInfo
+    {
+        VkSurfaceKHR surface = VK_NULL_HANDLE;
+        VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+        VkDevice device = VK_NULL_HANDLE;
+    } allocInfo;
+    
+    VkSharingMode sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VkExtent2D size = {0, 0};
 };
 struct Swapchain
 {
     VkSwapchainKHR swapchain;
+
     std::vector<VkImage> images;
     std::vector<VkImageView> imageViews;
 
-    VkSwapchainCreateInfoKHR createInfo;
+    VkSurfaceFormatKHR surfaceFormat;
+    VkPresentModeKHR surfacePresentMode;
 
-    struct SupportDetails {
-        VkSurfaceCapabilitiesKHR capabilities;
-        std::vector<VkSurfaceFormatKHR> formats;
-        std::vector<VkPresentModeKHR> presentModes;
-        VkSurfaceFormatKHR surfaceFormat;
-        VkPresentModeKHR surfacePresentMode;
-    } swapchainSupport;
-    
-    uint32_t imageCount;
+    VkSwapchainCreateInfoKHR createInfo;
+    VkSurfaceCapabilitiesKHR capabilities;
+
+    SwapchainCreateInfo::AllocInfo allocInfo;
+    VkSharingMode sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 };
 Swapchain makeSwapchain(SwapchainCreateInfo const &ci);
-void resizeSwapchain(Swapchain &swapchain);
+void resizeSwapchain(Swapchain &swapchain, VkExtent2D size);
 
 /// @brief The vulkan pipeline.
 struct Pipeline
@@ -298,10 +313,6 @@ struct Pipeline
         uint32_t set = 0;
         uint32_t binding = 0;
         auto operator<=>(DescriptorBinding const &other) const = default;
-    };
-    struct DescriptorResource
-    {
-        Buffer buffer; // One large buffer for array descriptors
     };
     struct Layout
     {
@@ -317,11 +328,23 @@ struct Pipeline
     // Owning
     VkPipeline pipeline;
     Layout layout;
-    std::vector<std::map<Pipeline::DescriptorBinding, Pipeline::DescriptorResource>> descResources; ///< Descriptor resources allocated automatically. One per frame in flight.
+    /// Descriptor buffers allocated automatically. 
+    /// Frame -> binding
+    /// Of size blockSize * descCout
+    std::vector<std::map<Pipeline::DescriptorBinding, Buffer>> descResources; 
 
     // Not owning
     VkDevice device;
     VmaAllocator allocator;
+
+    /// @brief Access the automatically allocated buffer.
+    /// @param binding The buffer binding.
+    /// @param frame The frame index.
+    /// @param index The array index.
+    inline Buffer const &getBuffer(Pipeline::DescriptorBinding binding, uint frame = 0) const 
+    { 
+        return descResources.at(frame).at(binding); 
+    }
 };
 struct PipelineLayoutCreateInfo
 {
@@ -352,34 +375,64 @@ struct GraphicsPipelineCreateInfo
     std::vector<VkDynamicState> dynamicState; ///< Dynamic state to enable.
     VmaAllocator allocator;
 
-    // Vertex inputs
-    struct {
+    struct Input {
         std::vector<VkVertexInputBindingDescription> bindings;
         std::vector<VkVertexInputAttributeDescription> attributes;
         VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         bool primitiveRestart = false;
     } input;
-
-    // Attachment formats
-    struct {
+    struct Attachments {
         std::vector<VkFormat> color;
         VkFormat depth = VK_FORMAT_UNDEFINED;
         VkFormat stencil = VK_FORMAT_UNDEFINED;
     } attachments;
-
-    // Other state
-    VkPipelineDepthStencilStateCreateInfo depthStencil;
-    VkPipelineRasterizationStateCreateInfo rasterization;
-    VkPipelineMultisampleStateCreateInfo multisample;
-    struct { 
+    struct DepthStencil {
+        VkPipelineDepthStencilStateCreateFlags flags = 0;
+        bool depthTestEnable = true;
+        bool depthWriteEnable = true;
+        VkCompareOp depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        bool depthBoundsTestEnable = false;
+        bool stencilTestEnable = false;
+        VkStencilOpState front = {};
+        VkStencilOpState back = {};
+        float minDepthBounds = 0;
+        float maxDepthBounds = 0;
+    } depthStencil;
+    struct Rasterization {
+        VkPipelineRasterizationStateCreateFlags flags = 0; 
+        bool depthClampEnable = false;
+        bool rasterizerDiscardEnable = false;
+        VkPolygonMode polygonMode;
+        VkCullModeFlags cullMode = VK_CULL_MODE_NONE;
+        VkFrontFace frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        bool depthBiasEnable = false;
+        float depthBiasConstantFactor = 0.0f;
+        float depthBiasClamp = 0.0f;
+        float depthBiasSlopeFactor = 0.0f;
+        float lineWidth = 1.0f;
+    } rasterization;
+    struct Multisample {
+    VkPipelineMultisampleStateCreateFlags flags = 0;
+        VkSampleCountFlagBits rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        bool sampleShadingEnable = false;
+        float minSampleShading = 0.0f;
+        VkSampleMask sampleMask = 0.0f;
+        bool alphaToCoverageEnable = false;
+        bool alphaToOneEnable = false;
+    } multisample;
+    struct Viewport { 
+        uint32_t viewportCount = 1;
+        uint32_t scissorCount = 1;
         std::vector<VkViewport> viewports;
         std::vector<VkRect2D> scissors;
     } viewport;
-    struct {
-        bool logicOpEnable;
+    struct Blending {
+        bool logicOpEnable = false;
         VkLogicOp logicOp;
         std::vector<VkPipelineColorBlendAttachmentState> attachments;
-        glm::vec4 constant;
+        struct {
+            float r, g, b, a;
+        } constant;
     } blending;
 };
 
