@@ -96,7 +96,7 @@ struct UniformBuffer {
 
 ////////////////////////////////////////////////////////////////
 
-inline Transform lookat(glm::vec3 pos, glm::vec3 center)
+static Transform lookat(glm::vec3 pos, glm::vec3 center)
 {
     auto dir = center - pos;
     auto up = glm::abs(glm::dot(dir, {0,1,0})) > 0.999 ? glm::vec3{1,0,0} : glm::vec3{0,1,0};
@@ -262,6 +262,14 @@ static uint32_t processImage(ResourceAllocator &alloc, Entity eImage)
         eImage.emplace<vk::Image>(vk::makeImage(ci));
         eImage.emplace<ResourceAllocator::ImageIndex>(alloc.images.size());
         alloc.images.emplace_back(eImage);
+
+        LOG_TRACE("Allocated image e{} {} of type {} format {} usage {}", 
+            eImage.entity(), 
+            eImage.has<Texture>() ? eImage.get<Texture>().path : "<no path>", 
+            string_VkImageViewType(eImage.get<vk::Image>().viewType), 
+            string_VkFormat(eImage.get<vk::Image>().format),
+            string_VkImageUsageFlags(eImage.get<vk::Image>().usage)
+        );
     }
     // TODO: cubemaps
 
@@ -510,7 +518,7 @@ int main(int argc, char **argv)
         depthImageCreateInfo.format = depthFormatList.at(0);
     }
 
-    vk::Image depthImage = vk::makeImage(depthImageCreateInfo);
+    vk::Image &depthImage = sReg.create(vk::makeImage(depthImageCreateInfo)).get<vk::Image>();
 
     std::vector<VkDescriptorImageInfo> imageInfos;
     for(auto eImage : alloc.images)
@@ -571,6 +579,7 @@ int main(int argc, char **argv)
         },
     };
     vk::Pipeline pipeline = vk::makePipeline(shader, pipelineCI);
+
 
     ////////////////////////////////////////////////////////////////
 
@@ -860,6 +869,16 @@ int main(int argc, char **argv)
 
     ////////////////////////////////////////////////////////////////
 
+    for(uint i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) 
+    {
+        vkDestroySemaphore(device, presentSemaphores[i], nullptr);
+        vkDestroyFence(device, fences[i], nullptr);
+    }
+    for(auto &semaphore : renderSemaphores)
+        vkDestroySemaphore(device, semaphore, nullptr);
+
+    vkDestroyCommandPool(device, commandPool, nullptr);
+
     for(auto e : sReg.view<VulkanModel>())
     {
         for(auto &mesh : e.get<VulkanModel>().meshes)
@@ -872,12 +891,15 @@ int main(int argc, char **argv)
         }
     }
     for(auto e : sReg.view<vk::Image>())
+    {
         vk::destroy(e.get<vk::Image>());
+    }
     for(auto e : sReg.view<vk::Buffer>())
         vk::destroy(e.get<vk::Buffer>());
 
     vk::destroy(pipeline);
     vk::destroy(shader);
+    vk::destroy(swapchain);
 
     vmaDestroyAllocator(initRes.vma);
     vkDestroyDevice(device, nullptr);

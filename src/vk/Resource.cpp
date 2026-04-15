@@ -328,7 +328,10 @@ void vk::destroy(Image &image)
         return;
 
     vmaDestroyImage(image.allocator, image.image, image.allocation);
-    vkDestroyImageView(image.device, image.view, nullptr);
+    if(image.view)
+        vkDestroyImageView(image.device, image.view, nullptr);
+    if(image.sampler)
+        vkDestroySampler(image.device, image.sampler, nullptr);
     image.image = VK_NULL_HANDLE;
     image.allocation = VK_NULL_HANDLE;
     image.view = VK_NULL_HANDLE;

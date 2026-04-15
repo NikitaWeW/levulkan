@@ -42,48 +42,8 @@ static std::string string_SpvReflectResult(SpvReflectResult res)
         default: return "Unhandled SpvReflectResult";
     };
 }
-static std::string string_PipelineType(Pipeline::Type type)
-{
-    switch(type) {
-        case Pipeline::Type::INVALID:    return "Pipeline::Type::INVALID";   
-        case Pipeline::Type::GRAPHICS:   return "Pipeline::Type::GRAPHICS";  
-        case Pipeline::Type::COMPUTE:    return "Pipeline::Type::COMPUTE";   
-        case Pipeline::Type::RAYTRACING: return "Pipeline::Type::RAYTRACING";
-        default: return "Unhandled Pipeline::Type";
-    };
-}
 
 #define SPV_CHK(x, name, action) { SpvReflectResult _result = x; if(_result != SPV_REFLECT_RESULT_SUCCESS) { LOG_ERROR("{}:{}: Failed to {}: {} for binary \"{}\".", __FILE__, __LINE__, #x, string_SpvReflectResult(_result), name); action; } }
-static Pipeline::Type determineType(Shader const &shader)
-{
-    if(shader.binaries.empty())
-        LOG_ERROR("No binaries in shader \"{}\"/\"{}\" provided to determineType", shader.createInfo.src, shader.createInfo.bin);
-
-    switch(shader.binaries[0].stage)
-    {
-        case VK_SHADER_STAGE_COMPUTE_BIT:
-            return Pipeline::Type::COMPUTE;
-
-        case VK_SHADER_STAGE_RAYGEN_BIT_KHR:
-        case VK_SHADER_STAGE_ANY_HIT_BIT_KHR:
-        case VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR:
-        case VK_SHADER_STAGE_MISS_BIT_KHR:
-        case VK_SHADER_STAGE_INTERSECTION_BIT_KHR:
-        case VK_SHADER_STAGE_CALLABLE_BIT_KHR:
-            return Pipeline::Type::RAYTRACING;
-
-        case VK_SHADER_STAGE_VERTEX_BIT:
-        case VK_SHADER_STAGE_GEOMETRY_BIT:
-        case VK_SHADER_STAGE_FRAGMENT_BIT:
-        case VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT:
-        case VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT:
-        case VK_SHADER_STAGE_MESH_BIT_EXT:
-            return Pipeline::Type::GRAPHICS;
-
-        default:
-            return Pipeline::Type::INVALID;
-    }
-}
 static VkDescriptorType toVulkanDescriptorType(SpvReflectDescriptorType const &type)
 {
     switch(type)
@@ -324,12 +284,9 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
         std::optional<VkDescriptorSetVariableDescriptorCountAllocateInfo> variableSizedBinding;
         for(auto binding : bindings.dense())
         {
-            LOG_TRACE("Allocating {}", reflection.descBindings.at({set, binding.binding}));
+            LOG_TRACE(reflection.descBindings.at({set, binding.binding}));
             bool hasWrite = ci.descriptorWrites.contains({set, binding.binding});
             auto const &flags = descFlags.at(set).get(binding.binding);
-            LOG_VAR(hasWrite);
-            LOG_VAR(string_VkDescriptorBindingFlags(flags));
-            LOG_VAR(flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT);
             if(flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT)
             {
                 if(hasWrite)
@@ -372,8 +329,6 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
             for(uint frame = 0; frame < ci.framesInFlight; ++frame)
             {
                 auto &write = writes.emplace_back();
-                LOG_TRACE("Writing {}, index {}", reflection.descBindings.at({set, binding.binding}), frame);
-                LOG_VAR(ci.descriptorWrites.contains({set, binding.binding}));
         
                 if(ci.descriptorWrites.contains({set, binding.binding})) {
                     write = ci.descriptorWrites.at({set, binding.binding});
@@ -385,7 +340,6 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
                         LOG_ERROR("Cannot create resource for descriptor {}, frame index: {}", descBinding, frame);
                         continue;
                     }
-                    LOG_VAR(string_VkBufferUsageFlags(descriptorUsage(descBinding.descriptor_type)));
 
                     write = {
                         .dstFrame = frame,
@@ -572,6 +526,8 @@ void vk::destroy(Pipeline &pipeline)
     for(auto &bindings : pipeline.descResources)
         for(auto &[binding, buffer] : bindings)
                 destroy(buffer);
+
+    vkDestroyPipelineLayout(pipeline.device, pipeline.layout.layout, nullptr);
 
     vkDestroyPipeline(pipeline.device, pipeline.pipeline, nullptr);
 }
