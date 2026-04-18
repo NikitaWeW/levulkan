@@ -1,5 +1,6 @@
 #version 460
-#include "extensions.glsl"
+#include "Extensions.glsl"
+#include "Material.glsl"
 
 struct MatrixData
 {
@@ -8,46 +9,18 @@ struct MatrixData
     mat4 modelMat;
     mat4 normMat;
 };
-struct MaterialProperties
-{
-    vec3 ambient;
-    vec4 albedo;
-    vec3 specular;
-    vec3 emission;
 
-    float shininess;
-    float metallic;
-    float ior;
-};
-struct MaterialTextures
-{
-    uint albedo;
-    uint metallic;
-    uint roughness;
-    uint ambient;
-    uint normal;
-    uint displacement;
-};
-struct Material
-{
-    MaterialProperties properties;
-    MaterialTextures textures;
-};
 
 layout(set = 0, binding = 0, scalar) uniform UniformBuffer {
     Material uMaterial;
     MatrixData uMatrixData;
 };
 
+/////////////
 #stage vertex
+/////////////
 
-layout(location = 0) in vec3 aPosition;
-layout(location = 1) in vec2 aUV;
-layout(location = 2) in vec3 aNormal;
-layout(location = 3) in vec3 aTangent;
-// layout(push_constant) uniform PushConstants
-// {
-// };
+#include "Attributes.glsl"
 
 layout(location = 0) out VS_OUT {
     vec2 uv;
@@ -73,7 +46,9 @@ void main()
     vs_out.tbn = mat3(tangent, bitangent, normal);
 }
 
+///////////////
 #stage fragment
+///////////////
 
 layout(location = 0) in VS_OUT {
     vec2 uv;
@@ -87,15 +62,23 @@ layout(location = 0) out vec4 oColor;
 
 const vec3 uSunDir = vec3(0.5, -1, 1);
 
+vec4 sampleTexture(uint index)
+{
+    return texture(textures[index], fs_in.uv);
+}
+
 void main()
 {
     // Phong lighting
-    vec3 N = normalize(fs_in.tbn[2]);
+    vec3 N = fs_in.tbn * normalize(sampleTexture(uMaterial.textures.normal).rgb * 2.0 - 1.0);
+    // N = normalize(fs_in.tbn[2]);
     vec3 L = -normalize(uSunDir);
-    vec3 V = normalize(-uMatrixData.viewMat[2].xyz);
+    vec3 V = normalize(inverse(uMatrixData.viewMat)[3].xyz);
     vec3 R = reflect(-L, N);
     vec3 diffuse = vec3(max(dot(N, L), 0.0025));
     vec3 specular = vec3(pow(max(dot(R, V), 0.0), 16.0) * 0.75);
-    vec3 color = texture(textures[uMaterial.textures.albedo], fs_in.uv).xyz;
+    vec3 color = sampleTexture(uMaterial.textures.albedo).rgb;
     oColor = vec4(diffuse * color.rgb + specular, 1.0);
+    // FIXME: weird aNormal's
+    oColor = vec4(N, 1);
 }

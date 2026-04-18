@@ -568,7 +568,7 @@ Shader vk::makeShader(ShaderCreateInfo const &ci)
             createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
             createInfo.codeSize = bin.spirv.size() * sizeof(bin.spirv[0]);
             createInfo.pCode = bin.spirv.data();
-            CHK(vkCreateShaderModule(program.createInfo.device, &createInfo, nullptr, &bin.module));
+            VK_CHK(vkCreateShaderModule(program.createInfo.device, &createInfo, nullptr, &bin.module));
         }
     } else {
         LOG_WARN("Not creating shader modules for \"{}\"/\"{}\", because device is VK_NULL_HANDLE.", program.createInfo.src, program.createInfo.bin);

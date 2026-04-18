@@ -21,9 +21,9 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 
 #ifndef DONT_CHECK_VK
 extern std::string _sChkLastFileLine;
-#define CHK(x) { _sChkLastFileLine = std::string(__FILE__) + ':' + std::to_string(__LINE__); VkResult _result = x; if(_result != VK_SUCCESS) { LOG_ERROR("{}:{}: Failed to {}: {}.", __FILE__, __LINE__, #x, string_VkResult(_result)); /* LOG_WARN("Aborting..."); abort(); */ }}
+#define VK_CHK(x) { _sChkLastFileLine = std::string(__FILE__) + ':' + std::to_string(__LINE__); VkResult _result = x; if(_result != VK_SUCCESS) { LOG_ERROR("{}:{}: Failed to {}: {}.", __FILE__, __LINE__, #x, string_VkResult(_result)); /* LOG_WARN("Aborting..."); abort(); */ }}
 #else
-#define CHK(x) x
+#define VK_CHK(x) x
 #endif
 
 namespace vk
@@ -390,7 +390,7 @@ struct GraphicsPipelineCreateInfo
         VkPipelineDepthStencilStateCreateFlags flags = 0;
         bool depthTestEnable = true;
         bool depthWriteEnable = true;
-        VkCompareOp depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        VkCompareOp depthCompareOp = VK_COMPARE_OP_LESS;
         bool depthBoundsTestEnable = false;
         bool stencilTestEnable = false;
         VkStencilOpState front = {};
@@ -412,11 +412,11 @@ struct GraphicsPipelineCreateInfo
         float lineWidth = 1.0f;
     } rasterization;
     struct Multisample {
-    VkPipelineMultisampleStateCreateFlags flags = 0;
+        VkPipelineMultisampleStateCreateFlags flags = 0;
         VkSampleCountFlagBits rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
         bool sampleShadingEnable = false;
         float minSampleShading = 0.0f;
-        VkSampleMask sampleMask = 0.0f;
+        std::vector<VkSampleMask> sampleMask = { 1 };
         bool alphaToCoverageEnable = false;
         bool alphaToOneEnable = false;
     } multisample;
@@ -431,7 +431,7 @@ struct GraphicsPipelineCreateInfo
         VkLogicOp logicOp;
         std::vector<VkPipelineColorBlendAttachmentState> attachments;
         struct {
-            float r, g, b, a;
+            float r = 0, g = 0, b = 0, a = 0;
         } constant;
     } blending;
 };
@@ -439,6 +439,18 @@ struct GraphicsPipelineCreateInfo
 /// @brief Make a pipeline based on the shader reflection and other stuff.
 Pipeline makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const &ci);
 
+
+/// @brief Insert an image memory barrier into the command buffer
+void insertImageMemoryBarrier(
+    VkCommandBuffer commandBuffer,
+    VkImage image,
+    VkAccessFlags srcAccessMask,
+    VkAccessFlags dstAccessMask,
+    VkImageLayout oldImageLayout,
+    VkImageLayout newImageLayout,
+    VkPipelineStageFlags srcStageMask,
+    VkPipelineStageFlags dstStageMask,
+    VkImageSubresourceRange subresourceRange);
 // TODO: Render graph
 
 void destroy(Swapchain &pipeline);

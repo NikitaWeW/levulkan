@@ -90,7 +90,7 @@ static void getImages(Swapchain &swapchain)
             }
         };
 
-        CHK(vkCreateImageView(swapchain.allocInfo.device, &createInfo, nullptr, &swapchain.imageViews[i]));
+        VK_CHK(vkCreateImageView(swapchain.allocInfo.device, &createInfo, nullptr, &swapchain.imageViews[i]));
     }
 }
 
@@ -126,7 +126,7 @@ Swapchain vk::makeSwapchain(SwapchainCreateInfo const &ci)
         .oldSwapchain = VK_NULL_HANDLE,
     };
 
-    CHK(vkCreateSwapchainKHR(swapchain.allocInfo.device, &swapchain.createInfo, nullptr, &swapchain.swapchain));
+    VK_CHK(vkCreateSwapchainKHR(swapchain.allocInfo.device, &swapchain.createInfo, nullptr, &swapchain.swapchain));
 
     getImages(swapchain);
 
@@ -137,7 +137,7 @@ void vk::resizeSwapchain(Swapchain &swapchain, VkExtent2D size)
     swapchain.createInfo.oldSwapchain = swapchain.swapchain;
     swapchain.createInfo.imageExtent = size;
 
-    CHK(vkCreateSwapchainKHR(swapchain.allocInfo.device, &swapchain.createInfo, nullptr, &swapchain.swapchain));
+    VK_CHK(vkCreateSwapchainKHR(swapchain.allocInfo.device, &swapchain.createInfo, nullptr, &swapchain.swapchain));
     getImages(swapchain);
     vkDestroySwapchainKHR(swapchain.allocInfo.device, swapchain.createInfo.oldSwapchain, nullptr);
 }

@@ -428,9 +428,9 @@ static void createAllocator(InitInfo const &info, InitResult &result)
         .vulkanApiVersion = info.version
     };
     VmaVulkanFunctions functions;
-    CHK(vmaImportVulkanFunctionsFromVolk(&allocatorCI, &functions));
+    VK_CHK(vmaImportVulkanFunctionsFromVolk(&allocatorCI, &functions));
     allocatorCI.pVulkanFunctions = &functions;
-    CHK(vmaCreateAllocator(&allocatorCI, &result.vma));
+    VK_CHK(vmaCreateAllocator(&allocatorCI, &result.vma));
 }
 
 InitResult vk::init(InitInfo info)

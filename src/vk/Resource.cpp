@@ -13,36 +13,36 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 #include "libraries/vk_format_utils.h"
 using namespace vk;
 
-static void insertImageMemoryBarrier(
-    VkCommandBuffer         command_buffer,
+void vk::insertImageMemoryBarrier(
+    VkCommandBuffer         commandBuffer,
     VkImage                 image,
-    VkAccessFlags           src_access_mask,
-    VkAccessFlags           dst_access_mask,
-    VkImageLayout           old_layout,
-    VkImageLayout           new_layout,
-    VkPipelineStageFlags    src_stage_mask,
-    VkPipelineStageFlags    dst_stage_mask,
-    VkImageSubresourceRange subresource_range)
+    VkAccessFlags           srcAccessMask,
+    VkAccessFlags           dstAccessMask,
+    VkImageLayout           oldImageLayout,
+    VkImageLayout           newImageLayout,
+    VkPipelineStageFlags    srcStageMask,
+    VkPipelineStageFlags    dstStageMask,
+    VkImageSubresourceRange subresourceRange)
 {
     VkImageMemoryBarrier2 barrier{
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-        .srcStageMask = src_stage_mask,
-        .srcAccessMask = src_access_mask,
-        .dstStageMask = dst_stage_mask,
-        .dstAccessMask = dst_access_mask,
-        .oldLayout = old_layout,
-        .newLayout = new_layout,
+        .srcStageMask = srcStageMask,
+        .srcAccessMask = srcAccessMask,
+        .dstStageMask = dstStageMask,
+        .dstAccessMask = dstAccessMask,
+        .oldLayout = oldImageLayout,
+        .newLayout = newImageLayout,
         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .image = image,
-        .subresourceRange = subresource_range
+        .subresourceRange = subresourceRange
     };
     VkDependencyInfo dependency{
         .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
         .imageMemoryBarrierCount = 1,
         .pImageMemoryBarriers = &barrier,
     };
-    vkCmdPipelineBarrier2(command_buffer, &dependency);
+    vkCmdPipelineBarrier2(commandBuffer, &dependency);
 }
 static VmaAllocationCreateInfo makeAllocInfo(AllocationCreateInfo const &ci)
 {
@@ -214,7 +214,7 @@ Image vk::makeImage(ImageCreateInfo const &ci)
     };
     image.allocationInfo = makeAllocInfo(ci.allocInfo);
 
-    CHK(vmaCreateImage(image.allocator, &image.createInfo, &image.allocationInfo, &image.image, &image.allocation, nullptr));
+    VK_CHK(vmaCreateImage(image.allocator, &image.createInfo, &image.allocationInfo, &image.image, &image.allocation, nullptr));
 
     if(ci.data)
         writeImage(image, ci);
@@ -240,7 +240,7 @@ Image vk::makeImage(ImageCreateInfo const &ci)
             .borderColor = ci.sampler.borderColor,
             .unnormalizedCoordinates = ci.sampler.unnormalizedCoordinates,
         };
-        CHK(vkCreateSampler(ci.allocInfo.device, &samplerCI, nullptr, &image.sampler));
+        VK_CHK(vkCreateSampler(ci.allocInfo.device, &samplerCI, nullptr, &image.sampler));
     }
 
     if(ci.view.aspectMask != VK_IMAGE_ASPECT_NONE)
@@ -258,7 +258,7 @@ Image vk::makeImage(ImageCreateInfo const &ci)
                 .layerCount = image.createInfo.arrayLayers,
             }
         };
-        CHK(vkCreateImageView(ci.allocInfo.device, &viewCI, nullptr, &image.view));
+        VK_CHK(vkCreateImageView(ci.allocInfo.device, &viewCI, nullptr, &image.view));
     }
 
     return image;
@@ -298,10 +298,10 @@ Buffer vk::makeBuffer(BufferCreateInfo const &ci)
         LOG_ERROR("Creating a buffer with size of 0!");
         return buffer;
     }
-    CHK(vmaCreateBuffer(ci.allocInfo.allocator, &buffer.createInfo, &buffer.allocationInfo, &buffer.buffer, &buffer.allocation, nullptr));
+    VK_CHK(vmaCreateBuffer(ci.allocInfo.allocator, &buffer.createInfo, &buffer.allocationInfo, &buffer.buffer, &buffer.allocation, nullptr));
     
     if(ci.data || ci.map)
-        CHK(vmaMapMemory(buffer.allocator, buffer.allocation, &buffer.mapped)); 
+        VK_CHK(vmaMapMemory(buffer.allocator, buffer.allocation, &buffer.mapped)); 
     if(ci.data)
         std::memcpy(buffer.mapped, ci.data, buffer.createInfo.size);
 

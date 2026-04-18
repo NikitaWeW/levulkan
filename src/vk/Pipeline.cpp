@@ -206,11 +206,12 @@ static VkBufferUsageFlags descriptorUsage(SpvReflectDescriptorType type)
 template <> struct fmt::formatter<SpvReflectDescriptorBinding> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
     auto format(SpvReflectDescriptorBinding const &binding, format_context &ctx) const {
-        return fmt::format_to(ctx.out(), "layout(set = {}, binding = {}) {})", binding.set, binding.binding, string_VkDescriptorType(toVulkanDescriptorType(binding.descriptor_type)));
+        return fmt::format_to(ctx.out(), "layout(set = {}, binding = {}) ({})", binding.set, binding.binding, string_VkDescriptorType(toVulkanDescriptorType(binding.descriptor_type)));
     }
 };
 
 // WARNING: nested spaghetti code incoming
+// TODO: Add more error checking
 static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Reflection const &reflection, VmaAllocator allocator, decltype(Pipeline::descResources) &resources, uint framesInFlight)
 {
     Pipeline::Layout layout;
@@ -274,7 +275,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
         .poolSizeCount =(uint32_t) poolSizes.size(),
         .pPoolSizes = poolSizes.dense().data()
     };
-    CHK(vkCreateDescriptorPool(dev, &poolCI, nullptr, &layout.descPool));
+    VK_CHK(vkCreateDescriptorPool(dev, &poolCI, nullptr, &layout.descPool));
 
     // Allocate descriptors
     layout.descSets.resize(ci.framesInFlight);
@@ -284,8 +285,8 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
         std::optional<VkDescriptorSetVariableDescriptorCountAllocateInfo> variableSizedBinding;
         for(auto binding : bindings.dense())
         {
-            LOG_TRACE(reflection.descBindings.at({set, binding.binding}));
             bool hasWrite = ci.descriptorWrites.contains({set, binding.binding});
+            LOG_TRACE("{} -- {}", reflection.descBindings.at({set, binding.binding}), hasWrite ? "Provided" : "Generated");
             auto const &flags = descFlags.at(set).get(binding.binding);
             if(flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT)
             {
@@ -314,7 +315,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
             .pSetLayouts = &layout.descLayouts[setToLayoutIndex.at(set)]
         };
         for(uint i = 0; i < ci.framesInFlight; ++i)
-            CHK(vkAllocateDescriptorSets(dev, &descSetAlloc, &layout.descSets[i][set]));
+            VK_CHK(vkAllocateDescriptorSets(dev, &descSetAlloc, &layout.descSets[i][set]));
     }
 
     // Write descriptors
@@ -368,7 +369,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
         
                 descWrites.emplace_back(VkWriteDescriptorSet{
                     .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                    .dstSet = layout.descSets[frame].get({set, }),
+                    .dstSet = layout.descSets[frame].get(set),
                     .dstBinding = binding.binding,
                     .dstArrayElement = write.dstArrayElement,
                     .descriptorCount = write.size(),
@@ -394,7 +395,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
         .pushConstantRangeCount =(uint32_t) pushConstants.size(),
         .pPushConstantRanges = pushConstants.data(),
     };
-    CHK(vkCreatePipelineLayout(dev, &pipelineLayoutCI, nullptr, &layout.layout));
+    VK_CHK(vkCreatePipelineLayout(dev, &pipelineLayoutCI, nullptr, &layout.layout));
 
     return layout;
 }
@@ -484,7 +485,7 @@ Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const
         .rasterizationSamples = ci.multisample.rasterizationSamples,
         .sampleShadingEnable = ci.multisample.sampleShadingEnable,
         .minSampleShading = ci.multisample.minSampleShading,
-        .pSampleMask = &ci.multisample.sampleMask,
+        .pSampleMask = ci.multisample.sampleMask.data(),
         .alphaToCoverageEnable = ci.multisample.alphaToCoverageEnable,
         .alphaToOneEnable = ci.multisample.alphaToOneEnable,
     };
@@ -504,7 +505,7 @@ Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const
         .pDynamicState = &dynamicState,
         .layout = pipeline.layout.layout
     };
-    CHK(vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &pipeline.pipeline));
+    VK_CHK(vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &pipeline.pipeline));
 
     pipeline.valid = true;
     return pipeline;
