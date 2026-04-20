@@ -17,7 +17,7 @@ inline std::shared_ptr<spdlog::logger> sLogger;
 #define LOG_WARN(...) LOG(spdlog::level::warn, __VA_ARGS__)
 #define LOG_ERROR(...) LOG(spdlog::level::err, __VA_ARGS__)
 
-#define LOG_VAR(x) LOG_TRACE("{}: {}", #x, fmt::streamed(x))
+#define LOG_VAR(x) LOG_TRACE("{} = {}", #x, fmt::streamed(x))
 
 inline void initLogger()
 {

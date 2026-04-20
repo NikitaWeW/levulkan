@@ -56,7 +56,7 @@ layout(location = 0) in VS_OUT {
     mat3 tbn;
 } fs_in;
 
-layout(set = 0, binding = 1) uniform sampler2D textures[];
+layout(set = 1, binding = 0) uniform sampler2D textures[];
 
 layout(location = 0) out vec4 oColor;
 
@@ -80,5 +80,5 @@ void main()
     vec3 color = sampleTexture(uMaterial.textures.albedo).rgb;
     oColor = vec4(diffuse * color.rgb + specular, 1.0);
     // FIXME: weird aNormal's
-    oColor = vec4(N, 1);
+    oColor = vec4(vec3(fs_in.uv, 0), 1);
 }

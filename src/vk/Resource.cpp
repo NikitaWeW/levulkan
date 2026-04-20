@@ -308,7 +308,7 @@ Buffer vk::makeBuffer(BufferCreateInfo const &ci)
     return buffer;
 }
 
-bool vk::Image::valid()
+bool vk::Image::valid() const
 {
     bool sampled = usage & VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER || usage & VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     if(sampled && !sampler)
@@ -316,7 +316,7 @@ bool vk::Image::valid()
 
     return image != VK_NULL_HANDLE && allocation != VK_NULL_HANDLE;
 }
-bool vk::Buffer::valid()
+bool vk::Buffer::valid() const
 {
     return buffer != VK_NULL_HANDLE && allocation != VK_NULL_HANDLE;
 }

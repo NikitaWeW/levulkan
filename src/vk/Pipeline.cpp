@@ -14,7 +14,7 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 
 using namespace vk;
 
-static std::string string_SpvReflectResult(SpvReflectResult res)
+static constexpr std::string string_SpvReflectResult(SpvReflectResult res)
 {
     switch(res) {
         case SPV_REFLECT_RESULT_SUCCESS                                    : return "SPV_REFLECT_RESULT_SUCCESS";                                   
@@ -44,7 +44,7 @@ static std::string string_SpvReflectResult(SpvReflectResult res)
 }
 
 #define SPV_CHK(x, name, action) { SpvReflectResult _result = x; if(_result != SPV_REFLECT_RESULT_SUCCESS) { LOG_ERROR("{}:{}: Failed to {}: {} for binary \"{}\".", __FILE__, __LINE__, #x, string_SpvReflectResult(_result), name); action; } }
-static VkDescriptorType toVulkanDescriptorType(SpvReflectDescriptorType const &type)
+static constexpr VkDescriptorType toVulkanDescriptorType(SpvReflectDescriptorType const &type)
 {
     switch(type)
     {
@@ -63,7 +63,7 @@ static VkDescriptorType toVulkanDescriptorType(SpvReflectDescriptorType const &t
         default: return(VkDescriptorType) 0;
     }
 }
-static VkFormat toVulkanFormat(SpvReflectFormat const &format)
+static constexpr VkFormat toVulkanFormat(SpvReflectFormat const &format)
 {
     switch(format)
     {
@@ -229,19 +229,24 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
             flags |= VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
     }
 
-    for(auto &[set, bindings] : descSets)
-        for(auto [binding, desc] : bindings)
+    for(auto &[set, bindings] : descSets) 
+    {
+        for(auto [binding, desc] : bindings) 
+        {
             if(ci.descriptorWrites.contains({set, (uint32_t) binding}))
                 desc.descriptorCount = std::max(desc.descriptorCount, ci.descriptorWrites.at({set, (uint32_t) binding}).size());
+            if(ci.descriptorTypeOverride.contains({set, (uint32_t) binding}))
+                desc.descriptorType = ci.descriptorTypeOverride.at({set, (uint32_t) binding});
+        }
+    }
 
     // Descriptor set layouts
     layout.descLayouts.reserve(descSets.size());
-    std::unordered_map<uint32_t, size_t> setToLayoutIndex;
     for(auto const &[set, bindings] : descSets)
     {
         VkDescriptorSetLayoutBindingFlagsCreateInfo flagsCI{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
-            .bindingCount =(uint32_t) descFlags.at(set).size(),
+            .bindingCount = (uint32_t) descFlags.at(set).size(),
             .pBindingFlags = descFlags.at(set).dense().data(),
         };
         VkDescriptorSetLayoutCreateInfo layoutCI{
@@ -251,8 +256,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
             .bindingCount = (uint32_t) bindings.size(),
             .pBindings = bindings.dense().data(),
         };
-        setToLayoutIndex[set] = layout.descLayouts.size();
-        vkCreateDescriptorSetLayout(dev, &layoutCI, nullptr, &layout.descLayouts.emplace_back());
+        vkCreateDescriptorSetLayout(dev, &layoutCI, nullptr, &layout.descLayouts[set]);
     }
 
     // Descriptor pool
@@ -272,7 +276,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
     VkDescriptorPoolCreateInfo poolCI{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .maxSets = ci.maxDescriptorSets * ci.framesInFlight,
-        .poolSizeCount =(uint32_t) poolSizes.size(),
+        .poolSizeCount = (uint32_t) poolSizes.size(),
         .pPoolSizes = poolSizes.dense().data()
     };
     VK_CHK(vkCreateDescriptorPool(dev, &poolCI, nullptr, &layout.descPool));
@@ -312,7 +316,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
             .pNext = variableSizedBinding.has_value() ? &variableSizedBinding.value() : nullptr,
             .descriptorPool = layout.descPool,
             .descriptorSetCount = 1,
-            .pSetLayouts = &layout.descLayouts[setToLayoutIndex.at(set)]
+            .pSetLayouts = &layout.descLayouts.get(set)
         };
         for(uint i = 0; i < ci.framesInFlight; ++i)
             VK_CHK(vkAllocateDescriptorSets(dev, &descSetAlloc, &layout.descSets[i][set]));
@@ -390,9 +394,9 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
 
     VkPipelineLayoutCreateInfo pipelineLayoutCI{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount =(uint32_t) layout.descLayouts.size(),
-        .pSetLayouts = layout.descLayouts.data(),
-        .pushConstantRangeCount =(uint32_t) pushConstants.size(),
+        .setLayoutCount = (uint32_t) layout.descLayouts.size(),
+        .pSetLayouts = layout.descLayouts.dense().data(),
+        .pushConstantRangeCount = (uint32_t) pushConstants.size(),
         .pPushConstantRanges = pushConstants.data(),
     };
     VK_CHK(vkCreatePipelineLayout(dev, &pipelineLayoutCI, nullptr, &layout.layout));
@@ -441,7 +445,7 @@ Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const
     };
     VkPipelineDynamicStateCreateInfo dynamicState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-        .dynamicStateCount =(uint32_t) ci.dynamicState.size(),
+        .dynamicStateCount = (uint32_t) ci.dynamicState.size(),
         .pDynamicStates = ci.dynamicState.data()
     };
     VkPipelineColorBlendStateCreateInfo blendState{
@@ -493,7 +497,7 @@ Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const
     VkGraphicsPipelineCreateInfo pipelineCI{
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .pNext = &renderingCI,
-        .stageCount =(uint32_t) reflection.stages.size(),
+        .stageCount = (uint32_t) reflection.stages.size(),
         .pStages = reflection.stages.data(),
         .pVertexInputState = &vertexInputState,
         .pInputAssemblyState = &inputAssemblyState,
@@ -518,7 +522,7 @@ void vk::destroy(Pipeline &pipeline)
     if(pipeline.layout.descPool != VK_NULL_HANDLE)
         vkDestroyDescriptorPool(pipeline.device, pipeline.layout.descPool, nullptr);
 
-    for(auto layout : pipeline.layout.descLayouts)
+    for(auto layout : pipeline.layout.descLayouts.dense())
     {
         if(layout != VK_NULL_HANDLE)
             vkDestroyDescriptorSetLayout(pipeline.device, layout, nullptr);

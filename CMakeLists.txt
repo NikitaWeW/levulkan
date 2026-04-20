@@ -60,6 +60,7 @@ set(LEVULKAN_SOURCE
     "src/vk/Init.cpp"
     "src/vk/Pipeline.cpp"
     "src/vk/Resource.cpp"
+    "src/vk/RingBuffer.cpp"
     "src/vk/Shader.cpp"
     "src/vk/Swapchain.cpp"
 )

@@ -348,7 +348,7 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg)
         normal = mRegistry->create(Texture{
             .bitmap = Bitmap<unsigned char>{
                 .pixels = {
-                    128, 128, 128
+                    128, 128, 255
                 },
                 .numComponents = 3,
                 .size = {1, 1},

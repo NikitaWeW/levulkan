@@ -170,7 +170,7 @@ struct Buffer
     VkDeviceAddress deviceAddress = 0;
     void *mapped = VK_NULL_HANDLE;
 
-    bool valid();
+    bool valid() const;
 };
 
 Buffer makeBuffer(BufferCreateInfo const &ci);
@@ -224,7 +224,7 @@ struct Image
     VkFormat format = VK_FORMAT_UNDEFINED;
 
     /// @brief A small helper function that checks if necessary members handles are not null
-    bool valid(); 
+    bool valid() const; 
 };
 struct ImageCreateInfo
 {
@@ -292,9 +292,6 @@ struct Swapchain
     std::vector<VkImage> images;
     std::vector<VkImageView> imageViews;
 
-    VkSurfaceFormatKHR surfaceFormat;
-    VkPresentModeKHR surfacePresentMode;
-
     VkSwapchainCreateInfoKHR createInfo;
     VkSurfaceCapabilitiesKHR capabilities;
 
@@ -317,7 +314,7 @@ struct Pipeline
     struct Layout
     {
         VkPipelineLayout layout;
-        std::vector<VkDescriptorSetLayout> descLayouts;
+        SparseSet<VkDescriptorSetLayout> descLayouts;
         std::vector<SparseSet<VkDescriptorSet>> descSets; ///< Per frame in flight
         VkDescriptorPool descPool;
     };
@@ -361,6 +358,7 @@ struct PipelineLayoutCreateInfo
         inline uint32_t size() const { return std::max(imageInfo.size(), std::max(bufferInfo.size(), texelBufferView.size())); }
     };
 
+    std::map<Pipeline::DescriptorBinding, VkDescriptorType> descriptorTypeOverride; ///< Optional overrides of the descriptor type for specific bindings. Useful to make some descriptors dynamic.
     std::map<uint32_t, VkDescriptorSetLayoutCreateFlags> descriptorSetFlags; ///< Optional flags for descriptor sets.
     std::map<Pipeline::DescriptorBinding, VkDescriptorBindingFlags> descriptorBindingFlags; ///< Optional additional flags for descriptor bindings. VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT is set automatically.s
     std::map<Pipeline::DescriptorBinding, DescriptorWrite> descriptorWrites; ///< Descriptor data for static descriptors. If no write, creates the resource for each frame in flight.
@@ -439,7 +437,6 @@ struct GraphicsPipelineCreateInfo
 /// @brief Make a pipeline based on the shader reflection and other stuff.
 Pipeline makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const &ci);
 
-
 /// @brief Insert an image memory barrier into the command buffer
 void insertImageMemoryBarrier(
     VkCommandBuffer commandBuffer,
@@ -450,7 +447,58 @@ void insertImageMemoryBarrier(
     VkImageLayout newImageLayout,
     VkPipelineStageFlags srcStageMask,
     VkPipelineStageFlags dstStageMask,
-    VkImageSubresourceRange subresourceRange);
+    VkImageSubresourceRange subresourceRange
+);
+
+/// @brief Vulkan ring buffer
+class RingBuffer
+{
+private:
+    struct Allocation
+    {
+        uint32_t head = 0;
+        uint32_t size = 0;
+    };
+    BufferCreateInfo mCreateInfo;
+    Buffer mBuffer;
+    std::map<uint32_t, Allocation> mAllocations;
+    uint32_t mHead = 0;
+    uint32_t mTail = 0;
+public:
+    /// @brief Construct an invalid ring buffer.
+    RingBuffer() = default;
+    /// @brief Construct a valid ring buffer.
+    RingBuffer(BufferCreateInfo createInfo);
+    ~RingBuffer();
+    RingBuffer(RingBuffer &&) = default;
+    RingBuffer &operator=(RingBuffer &&) = default;
+    RingBuffer(RingBuffer const &) = delete;
+    RingBuffer &operator=(RingBuffer const &) = delete;
+
+    inline bool valid() const { return mBuffer.valid(); }
+    inline Buffer &getBuffer() { return mBuffer; }
+    inline Buffer const &getBuffer() const { return mBuffer; }
+    inline uint32_t getHead() const { return mHead; }
+    inline uint32_t getTail() const { return mTail; }
+
+    /// @brief Acquire a chunk of a ring buffer.
+    /// @param size The size of a chunk in bytes.
+    /// @param index The allocation index.
+    /// @param alignment The alignment of the chunk in bytes.
+    /// @returns The start of the chunk.
+    uint32_t request(uint32_t size, uint32_t index, uint32_t alignment = 0);
+
+    /// @brief Free the allocation.
+    /// @param index The index of the allocation.
+    /// WARNING: You must free in the exact same order as requested.
+    void free(uint32_t index);
+
+    /// @brief Reallocate if needed.
+    /// Place at the end of the frame.
+    /// @returns True if reallocation happened, false otherwise.
+    bool realloc();
+};
+
 // TODO: Render graph
 
 void destroy(Swapchain &pipeline);

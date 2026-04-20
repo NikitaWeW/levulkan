@@ -234,7 +234,7 @@ VkQueue QueueFamilies::getQueue(VkQueueFlagBits type, uint32_t queueIndex) const
     vkGetDeviceQueue(device, indices.at(type), queueIndex, &queue);
     return queue;
 }
-// Its now time, for our FEATURE presentation!.. Feacher?.. 
+// Its now time, for our FEATURE presentation!.. Feacher!.. 
 // Coming straight from your house! Coming straight from your house! Coming! 
 // He's the one! (Coming!) The king of only!
 // She's groovy, and never glooby!
