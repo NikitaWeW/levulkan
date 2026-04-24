@@ -341,8 +341,8 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg)
                 .numComponents = 3,
                 .size = {1, 1},
             },
-            .srgb = false,
             .path = "default/white",
+            .srgb = false,
         });
     if(!normal)
         normal = mRegistry->create(Texture{
@@ -353,8 +353,8 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg)
                 .numComponents = 3,
                 .size = {1, 1},
             },
+            .path = "default/normal",
             .srgb = false,
-            .path = "default/normal"
         });
     if(!black)
         black = mRegistry->create(Texture{
@@ -365,8 +365,8 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg)
                 .numComponents = 3,
                 .size = {1, 1},
             },
+            .path = "default/black",
             .srgb = false,
-            .path = "default/black"
         });
     if(!tile)
         tile = mRegistry->create(Texture{
@@ -384,8 +384,8 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg)
                 .numComponents = 3,
                 .size = {8, 8},
             },
+            .path = "default/tile",
             .srgb = true,
-            .path = "default/tile"
         });
 
     mDefaultMaterial = {

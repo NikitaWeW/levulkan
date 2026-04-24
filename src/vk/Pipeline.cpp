@@ -497,6 +497,7 @@ Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const
     VkGraphicsPipelineCreateInfo pipelineCI{
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .pNext = &renderingCI,
+        .flags = ci.flags,
         .stageCount = (uint32_t) reflection.stages.size(),
         .pStages = reflection.stages.data(),
         .pVertexInputState = &vertexInputState,
@@ -512,6 +513,53 @@ Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const
     VK_CHK(vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &pipeline.pipeline));
 
     pipeline.valid = true;
+    return pipeline;
+}
+Pipeline vk::makePipeline(Shader const &shader, ComputePipelineCreateInfo const &ci)
+{
+    auto const &dev = shader.createInfo.device;
+
+    Pipeline pipeline{
+        .type = Pipeline::Type::GRAPHICS,
+        .device = shader.createInfo.device
+    };
+
+    Reflection reflection = reflect(shader);
+    pipeline.layout = makePipelineLayout(dev, ci.layout, reflection, ci.allocator, pipeline.descResources, ci.layout.framesInFlight);
+
+    VkComputePipelineCreateInfo pipelineCI{
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .flags = ci.flags,
+        .stage = *std::find_if(reflection.stages.begin(), reflection.stages.end(), [](VkPipelineShaderStageCreateInfo const &stage){return stage.stage == VK_SHADER_STAGE_COMPUTE_BIT;}),
+        .layout = pipeline.layout.layout,
+    };
+    VK_CHK(vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &pipeline.pipeline));
+
+    pipeline.valid = true;
+    return pipeline;
+}
+Pipeline vk::makePipeline(Shader const &shader, RaytracingPipelineCreateInfo const &ci)
+{
+    auto const &dev = shader.createInfo.device;
+
+    Pipeline pipeline{
+        .type = Pipeline::Type::GRAPHICS,
+        .device = shader.createInfo.device
+    };
+
+    Reflection reflection = reflect(shader);
+    pipeline.layout = makePipelineLayout(dev, ci.layout, reflection, ci.allocator, pipeline.descResources, ci.layout.framesInFlight);
+
+    VkRayTracingPipelineCreateInfoKHR pipelineCI{
+        .sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
+        .flags = ci.flags,
+        .stageCount = (uint32_t) reflection.stages.size(),
+        .pStages = reflection.stages.data(),
+        .layout = pipeline.layout.layout,
+    };
+    // VK_CHK(vkCreateRayTracingPipelinesKHR(dev, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &pipeline.pipeline));
+
+    // pipeline.valid = true;
     return pipeline;
 }
 

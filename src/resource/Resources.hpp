@@ -18,9 +18,17 @@ struct Bitmap
 struct Texture
 {
     Bitmap<uint8_t> bitmap;
-    bool srgb = false;
-    unsigned numMipLevels = 1;
     std::string path;
+    bool srgb = false;
+    bool linearSampling = false;
+    unsigned numMipLevels = 1;
+    enum class AddressMode {
+        Repeat,
+        MirroredRepeat,
+        ClampToEdge,
+        ClampToBorder,
+        MirrorClampToEdge,
+    } addressMode = AddressMode::Repeat;
 };
 struct Cubemap
 {

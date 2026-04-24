@@ -16,6 +16,8 @@ ecs::entity TextureLoader::loadFromFile(std::string_view path, TextureLoaderOpti
     int width = 0, height = 0, numChannels = 0;
     stbi_set_flip_vertically_on_load(options.flip);
     unsigned char *buff = stbi_load(path.data(), &width, &height, &numChannels, options.desiredChannels);
+    if(options.desiredChannels != 0)
+        numChannels = options.desiredChannels;
     if(!buff)
     {
         LOG_ERROR("failed to load texture: \"{}\"!: {}", path, stbi_failure_reason());
@@ -30,6 +32,7 @@ ecs::entity TextureLoader::loadFromFile(std::string_view path, TextureLoaderOpti
     };
     texture.path = path;
     texture.numMipLevels = static_cast<uint32_t>(glm::ceil(glm::log2(std::max(texture.bitmap.size.x, texture.bitmap.size.y))));
+    texture.linearSampling = texture.bitmap.size.x * texture.bitmap.size.y > 10000 && texture.numMipLevels > 1;
     stbi_image_free(buff);
 
     return mReg->create(std::move(texture));
@@ -39,6 +42,8 @@ ecs::entity TextureLoader::loadFromMemory(void const *data, size_t size, Texture
     int width = 0, height = 0, numChannels = 0;
     stbi_set_flip_vertically_on_load(options.flip);
     unsigned char *buff = stbi_load_from_memory(static_cast<unsigned char const *>(data), size, &width, &height, &numChannels, options.desiredChannels);
+    if(options.desiredChannels != 0)
+        numChannels = options.desiredChannels;
     if(!buff)
     {
         LOG_ERROR("failed to load texture from memory: {}", stbi_failure_reason());
@@ -53,6 +58,7 @@ ecs::entity TextureLoader::loadFromMemory(void const *data, size_t size, Texture
     };
     texture.path = "loadFromMemory";
     texture.numMipLevels = static_cast<uint32_t>(glm::ceil(glm::log2(std::max(texture.bitmap.size.x, texture.bitmap.size.y))));
+    texture.linearSampling = texture.bitmap.size.x * texture.bitmap.size.y > 10000 && texture.numMipLevels > 1;
     stbi_image_free(buff);
 
     return mReg->create(std::move(texture));

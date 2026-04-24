@@ -16,6 +16,16 @@ Entity Controller::createCamera(Registry &reg, glm::vec3 pos, glm::vec3 target)
     };
     return e;
 }
+static void updateOrientation(glm::vec2 offset, glm::quat &q)
+{
+    auto newOrientation = glm::normalize(
+        glm::angleAxis(glm::radians(offset.y), glm::vec3{1, 0, 0}) *
+        q * 
+        glm::angleAxis(glm::radians(offset.x), glm::vec3{0, 1, 0})
+    );
+    if(glm::abs(glm::vec3(glm::inverse(glm::mat4_cast(newOrientation)) * glm::vec4{0,0,-1,0}).y) < 0.99)
+        q = {newOrientation};
+}
 
 void Controller::update(Registry &reg, float dt)
 {
@@ -32,7 +42,8 @@ void Controller::update(Registry &reg, float dt)
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-        auto velocity = glm::vec3{0, 0, 0};
+        glm::vec3 velocity{0, 0, 0};
+        glm::vec2 arrowOffset(0, 0);
         if(camera.locked)
         {
             if(glfwGetKey(window.handle, GLFW_KEY_W) == GLFW_PRESS) velocity += forward;
@@ -41,11 +52,18 @@ void Controller::update(Registry &reg, float dt)
             if(glfwGetKey(window.handle, GLFW_KEY_A) == GLFW_PRESS) velocity -= right;
             if(glfwGetKey(window.handle, GLFW_KEY_E) == GLFW_PRESS) velocity += up;
             if(glfwGetKey(window.handle, GLFW_KEY_Q) == GLFW_PRESS) velocity -= up;
+
+            if(glfwGetKey(window.handle, GLFW_KEY_UP   ) == GLFW_PRESS) arrowOffset -= glm::vec2{0,1} * camera.sensitivity * 0.5f;
+            if(glfwGetKey(window.handle, GLFW_KEY_DOWN ) == GLFW_PRESS) arrowOffset += glm::vec2{0,1} * camera.sensitivity * 0.5f;
+            if(glfwGetKey(window.handle, GLFW_KEY_RIGHT) == GLFW_PRESS) arrowOffset += glm::vec2{1,0} * camera.sensitivity * 0.5f;
+            if(glfwGetKey(window.handle, GLFW_KEY_LEFT ) == GLFW_PRESS) arrowOffset -= glm::vec2{1,0} * camera.sensitivity * 0.5f;
         }
         if(velocity != glm::vec3{0})
             velocity = {glm::normalize(velocity)};
         velocity *= camera.speed * (glfwGetKey(window.handle, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ? camera.boost : 1);
         camera.position += velocity * dt;
+        
+        updateOrientation(arrowOffset, camera.orientation);
 
         for(; !listener.keyEvents.empty(); listener.keyEvents.pop())
         {
@@ -64,18 +82,7 @@ void Controller::update(Registry &reg, float dt)
             glm::vec2 offset = glm::vec2(event.delta) * camera.sensitivity;
 
             if(!camera.firstTimeMovingMouse && camera.locked)
-            {
-                auto newOrientation = glm::normalize(
-                    glm::angleAxis(glm::radians(offset.y), glm::vec3{1, 0, 0}) *
-                    camera.orientation * 
-                    glm::angleAxis(glm::radians(offset.x), glm::vec3{0, 1, 0})
-                );
-                if(glm::abs(glm::vec3(glm::inverse(glm::mat4_cast(newOrientation)) * glm::vec4{0,0,-1,0}).y) < 0.99)
-                    camera.orientation = {newOrientation};
-
-                // if(abs(camera.pitchYaw.x) < 89.999)
-                //     camera.pitchYaw += offset;
-            }
+                updateOrientation(offset, camera.orientation);
             camera.firstTimeMovingMouse = false;
         }
 

@@ -86,6 +86,16 @@ struct UniformBuffer {
     VulkanMaterial uMaterial;
     MatrixData uMatrixData;
 };
+struct Program
+{
+    vk::Pipeline pipeline;
+    vk::Shader shader;
+
+    Program() = default;
+    Program(std::string_view path, vk::GraphicsPipelineCreateInfo ci);
+
+    inline bool valid() const { return pipeline.valid && shader.valid; }
+};
 
 ////////////////////////////////////////////////////////////////
 
@@ -94,7 +104,7 @@ static std::string printTexture(Entity e)
     if(!e.valid() || !e.has<Texture>())
         return fmt::format("e{} -- INVALID", e.entity());
     auto const &texture = e.get<Texture>();
-    return fmt::format("e{}, \"{:<30} {}x{}, {:>3}", e.entity(), texture.path + "\",", texture.bitmap.size.x, texture.bitmap.size.y,(texture.srgb ? "srgb" : "not srgb"));
+    return fmt::format("e{}, \"{:<30} {}x{}, {:>3} {} mips", e.entity(), texture.path + "\",", texture.bitmap.size.x, texture.bitmap.size.y,(texture.srgb ? "srgb" : "not srgb"), texture.numMipLevels);
 }
 static void printModelData(Entity e)
 {
@@ -301,6 +311,16 @@ public:
             if(image.bitmap.numComponents == 3)
                 LOG_WARN("Making R32G32B32 texture \"{}\". Maybe change it to 32 bits or something...", image.path);
 
+            VkSamplerAddressMode addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            switch(image.addressMode)
+            {
+                case Texture::AddressMode::Repeat:            addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;               break;
+                case Texture::AddressMode::MirroredRepeat:    addressMode = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;      break;
+                case Texture::AddressMode::ClampToEdge:       addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;        break;
+                case Texture::AddressMode::ClampToBorder:     addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;      break;
+                case Texture::AddressMode::MirrorClampToEdge: addressMode = VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE; break;
+                default: LOG_WARN("Unknown address mode in e{}!", eImage.entity()); break;
+            }
             vk::ImageCreateInfo ci{
                 .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
                 .allocInfo = mAllocInfo,
@@ -310,6 +330,15 @@ public:
                     .width = image.bitmap.size.x,
                     .height = image.bitmap.size.y,
                     .mipLevels = image.numMipLevels
+                },
+                .sampler = {
+                    .magFilter = image.linearSampling ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
+                    .minFilter = image.linearSampling ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
+                    .mipmapMode = image.linearSampling ? VK_SAMPLER_MIPMAP_MODE_NEAREST : VK_SAMPLER_MIPMAP_MODE_LINEAR,
+                    .addressModeU = addressMode,
+                    .addressModeV = addressMode,
+                    .addressModeW = addressMode,
+                    .anisotropyEnable = image.linearSampling,
                 },
                 .view = {
                     .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -322,13 +351,18 @@ public:
             eImage.emplace<ResourceAllocator::ImageIndex>(mProcessedImages.size());
             mProcessedImages.emplace_back(eImage);
 
-            // LOG_TRACE("Allocated image e{} {} of type {} format {} usage {}", 
-            //     eImage.entity(), 
-            //     eImage.has<Texture>() ? eImage.get<Texture>().path : "<no path>", 
-            //     string_VkImageViewType(eImage.get<vk::Image>().viewType), 
-            //     string_VkFormat(eImage.get<vk::Image>().format),
-            //     string_VkImageUsageFlags(eImage.get<vk::Image>().usage)
-            // );
+            LOG_TRACE("Allocated image e{} \"{}\" {}x{}, {} {} mips of type {} format {} usage {} filter {} address mode {}", 
+                eImage.entity(), 
+                image.path, 
+                image.bitmap.size.x, image.bitmap.size.y,
+                image.srgb ? "srgb" : "linear",
+                image.numMipLevels,
+                string_VkImageViewType(eImage.get<vk::Image>().viewType), 
+                string_VkFormat(eImage.get<vk::Image>().format),
+                string_VkImageUsageFlags(eImage.get<vk::Image>().usage),
+                string_VkFilter(ci.sampler.minFilter),
+                string_VkSamplerAddressMode(ci.sampler.addressModeU)
+            );
         }
         // TODO: cubemaps
 
@@ -512,21 +546,25 @@ int main(int argc, char **argv)
     ////////////////////////////////////////////////////////////////
 
     auto suzanne = loadModel("assets/suzanne.glb");
+    auto cube = loadModel("assets/cube.glb");
+    auto cubes = loadModel("assets/deccer_cubes/SM_Deccer_Cubes_Textured_Complex.gltf");
 
     sReg.create(ModelInstance{suzanne}, lookat({-2, -1, -3}, {0, 0, 0}));
     sReg.create(ModelInstance{suzanne}, lookat({ 0, -1, -3}, {0, 0, 0}));
     sReg.create(ModelInstance{suzanne}, lookat({ 2, -1, -3}, {0, 0, 0}));
     sReg.create(ModelInstance{suzanne}, lookat({ 4, -1, -3}, {0, 0, 0}));
-    sReg.create(ModelInstance{suzanne}, lookat({ 6, -1, -3}, {0, 0, 0}));
-    sReg.create(ModelInstance{suzanne}, lookat({ 8, -1, -3}, {0, 0, 0}));
-    sReg.create(ModelInstance{suzanne}, lookat({ 10, -1, -3}, {0, 0, 0}));
-    sReg.create(ModelInstance{suzanne}, lookat({ 12, -1, -3}, {0, 0, 0}));
+    sReg.create(ModelInstance{cube   }, lookat({ 6, -1, -3}, {0, 0, 0}));
+    sReg.create(ModelInstance{cube   }, lookat({ 8, -1, -3}, {0, 0, 0}));
+    sReg.create(ModelInstance{cube   }, lookat({ 10, -1, -3}, {0, 0, 0}));
+
+    sReg.create(ModelInstance{cube}, Transform{.position = {0, -4, 0}}); 
+    sReg.create(ModelInstance{cubes}, Transform{.position = {-10, 0, 10}}); 
 
     
     ////////////////////////////////////////////////////////////////
 
-    for(auto e : sReg.view<Model>())
-        printModelData(e);
+    // for(auto e : sReg.view<Model>())
+    //     printModelData(e);
 
     ResourceAllocator alloc(ALLOCATION_INFO, commandPool, graphicsQueue);
 
@@ -623,10 +661,10 @@ int main(int argc, char **argv)
                 { 3, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX },
             },
             .attributes = {
-                { 0, 0, VK_FORMAT_R32G32B32_SFLOAT,    0 },
-                { 1, 2, VK_FORMAT_R32G32_SFLOAT,       0 },
-                { 2, 1, VK_FORMAT_R32G32B32_SFLOAT,    0 },
-                { 3, 3, VK_FORMAT_R32G32B32A32_SFLOAT, 0 },
+                { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0 },
+                { 1, 1, VK_FORMAT_R32G32_SFLOAT,    0 },
+                { 2, 2, VK_FORMAT_R32G32B32_SFLOAT, 0 },
+                { 3, 3, VK_FORMAT_R32G32B32_SFLOAT, 0 },
             },
         },
         .attachments = {
@@ -886,7 +924,7 @@ int main(int argc, char **argv)
             if(eInstance.has<Transform>())
                 uniformBufferData.uMatrixData.modelMat = eInstance.get<Transform>().getMat();
 
-            uniformBufferData.uMatrixData.normMat = glm::inverse(glm::transpose(uniformBufferData.uMatrixData.modelMat));
+            uniformBufferData.uMatrixData.normMat = glm::transpose(glm::inverse(glm::mat3(uniformBufferData.uMatrixData.modelMat)));
 
             auto &model = instance.eModel.get<VulkanModel>();
             for(auto &mesh : model.meshes)
