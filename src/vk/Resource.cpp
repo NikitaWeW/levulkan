@@ -221,8 +221,16 @@ Image vk::makeImage(ImageCreateInfo const &ci)
 
     if(image.usage & VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER || image.usage & VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE)
     {
+        VkSamplerCustomBorderColorCreateInfoEXT customBorder{
+            .sType = VK_STRUCTURE_TYPE_SAMPLER_CUSTOM_BORDER_COLOR_CREATE_INFO_EXT,
+            .customBorderColor = {
+                .float32 = {ci.sampler.customBorderColor.r, ci.sampler.customBorderColor.g, ci.sampler.customBorderColor.b, ci.sampler.customBorderColor.a}
+            },
+            .format = image.format
+        };
         VkSamplerCreateInfo samplerCI{
             .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .pNext = ci.sampler.borderColor == VK_BORDER_COLOR_FLOAT_CUSTOM_EXT ? &customBorder : nullptr,
             .flags = ci.sampler.flags,
             .magFilter = ci.sampler.magFilter,
             .minFilter = ci.sampler.minFilter,
