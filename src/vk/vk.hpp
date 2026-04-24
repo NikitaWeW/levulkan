@@ -106,7 +106,8 @@ struct ShaderCreateInfo
     std::vector<std::string> includeDirs; ///< Local ("") include directories. First most relevant. Source directory added implicitly.
     std::vector<std::string> systemIncludeDirs; ///< System ("") include directories. First most relevant.
     std::vector<std::pair<std::string, std::string>> definitions; ///< Preprocessor definitions.
-    bool debugInfo = true;
+    bool debugInfo = true; ///< Compile with debug info.
+    bool force = false; ///< Forcefully outdate the cached shader binaries and try to recompile.
 };
 
 /// @brief The compiled spirv program.
@@ -117,7 +118,8 @@ struct Shader
         VkShaderStageFlagBits stage;
         std::vector<uint32_t> spirv;
         VkShaderModule module = VK_NULL_HANDLE;
-        std::string path;
+        std::string path = ""; ///< Path to the .spv binary
+        std::string name = ""; ///< The name of the stage. Helps to identify the stage.
     };
 
     bool valid = false;
@@ -129,7 +131,7 @@ struct Shader
 /// @brief Make a shader program from the file.
 /// Parser splits shaders stages using #shader directive
 /// #stage all will append the block to all the defined stages.
-/// At the beginning of the source the the stage is implicitly "#stage all"
+/// At the beginning of the source the the stage is implicitly "#stage all "optional stage name/label""
 /// For a full list of valid stage names look into Shader.cpp
 /// @returns Shader with valid flag set to true if successful.
 Shader makeShader(ShaderCreateInfo const &ci);
@@ -258,9 +260,12 @@ struct ImageCreateInfo
         bool anisotropyEnable = true;
         float maxAnisotropy = 8;
         bool compareEnable = false;
-        VkCompareOp compareOp;
+        VkCompareOp compareOp = VK_COMPARE_OP_NEVER;
         float minLod = 0;
         VkBorderColor borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+        struct {
+            float r = 0, g = 0, b = 0, a = 0;
+        } customBorderColor;
         bool unnormalizedCoordinates = false;
     } sampler;
     struct View {
@@ -370,6 +375,7 @@ struct PipelineLayoutCreateInfo
 struct GraphicsPipelineCreateInfo
 {
     PipelineLayoutCreateInfo layout; ///< Pipeline layout create info
+    VkPipelineCreateFlags flags = 0;
     std::vector<VkDynamicState> dynamicState; ///< Dynamic state to enable.
     VmaAllocator allocator;
 
@@ -433,9 +439,25 @@ struct GraphicsPipelineCreateInfo
         } constant;
     } blending;
 };
+struct ComputePipelineCreateInfo
+{
+    PipelineLayoutCreateInfo layout; ///< Pipeline layout create info
+    VkPipelineCreateFlags flags = 0;
+    VmaAllocator allocator = VK_NULL_HANDLE;
+};
+struct RaytracingPipelineCreateInfo
+{
+    PipelineLayoutCreateInfo layout; ///< Pipeline layout create info
+    VkPipelineCreateFlags flags = 0;
+    VmaAllocator allocator = VK_NULL_HANDLE;
+};
 
 /// @brief Make a pipeline based on the shader reflection and other stuff.
 Pipeline makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const &ci);
+/// @copydoc makePipeline
+Pipeline makePipeline(Shader const &shader, ComputePipelineCreateInfo const &ci);
+/// @copydoc makePipeline
+Pipeline makePipeline(Shader const &shader, RaytracingPipelineCreateInfo const &ci);
 
 /// @brief Insert an image memory barrier into the command buffer
 void insertImageMemoryBarrier(
