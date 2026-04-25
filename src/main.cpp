@@ -545,20 +545,19 @@ int main(int argc, char **argv)
 
     ////////////////////////////////////////////////////////////////
 
-    auto suzanne = loadModel("assets/suzanne.glb");
-    auto cube = loadModel("assets/cube.glb");
-    auto cubes = loadModel("assets/deccer_cubes/SM_Deccer_Cubes_Textured_Complex.gltf");
+    {
+        auto suzanne = loadModel("assets/suzanne.glb");
+        auto cube = loadModel("assets/cube.glb");
+        auto cubes = loadModel("assets/deccer_cubes/SM_Deccer_Cubes_Textured_Complex.gltf");
+        std::vector<Entity> props{suzanne, cube, suzanne};
+        uint numProps = 20;
 
-    sReg.create(ModelInstance{suzanne}, lookat({-2, -1, -3}, {0, 0, 0}));
-    sReg.create(ModelInstance{suzanne}, lookat({ 0, -1, -3}, {0, 0, 0}));
-    sReg.create(ModelInstance{suzanne}, lookat({ 2, -1, -3}, {0, 0, 0}));
-    sReg.create(ModelInstance{suzanne}, lookat({ 4, -1, -3}, {0, 0, 0}));
-    sReg.create(ModelInstance{cube   }, lookat({ 6, -1, -3}, {0, 0, 0}));
-    sReg.create(ModelInstance{cube   }, lookat({ 8, -1, -3}, {0, 0, 0}));
-    sReg.create(ModelInstance{cube   }, lookat({ 10, -1, -3}, {0, 0, 0}));
-
-    sReg.create(ModelInstance{cube}, Transform{.position = {0, -4, 0}}); 
-    sReg.create(ModelInstance{cubes}, Transform{.position = {-10, 0, 10}}); 
+        for(uint i = 0; i < numProps; ++i)
+            sReg.create(ModelInstance{props[i*7%(props.size())]}, lookat({(i-numProps*0.5)*2, -1, -3}, {0, 0, 0}));
+    
+        sReg.create(ModelInstance{cube}, Transform{.position = {0, -4, 0}}); 
+        sReg.create(ModelInstance{cubes}, Transform{.position = {-10, 0, 10}}); 
+    }
 
     
     ////////////////////////////////////////////////////////////////

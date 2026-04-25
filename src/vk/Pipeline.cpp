@@ -541,25 +541,17 @@ Pipeline vk::makePipeline(Shader const &shader, ComputePipelineCreateInfo const 
 Pipeline vk::makePipeline(Shader const &shader, RaytracingPipelineCreateInfo const &ci)
 {
     auto const &dev = shader.createInfo.device;
-
+    
+    Reflection reflection = reflect(shader);
     Pipeline pipeline{
         .type = Pipeline::Type::GRAPHICS,
-        .device = shader.createInfo.device
+        .layout = makePipelineLayout(dev, ci.layout, reflection, ci.allocator, pipeline.descResources, ci.layout.framesInFlight),
+        .device = shader.createInfo.device,
     };
 
-    Reflection reflection = reflect(shader);
-    pipeline.layout = makePipelineLayout(dev, ci.layout, reflection, ci.allocator, pipeline.descResources, ci.layout.framesInFlight);
+    assert(false && "not implemented!");
 
-    VkRayTracingPipelineCreateInfoKHR pipelineCI{
-        .sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
-        .flags = ci.flags,
-        .stageCount = (uint32_t) reflection.stages.size(),
-        .pStages = reflection.stages.data(),
-        .layout = pipeline.layout.layout,
-    };
-    // VK_CHK(vkCreateRayTracingPipelinesKHR(dev, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &pipeline.pipeline));
-
-    // pipeline.valid = true;
+    pipeline.valid = false;
     return pipeline;
 }
 

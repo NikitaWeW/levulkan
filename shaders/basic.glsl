@@ -62,17 +62,16 @@ vec4 sampleTexture(uint index)
 void main()
 {
     // Phong lighting
-    vec3 N = normalize(fs_in.tbn * sampleTexture(uMaterial.textures.normal).rgb * 2.0 - 1.0);
-    // N = normalize(fs_in.tbn[2]);
+    vec3 N = normalize(fs_in.tbn * (sampleTexture(uMaterial.textures.normal).rgb * 2.0 - 1.0));
+    N = normalize(fs_in.tbn[2]);
     vec3 L = -normalize(uSunDir);
     vec3 V = normalize(inverse(uMatrixData.viewMat)[3].xyz);
     vec3 R = reflect(-L, N);
     vec3 diffuse = vec3(max(dot(N, L), 0.0025));
     vec3 specular = vec3(pow(max(dot(R, V), 0.0), 16.0) * 0.75) * 0;
     vec3 color = sampleTexture(uMaterial.textures.albedo).rgb;
-    // color = vec3(1);
     oColor = vec4(diffuse * color.rgb + specular, 1.0);
-    // FIXME: weird aNormal's
-    oColor = vec4(vec3(N)/* *.5+.5 */, 1);
+    // color = vec3(1);
+    // oColor = vec4(vec3(N)/* *.5+.5 */, 1);
     // oColor = vec4(sampleTexture(uMaterial.textures.normal).rgb - vec3(0.5,0.5,1), 1);
 }
