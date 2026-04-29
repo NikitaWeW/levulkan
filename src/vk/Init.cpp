@@ -1,15 +1,7 @@
-/*
-$$\    $$\ $$\   $$\   My vulkan abstraction.
-$$ |   $$ |$$ | $$  |  Copyright (c) 2026 Nikita Martynau 
-$$ |   $$ |$$ |$$  /   https://opensource.org/license/mit 
-\$$\  $$  |$$$$$  /    insert git repo url here
- \$$\$$  / $$  $$<     
-  \$$$  /  $$ |\$$\    
-   \$  /   $$ | \$$\   Convenience function to init vulkan painlessly
-    \_/    \__|  \__|  using single easy-to-fill struct.
-*/
-#include "vk.hpp"
+#include "Init.hpp"
+#include "Utility.hpp"
 #include "Logging.hpp"
+#include <set>
 using namespace vk;
 
 std::string _sChkLastFileLine;

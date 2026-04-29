@@ -1,14 +1,5 @@
-/*
-$$\    $$\ $$\   $$\   My vulkan abstraction.
-$$ |   $$ |$$ | $$  |  Copyright (c) 2026 Nikita Martynau 
-$$ |   $$ |$$ |$$  /   https://opensource.org/license/mit 
-\$$\  $$  |$$$$$  /    insert git repo url here
- \$$\$$  / $$  $$<     
-  \$$$  /  $$ |\$$\    
-   \$  /   $$ | \$$\   
-    \_/    \__|  \__|  Swapchain creation utility.
-*/
-#include "vk.hpp"
+#include "Init.hpp"
+#include "Utility.hpp"
 #include "Logging.hpp"
 using namespace vk;
 
@@ -28,9 +19,9 @@ static VkExtent2D chooseExtent(VkSurfaceCapabilitiesKHR capabilities, VkExtent2D
 static VkSurfaceFormatKHR chooseSwapSurfaceFormat(SwapchainCreateInfo const ci)
 {
     uint32_t formatCount;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(ci.allocInfo.physicalDevice, ci.allocInfo.surface, &formatCount, nullptr);
+    vkGetPhysicalDeviceSurfaceFormatsKHR(ci.alloc.physicalDevice, ci.alloc.surface, &formatCount, nullptr);
     std::vector<VkSurfaceFormatKHR> formats(formatCount);
-    vkGetPhysicalDeviceSurfaceFormatsKHR(ci.allocInfo.physicalDevice, ci.allocInfo.surface, &formatCount, formats.data());
+    vkGetPhysicalDeviceSurfaceFormatsKHR(ci.alloc.physicalDevice, ci.alloc.surface, &formatCount, formats.data());
 
     for(auto const &format : formats)
     {
@@ -46,9 +37,9 @@ static VkSurfaceFormatKHR chooseSwapSurfaceFormat(SwapchainCreateInfo const ci)
 static VkPresentModeKHR chooseSwapPresentMode(SwapchainCreateInfo const ci)
 {
     uint32_t presentModeCount;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(ci.allocInfo.physicalDevice, ci.allocInfo.surface, &presentModeCount, nullptr);
+    vkGetPhysicalDeviceSurfacePresentModesKHR(ci.alloc.physicalDevice, ci.alloc.surface, &presentModeCount, nullptr);
     std::vector<VkPresentModeKHR> presentModes(presentModeCount);
-    vkGetPhysicalDeviceSurfacePresentModesKHR(ci.allocInfo.physicalDevice, ci.allocInfo.surface, &presentModeCount, presentModes.data());
+    vkGetPhysicalDeviceSurfacePresentModesKHR(ci.alloc.physicalDevice, ci.alloc.surface, &presentModeCount, presentModes.data());
 
     for(const auto& availablePresentMode : presentModes) {
         if(availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
@@ -60,12 +51,12 @@ static VkPresentModeKHR chooseSwapPresentMode(SwapchainCreateInfo const ci)
 static void getImages(Swapchain &swapchain)
 {
     for(auto &view : swapchain.imageViews)
-        vkDestroyImageView(swapchain.allocInfo.device, view, nullptr);
+        vkDestroyImageView(swapchain.alloc.device, view, nullptr);
 
     uint32_t imageCount = 0;
-    vkGetSwapchainImagesKHR(swapchain.allocInfo.device, swapchain.swapchain, &imageCount, nullptr);
+    vkGetSwapchainImagesKHR(swapchain.alloc.device, swapchain.swapchain, &imageCount, nullptr);
     swapchain.images.resize(imageCount);
-    vkGetSwapchainImagesKHR(swapchain.allocInfo.device, swapchain.swapchain, &imageCount, swapchain.images.data());
+    vkGetSwapchainImagesKHR(swapchain.alloc.device, swapchain.swapchain, &imageCount, swapchain.images.data());
     swapchain.imageViews.resize(imageCount);
     
     for(size_t i = 0; i < imageCount; i++) {
@@ -89,27 +80,27 @@ static void getImages(Swapchain &swapchain)
             }
         };
 
-        VK_CHK(vkCreateImageView(swapchain.allocInfo.device, &createInfo, nullptr, &swapchain.imageViews[i]));
+        VK_CHK(vkCreateImageView(swapchain.alloc.device, &createInfo, nullptr, &swapchain.imageViews[i]));
     }
 }
 
 Swapchain vk::makeSwapchain(SwapchainCreateInfo const &ci)
 {
-    if(!ci.allocInfo.surface)
+    if(!ci.alloc.surface)
     {
         LOG_ERROR("No surface provided for swapchain creation!");
         return {};
     }
     Swapchain swapchain;
-    swapchain.allocInfo = ci.allocInfo;
+    swapchain.alloc = ci.alloc;
     swapchain.sharingMode = ci.sharingMode;
 
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(ci.allocInfo.physicalDevice, ci.allocInfo.surface, &swapchain.capabilities);
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(ci.alloc.physicalDevice, ci.alloc.surface, &swapchain.capabilities);
     
     auto format = chooseSwapSurfaceFormat(ci);
     swapchain.createInfo = {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-        .surface = ci.allocInfo.surface,
+        .surface = ci.alloc.surface,
         .minImageCount = swapchain.capabilities.minImageCount + 1,
         .imageFormat = format.format,
         .imageColorSpace = format.colorSpace,
@@ -125,7 +116,7 @@ Swapchain vk::makeSwapchain(SwapchainCreateInfo const &ci)
     };
     LOG_TRACE("Making swapchain. Present mode: {}, surface format: {}, colorspace: {}", string_VkPresentModeKHR(swapchain.createInfo.presentMode), string_VkFormat(swapchain.createInfo.imageFormat), string_VkColorSpaceKHR(swapchain.createInfo.imageColorSpace));
 
-    VK_CHK(vkCreateSwapchainKHR(swapchain.allocInfo.device, &swapchain.createInfo, nullptr, &swapchain.swapchain));
+    VK_CHK(vkCreateSwapchainKHR(swapchain.alloc.device, &swapchain.createInfo, nullptr, &swapchain.swapchain));
 
     getImages(swapchain);
 
@@ -136,16 +127,16 @@ void vk::resizeSwapchain(Swapchain &swapchain, VkExtent2D size)
     swapchain.createInfo.oldSwapchain = swapchain.swapchain;
     swapchain.createInfo.imageExtent = size;
 
-    VK_CHK(vkCreateSwapchainKHR(swapchain.allocInfo.device, &swapchain.createInfo, nullptr, &swapchain.swapchain));
+    VK_CHK(vkCreateSwapchainKHR(swapchain.alloc.device, &swapchain.createInfo, nullptr, &swapchain.swapchain));
     getImages(swapchain);
-    vkDestroySwapchainKHR(swapchain.allocInfo.device, swapchain.createInfo.oldSwapchain, nullptr);
+    vkDestroySwapchainKHR(swapchain.alloc.device, swapchain.createInfo.oldSwapchain, nullptr);
 }
 
 
 void vk::destroy(Swapchain &swapchain)
 {
     for(auto &view : swapchain.imageViews)
-        vkDestroyImageView(swapchain.allocInfo.device, view, nullptr);
+        vkDestroyImageView(swapchain.alloc.device, view, nullptr);
 
-    vkDestroySwapchainKHR(swapchain.allocInfo.device, swapchain.swapchain, nullptr);
+    vkDestroySwapchainKHR(swapchain.alloc.device, swapchain.swapchain, nullptr);
 }

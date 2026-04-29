@@ -63,6 +63,7 @@ set(LEVULKAN_SOURCE
     "src/vk/RingBuffer.cpp"
     "src/vk/Shader.cpp"
     "src/vk/Swapchain.cpp"
+    "src/vk/RenderGraph.cpp"
 )
 
 add_executable(levulkan ${LEVULKAN_SOURCE})

@@ -1,17 +1,12 @@
-/*
-$$\    $$\ $$\   $$\   My vulkan abstraction.
-$$ |   $$ |$$ | $$  |  Copyright (c) 2026 Nikita Martynau 
-$$ |   $$ |$$ |$$  /   https://opensource.org/license/mit 
-\$$\  $$  |$$$$$  /    insert git repo url here
- \$$\$$  / $$  $$<     
-  \$$$  /  $$ |\$$\    Custom GLSL preprocessor and glslang utility.
-   \$  /   $$ | \$$\   Allows to have all the stages in one file via the new #stage directive
-    \_/    \__|  \__|  and manage spirv shader binaries.
-*/
-#include "vk.hpp"
+#include "Shader.hpp"
+#include "Utility.hpp"
 #include "Logging.hpp"
 #include "glslang/Public/ShaderLang.h"
 #include "glslang/SPIRV/GlslangToSpv.h"
+
+#include <filesystem>
+#include <set>
+#include <ranges>
 
 using namespace vk;
 namespace fs = std::filesystem;

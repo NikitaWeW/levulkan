@@ -1,14 +1,5 @@
-/*
-$$\    $$\ $$\   $$\   My vulkan abstraction.
-$$ |   $$ |$$ | $$  |  Copyright(c) 2026 Nikita Martynau 
-$$ |   $$ |$$ |$$  /   https://opensource.org/license/mit 
-\$$\  $$  |$$$$$  /    insert git repo url here
- \$$\$$  / $$  $$<     
-  \$$$  /  $$ |\$$\    Pipeline creator.
-   \$  /   $$ | \$$\   Creates the pipeline from the shader     
-    \_/    \__|  \__|  reflection and other options.
-*/
-#include "vk.hpp"
+#include "Pipeline.hpp"
+#include "Utility.hpp"
 #include "spirv_reflect.h"
 #include "Logging.hpp"
 

@@ -527,10 +527,10 @@ int main(int argc, char **argv)
     }
 
     vk::Swapchain swapchain = vk::makeSwapchain({
-        .allocInfo = {
-            .surface = initRes.surface,
-            .physicalDevice = initRes.physicalDevice,
+        .alloc = {
             .device = device,
+            .physicalDevice = initRes.physicalDevice,
+            .surface = initRes.surface,
         },
         .size = {window.size.x, window.size.y}
     });

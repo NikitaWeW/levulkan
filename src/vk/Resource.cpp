@@ -1,49 +1,9 @@
-/*
-$$\    $$\ $$\   $$\   My vulkan abstraction.
-$$ |   $$ |$$ | $$  |  Copyright (c) 2026 Nikita Martynau 
-$$ |   $$ |$$ |$$  /   https://opensource.org/license/mit 
-\$$\  $$  |$$$$$  /    insert git repo url here
- \$$\$$  / $$  $$<     
-  \$$$  /  $$ |\$$\    
-   \$  /   $$ | \$$\   Gpu resource manager
-    \_/    \__|  \__|  Utilities for image and buffer management.
-*/
-#include "vk.hpp"
+#include "Resource.hpp"
+#include "Utility.hpp"
 #include "Logging.hpp"
 #include "libraries/vk_format_utils.h"
 using namespace vk;
 
-void vk::insertImageMemoryBarrier(
-    VkCommandBuffer         commandBuffer,
-    VkImage                 image,
-    VkAccessFlags           srcAccessMask,
-    VkAccessFlags           dstAccessMask,
-    VkImageLayout           oldImageLayout,
-    VkImageLayout           newImageLayout,
-    VkPipelineStageFlags    srcStageMask,
-    VkPipelineStageFlags    dstStageMask,
-    VkImageSubresourceRange subresourceRange)
-{
-    VkImageMemoryBarrier2 barrier{
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-        .srcStageMask = srcStageMask,
-        .srcAccessMask = srcAccessMask,
-        .dstStageMask = dstStageMask,
-        .dstAccessMask = dstAccessMask,
-        .oldLayout = oldImageLayout,
-        .newLayout = newImageLayout,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .image = image,
-        .subresourceRange = subresourceRange
-    };
-    VkDependencyInfo dependency{
-        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .imageMemoryBarrierCount = 1,
-        .pImageMemoryBarriers = &barrier,
-    };
-    vkCmdPipelineBarrier2(commandBuffer, &dependency);
-}
 static VmaAllocationCreateInfo makeAllocInfo(AllocationCreateInfo const &ci)
 {
     return {
