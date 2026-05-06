@@ -742,6 +742,22 @@ ModelLoader::ModelLoader(ecs::registry &reg)
     mImpl = new ModelLoaderImpl{reg};
     mImpl->mTextureLoader = TextureLoader{*mImpl->mRegistry}; 
 }
+ModelLoader::ModelLoader(ModelLoader const &o)
+{
+    *this = o;
+}
+ModelLoader &ModelLoader::operator=(ModelLoader const &o)
+{
+    if(o.mImpl)
+        mImpl = new ModelLoaderImpl(*o.mImpl);
+
+    return *this;
+}
+ModelLoader::~ModelLoader()
+{
+    if(mImpl)
+        delete mImpl;
+}
 ecs::entity ModelLoader::loadFromFile(std::string_view path, ModelLoaderOptions options)
 {
     assert(mImpl && "Invalid loader! (make sure to not use default constructor when making an actual loader)");
@@ -774,7 +790,10 @@ ecs::entity ModelLoader::loadFromFile(std::string_view path, ModelLoaderOptions 
     mImpl->mOptions = options;
     mImpl->mModel->skeleton.globalInverseTransform = glm::inverse(toMat4(mImpl->mScene->mRootNode->mTransformation));
 
-    return mImpl->load();
+    auto eModel = mImpl->load();
+
+    mImpl->mScene = nullptr;
+    return eModel;
 }
 ecs::entity ModelLoader::loadFromMemory(void const *data, size_t size, ModelLoaderOptions options)
 {
@@ -809,5 +828,8 @@ ecs::entity ModelLoader::loadFromMemory(void const *data, size_t size, ModelLoad
     mImpl->mOptions = options;
     mImpl->mModel->skeleton.globalInverseTransform = glm::inverse(toMat4(mImpl->mScene->mRootNode->mTransformation));
 
-    return mImpl->load();
+    auto eModel = mImpl->load();
+
+    mImpl->mScene = nullptr;
+    return eModel;
 }
