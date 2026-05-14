@@ -1,5 +1,5 @@
 /*
-$$\    $$\ $$\   $$\   My vulkan abstraction.
+$$\    $$\ $$\   $$\   Vulkan helper functionality.
 $$ |   $$ |$$ | $$  |  Copyright (c) 2026 Nikita Martynau 
 $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit 
 \$$\  $$  |$$$$$  /    insert git repo url here
@@ -94,9 +94,7 @@ struct SwapchainCreateInfo
         VkDevice device = VK_NULL_HANDLE;
         VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
         VkSurfaceKHR surface = VK_NULL_HANDLE;
-    };
-    
-    AllocateInfo alloc;
+    } alloc;
     VkSharingMode sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VkExtent2D size = {0, 0};
 };
@@ -118,4 +116,4 @@ void resizeSwapchain(Swapchain &swapchain, VkExtent2D size);
 void destroy(Swapchain &pipeline);
 
 
-} // namespace vk
+} // namespace vkm

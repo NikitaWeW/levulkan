@@ -1,5 +1,5 @@
 /*
-$$\    $$\ $$\   $$\   My vulkan abstraction.
+$$\    $$\ $$\   $$\   Vulkan helper functionality.
 $$ |   $$ |$$ | $$  |  Copyright(c) 2026 Nikita Martynau 
 $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit 
 \$$\  $$  |$$$$$  /    insert git repo url here
@@ -11,10 +11,9 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 #pragma once
 #include "vulkan.h"
 
-// TODO: maybe change it to bool vk::chk(VkResult) function?
-#ifndef DONT_CHECK_VK
+#ifndef DONT_CHECK_VK_RESULT
 extern std::string _sChkLastFileLine;
-#define VK_CHK(x) { _sChkLastFileLine = std::string(__FILE__) + ':' + std::to_string(__LINE__); VkResult _result = x; if(_result != VK_SUCCESS) { LOG_ERROR("{}:{}: Failed to {}: {}.", __FILE__, __LINE__, #x, string_VkResult(_result)); /* LOG_WARN("Aborting..."); abort(); */ }}
+#define VK_CHK(x) { _sChkLastFileLine = std::string(__FILE__) + ':' + std::to_string(__LINE__); VkResult _result = x; if(_result != VK_SUCCESS) { LOG_ERROR("{}:{}: Failed to {}: {}.", __FILE__, __LINE__, #x, string_VkResult(_result)); /* LOG_WARN("Aborting..."); abort(); */ } _sChkLastFileLine.append(" <out of date>"); }
 #else
 #define VK_CHK(x) x
 #endif

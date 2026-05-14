@@ -101,7 +101,6 @@ struct Mesh
         std::vector<unsigned> indices;
 
         // optional
-        // hope 4 bones per vertex would be enough
         std::vector<glm::vec4> boneIDs;
         std::vector<glm::vec4> weights;
     } geometry;

@@ -1,5 +1,5 @@
 /*
-$$\    $$\ $$\   $$\   My vulkan abstraction.
+$$\    $$\ $$\   $$\   Vulkan helper functionality.
 $$ |   $$ |$$ | $$  |  Copyright(c) 2026 Nikita Martynau 
 $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit 
 \$$\  $$  |$$$$$  /    insert git repo url here

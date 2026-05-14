@@ -102,16 +102,16 @@ struct Program
 static std::string printTexture(Entity e)
 {
     if(!e.valid() || !e.has<Texture>())
-        return fmt::format("e{} -- INVALID", e.entity());
+        return fmt::format("e{} -- INVALID", e.id());
     auto const &texture = e.get<Texture>();
-    return fmt::format("e{}, \"{:<30} {}x{}, {:>3} {} mips", e.entity(), texture.path + "\",", texture.bitmap.size.x, texture.bitmap.size.y,(texture.srgb ? "srgb" : "not srgb"), texture.numMipLevels);
+    return fmt::format("e{}, \"{:<30} {}x{}, {:>3} {} mips", e.id(), texture.path + "\",", texture.bitmap.size.x, texture.bitmap.size.y,(texture.srgb ? "srgb" : "not srgb"), texture.numMipLevels);
 }
 static void printModelData(Entity e)
 {
     assert(e.valid() && e.has<Model>());
     Model const &model = e.get<Model>();
     LOG_INFO("");
-    LOG_INFO("Model: e{}: \"{}\"", e.entity(), model.path);
+    LOG_INFO("Model: e{}: \"{}\"", e.id(), model.path);
     LOG_INFO("Skeleton: ");
     LOG_INFO("  Bone map size / number of bones: {}", model.skeleton.boneMap.size());
     if(model.skeleton.boneMap.size() <= 30)
@@ -319,7 +319,7 @@ public:
                 case Texture::AddressMode::ClampToEdge:       addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;        break;
                 case Texture::AddressMode::ClampToBorder:     addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;      break;
                 case Texture::AddressMode::MirrorClampToEdge: addressMode = VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE; break;
-                default: LOG_WARN("Unknown address mode in e{}!", eImage.entity()); break;
+                default: LOG_WARN("Unknown address mode in e{}!", eImage.id()); break;
             }
             vk::ImageCreateInfo ci{
                 .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -352,7 +352,7 @@ public:
             mProcessedImages.emplace_back(eImage);
 
             LOG_TRACE("Allocated image e{} \"{}\" {}x{}, {} {} mips of type {} format {} usage {} filter {} address mode {}", 
-                eImage.entity(), 
+                eImage.id(), 
                 image.path, 
                 image.bitmap.size.x, image.bitmap.size.y,
                 image.srgb ? "srgb" : "linear",
@@ -678,6 +678,10 @@ int main(int argc, char **argv)
     };
     vk::Pipeline pipeline = vk::makePipeline(shader, pipelineCI);
 
+    vk::RenderGraphCreateInfo renderGraphCI{
+    };
+
+    vk::RenderGraph renderGraph = vk::buildRenderGraph(renderGraphCI);
 
     ////////////////////////////////////////////////////////////////
 
@@ -910,12 +914,12 @@ int main(int argc, char **argv)
             auto const &instance = eInstance.get<ModelInstance>();
             if(!instance.eModel.valid())
             {
-                LOG_ERROR("Model instance e{} has invalid eModel {}", eInstance.entity(), instance.eModel.entity());
+                LOG_ERROR("Model instance e{} has invalid eModel {}", eInstance.id(), instance.eModel.id());
                 continue;
             }
             if(!instance.eModel.has<VulkanModel>())
             {
-                LOG_ERROR("Model e{} doesent have VulkanModel component!", instance.eModel.entity());
+                LOG_ERROR("Model e{} doesent have VulkanModel component!", instance.eModel.id());
                 continue;
             }
 

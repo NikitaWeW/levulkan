@@ -10,7 +10,7 @@ class Entity;
 template<typename... T>
 using exclude = ecs::exclude<T...>;
 
-/// @brief A thin layer above the ecs::registry with extended syntax and cool stuff.
+/// @brief A thin layer above the ecs::registry with more oop syntax.
 class Registry
 {
 private:
@@ -22,10 +22,12 @@ public:
 
     /// @brief Get an underlying ecs::registry
     inline ecs::registry &getReg() { return mReg; }
-    /// @brief Get an underlying ecs::registry
+    /// @copydoc getReg
     inline ecs::registry const &getReg() const { return mReg; }
 
+    /// @copydoc getReg
     inline ecs::registry const *operator->() const { return &getReg(); }
+    /// @copydoc getReg
     inline ecs::registry *operator->() { return &getReg(); }
 
     /// @brief Get the shared mutex.
@@ -59,17 +61,17 @@ public:
     void merge(Registry const &other);
 };
 
-/// @brief A lightweight helper class to group the entity and the registry it belongs to.
-/// Invalidates if the registry is moved or if the entity invalidates obviously.
+/// @brief A lightweight helper class to group the entity and the registry it belongs to with oop syntax.
+/// WARNING: Invalidates if the registry is moved or if the entity invalidates obviously.
 class Entity
 {
 private:
     Registry *mReg = nullptr;
     ecs::entity mEntity = 0;
 public:
-    inline constexpr Entity() = default;
-    inline Entity(Registry *reg, ecs::entity e) : mReg(reg), mEntity(e) {}
-    inline ecs::entity entity() const { return mEntity; }
+    inline explicit constexpr Entity() = default;
+    inline explicit constexpr Entity(Registry *reg, ecs::entity e) : mReg(reg), mEntity(e) {}
+    inline ecs::entity id() const { return mEntity; }
     inline Registry const &reg() const 
     { 
         assert(mReg && "Invalid registry!");
@@ -82,29 +84,29 @@ public:
     }
 
     template <typename component_t, class... Args>
-    inline void emplace(Args&&... args) { return reg()->emplace<component_t, Args...>(entity(), std::forward<Args>(args)...); }
+    inline void emplace(Args&&... args) { return reg()->emplace<component_t, Args...>(id(), std::forward<Args>(args)...); }
 
     /// @copydoc ecs::registry::has
     template <typename component_t> 
-    inline bool has() const { return reg()->has<component_t>(entity()); }
+    inline bool has() const { return reg()->has<component_t>(id()); }
 
     /// @copydoc ecs::registry::get
     template <typename component_t> 
-    inline component_t const &get() const { return reg()->get<component_t>(entity()); }
+    inline component_t const &get() const { return reg()->get<component_t>(id()); }
     /// @copydoc ecs::registry::get
     template <typename component_t> 
-    inline component_t &get() { return reg()->get<component_t>(entity()); }
+    inline component_t &get() { return reg()->get<component_t>(id()); }
 
     /// @copydoc ecs::registry::remove
     template <typename component_t> 
-    inline void remove() { return reg()->remove<component_t>(entity()); }
+    inline void remove() { return reg()->remove<component_t>(id()); }
 
     /// @copydoc ecs::registry::size
-    inline std::size_t size() const { return reg()->size(entity()); }
+    inline std::size_t size() const { return reg()->size(id()); }
 
     /// @copydoc ecs::registry::valid
     /// Also checks if the registry is valid (not nullptr)
-    inline bool valid() const { return mReg && reg()->valid(entity()); }
+    inline bool valid() const { return mReg && reg()->valid(id()); }
 
     inline bool operator==(Entity const &o) const { return mEntity == o.mEntity && mReg == o.mReg; }
 };
@@ -123,7 +125,7 @@ inline Entity Registry::create(Components_t&&... components)
 /// @copydoc ecs::registry::destroy
 inline void Registry::destroy(Entity const &entity)
 {
-    getReg().destroy(entity.entity());
+    getReg().destroy(entity.id());
 }
 /// @copydoc ecs::registry::size
 inline std::size_t Registry::size() const
@@ -168,7 +170,7 @@ namespace std {
     struct hash<Entity> {
         size_t operator()(Entity const &e) const {
             size_t seed = std::hash<std::uintptr_t>{}(reinterpret_cast<std::uintptr_t>(&e.reg()));
-            seed ^= std::hash<ecs::entity>{}(e.entity()) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+            seed ^= std::hash<ecs::entity>{}(e.id()) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
             return seed;
         }
     };

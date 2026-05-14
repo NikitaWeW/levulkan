@@ -1,11 +1,12 @@
 #include "Resources.hpp" 
 #include "Loaders.hpp"
 #include "Logging.hpp"
+
 #include <filesystem>
-#include <fmt/chrono.h>
-#include <glm/ext/quaternion_geometric.hpp>
-#include <glm/gtc/quaternion.hpp>
-#include <glm/trigonometric.hpp>
+
+#include "glm/ext/quaternion_geometric.hpp"
+#include "glm/gtc/quaternion.hpp"
+#include "glm/trigonometric.hpp"
 
 #include "meshoptimizer.h"
 #include "assimp/Importer.hpp"

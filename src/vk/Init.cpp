@@ -137,7 +137,11 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
         break;
     }
 
-    LOG(level, "{}: vulkan {} {} message:\n{}", _sChkLastFileLine, type, severity, pCallbackData->pMessage);
+    std::string fileLine = "<unknown location>";
+    #ifndef DONT_CHECK_VK_RESULT
+    fileLine = _sChkLastFileLine;
+    #endif
+    LOG(level, "{}: vulkan {} {} message:\n{}", fileLine, type, severity, pCallbackData->pMessage);
 
     return VK_FALSE;
 }
@@ -441,6 +445,7 @@ InitResult vk::init(InitInfo info)
     if(!info.offscreen) 
     {
         LOG_TRACE("Creating window surface");
+        assert(info.window);
         auto res = glfwCreateWindowSurface(result.instance, info.window, nullptr, &result.surface);
         if(res != VK_SUCCESS)
         {
