@@ -19,6 +19,10 @@ private:
 public:
     Registry() = default;
     inline explicit Registry(ecs::registry &&reg) : mReg(std::move(reg)) {};
+    Registry(Registry const &);
+    Registry(Registry &&);
+    Registry &operator=(Registry const &);
+    Registry &operator=(Registry &&);
 
     /// @brief Get an underlying ecs::registry
     inline ecs::registry &getReg() { return mReg; }
@@ -59,6 +63,8 @@ public:
     Registry merged(Registry const &other) const;
     /// @copydoc ecs::registry::merged
     void merge(Registry const &other);
+    /// @copydoc ecs::registry::copy
+    Entity copy(Entity const &entity);
 };
 
 /// @brief A lightweight helper class to group the entity and the registry it belongs to with oop syntax.
@@ -101,6 +107,9 @@ public:
     template <typename component_t> 
     inline void remove() { return reg()->remove<component_t>(id()); }
 
+    /// @copydoc Registry::destroy
+    inline void destroy() { reg().destroy(*this); };
+
     /// @copydoc ecs::registry::size
     inline std::size_t size() const { return reg()->size(id()); }
 
@@ -111,6 +120,24 @@ public:
     inline bool operator==(Entity const &o) const { return mEntity == o.mEntity && mReg == o.mReg; }
 };
 
+inline Registry::Registry(Registry const &o)
+{
+    *this = o;
+}
+inline Registry::Registry(Registry &&o)
+{
+    *this = std::move(o);
+}
+inline Registry &Registry::operator=(Registry const &o)
+{
+    mReg = o.mReg;
+    return *this;
+}
+inline Registry &Registry::operator=(Registry &&o)
+{
+    mReg = std::move(o.mReg);
+    return *this;
+}
 template <typename... Components_t> 
 inline Entity Registry::create()
 {
@@ -153,14 +180,22 @@ inline std::vector<Entity> Registry::viewAny(exclude<Exclude...> toExclude) cons
     return res;
 }
 /// @copydoc ecs::registry::merged
-inline Registry Registry::merged(Registry const &other) const
-{
-    return Registry(getReg().merged(other.getReg()));
-}
-/// @copydoc ecs::registry::merged
 inline void Registry::merge(Registry const &other)
 {
-    getReg().merge(other.getReg());
+    for(auto e : other.view())
+        copy(e);
+}
+/// @copydoc ecs::registry::merged
+inline Registry Registry::merged(Registry const &other) const
+{
+    Registry reg;
+    reg.merge(*this);
+    reg.merge(other);
+    return reg;
+}
+inline Entity Registry::copy(Entity const &other)
+{
+    return Entity(this, getReg().copy(other.id(), other.reg().getReg()));
 }
 
 constexpr ecs::entity INVALID_ENTITY = 0;
