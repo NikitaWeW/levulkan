@@ -141,13 +141,13 @@ inline Registry &Registry::operator=(Registry &&o)
 template <typename... Components_t> 
 inline Entity Registry::create()
 {
-    return { this, getReg().create<Components_t...>() };
+    return Entity{ this, getReg().create<Components_t...>() };
 }
 /// @copydoc ecs::registry::create
 template <typename... Components_t> 
 inline Entity Registry::create(Components_t&&... components)
 {
-    return { this, getReg().create(std::forward<Components_t>(components)...) };
+    return Entity{ this, getReg().create(std::forward<Components_t>(components)...) };
 }
 /// @copydoc ecs::registry::destroy
 inline void Registry::destroy(Entity const &entity)

@@ -19,22 +19,25 @@ namespace vk {
 
 struct ResourceDependency
 {
+    /// Could be vk::Image, vk::Buffer.
+    /// The physical resource.
+    Entity eResource;
+    /// The name of the pass that wrote to the resource.
+    /// The "version" of a resource, e.g. this pass reads resource x from pass y.
+    std::string pass;
+};
+struct ResourceWrite
+{
     /// Could be vk::Image, vk::Buffer, vk::Swapchain.
     /// The physical resource.
     Entity eResource;
-    /// The name of the pass that wrote to the resource
-    /// The "version" of a resource
-    std::string pass;
-
-    VkPipelineStageFlags stages = VK_PIPELINE_STAGE_NONE;
-    VkAccessFlags access = VK_ACCESS_NONE;
 };
 struct RenderPass
 {
     std::string name;
     std::function<void (VkCommandBuffer)> callback;
     std::vector<ResourceDependency> reads;
-    std::vector<ResourceDependency> writes;
+    std::vector<ResourceWrite> writes;
 };
 class RenderGraph
 {
@@ -48,25 +51,38 @@ public:
     RenderGraph &operator=(RenderGraph &&) = delete;
 
     void addPass(RenderPass const &pass);
+    RenderPass const *findPass(std::string const &name) const;
+    RenderPass *findPass(std::string const &name);
     void removePass(std::string const &name);
     void clear();
     void build();
     void execute(/* TODO */);
+    /// @brief Generate a DOT graph.
+    /// @param indent If indent is nonnegative, then array elements and object members will be pretty-printed with that indent level. An indent level of 0 will only insert newlines. -1 (the default) selects the most compact representation.
+    // TODO: https://en.wikipedia.org/wiki/DOT_(graph_description_language)
+    std::string dump(int indent = -1) const;
 private:
     struct ResourceUsage
     {
-        std::vector<uint32_t> readInPasses;
+        struct Usage
+        {
+            uint32_t pass = 0;
+            uint32_t version = 0;
+        };
+        std::vector<Usage> readInPasses;
         std::vector<uint32_t> writtenInPasses;
+        uint32_t lastPassWrite = 0; // Intermediate. The last pass that wrote to resource.
     };
-    // struct RenderGraphImpl *mImpl = nullptr;
     // 0 - invalid
     uint32_t mNextIndex = 1;
     SparseSet<RenderPass> mPasses;
     SparseSet<ResourceUsage> mResourceUsage;
+    std::unordered_set<uint32_t> mVisitedPasses;
     std::unordered_map<std::string, uint32_t> mPassNameToIndex;
 
     std::vector<uint32_t> mPassStack;
     void processPass(uint32_t index);
+    void processUsage(uint32_t passIndex);
 };
 
 } // namespace vk

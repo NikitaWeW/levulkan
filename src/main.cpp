@@ -144,12 +144,12 @@ static void printModelData(Entity e)
         
         LOG_INFO("Material:");
         LOG_INFO("Textures:");
-        LOG_INFO("  Albedo:       {}", printTexture({&e.reg(), mesh.material.textures.albedo}));
-        LOG_INFO("  Metallic:     {}", printTexture({&e.reg(), mesh.material.textures.metallic}));
-        LOG_INFO("  Roughness:    {}", printTexture({&e.reg(), mesh.material.textures.roughness}));
-        LOG_INFO("  Ambient:      {}", printTexture({&e.reg(), mesh.material.textures.ambient}));
-        LOG_INFO("  Normal:       {}", printTexture({&e.reg(), mesh.material.textures.normal}));
-        LOG_INFO("  Displacement: {}", printTexture({&e.reg(), mesh.material.textures.displacement}));
+        LOG_INFO("  Albedo:       {}", printTexture(Entity{&e.reg(), mesh.material.textures.albedo}));
+        LOG_INFO("  Metallic:     {}", printTexture(Entity{&e.reg(), mesh.material.textures.metallic}));
+        LOG_INFO("  Roughness:    {}", printTexture(Entity{&e.reg(), mesh.material.textures.roughness}));
+        LOG_INFO("  Ambient:      {}", printTexture(Entity{&e.reg(), mesh.material.textures.ambient}));
+        LOG_INFO("  Normal:       {}", printTexture(Entity{&e.reg(), mesh.material.textures.normal}));
+        LOG_INFO("  Displacement: {}", printTexture(Entity{&e.reg(), mesh.material.textures.displacement}));
         LOG_INFO("Properties:");
         LOG_INFO("  Ambient:       {}", fmt::streamed(mesh.material.properties.ambient));
         LOG_INFO("  Albedo:        {}", fmt::streamed(mesh.material.properties.albedo));
@@ -678,10 +678,46 @@ int main(int argc, char **argv)
     };
     vk::Pipeline pipeline = vk::makePipeline(shader, pipelineCI);
 
-    vk::RenderGraphCreateInfo renderGraphCI{
-    };
+    vk::RenderGraph renderGraph;
+    renderGraph.addPass({
+        .name = "B",
+        .reads = {{Entity(nullptr, 0), "A"}},
+        .writes = {{Entity(nullptr, 0)}}
+    });
+    renderGraph.addPass({
+        .name = "D",
+        .reads = {{Entity(nullptr, 1), "A"}},
+        .writes = {{Entity(nullptr, 1)}}
+    });
+    renderGraph.addPass({
+        .name = "E",
+        .reads = {{Entity(nullptr, 0), "A"}, {Entity(nullptr, 1), "D"}},
+        .writes = {{Entity(nullptr, 2)}}
+    });
+    renderGraph.addPass({
+        .name = "A",
+        .writes = {{Entity(nullptr, 0)}, {Entity(nullptr, 1)}}
+    });
+    renderGraph.addPass({
+        .name = "F",
+        .reads = {{Entity(nullptr, 0), "B"}, {Entity(nullptr, 2), "E"}, {Entity(nullptr, 3), "C"}}
+    });
+    renderGraph.addPass({
+        .name = "C",
+        .reads = {{Entity(nullptr, 1), "A"}},
+        .writes = {{Entity(nullptr, 3)}}
+    });
 
-    vk::RenderGraph renderGraph = vk::buildRenderGraph(renderGraphCI);
+
+    renderGraph.addPass({
+        .name = "Custom",
+        .reads = {{Entity(nullptr, 1), "D"}, {Entity(nullptr, 0), "A"}},
+        .writes = {{Entity(nullptr, 10)}}
+    });
+    renderGraph.findPass("F")->reads.emplace_back(vk::ResourceDependency{Entity(nullptr, 10), "Custom"});
+    renderGraph.build();
+
+    return 0;
 
     ////////////////////////////////////////////////////////////////
 
