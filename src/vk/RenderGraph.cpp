@@ -52,65 +52,55 @@ void RenderGraph::clear()
     mPassNameToIndex.clear();
     mResourceUsage.clear();
 }
-void RenderGraph::processPass(uint32_t index)
+// FIXME: crap
+void RenderGraph::processPass(uint32_t index, bool backtrack)
 {
+    LOG_TRACE("Processing pass {}, backtrack {}", mPasses[index].name, backtrack);
     assert(index != 0);
-    if(mVisitedPasses.contains(index))
+    if(mNodeState[index] == NodeState::Added)
         return;
 
     auto const &pass = mPasses[index];
-    LOG_TRACE("Processing pass {}", pass.name);
 
-    // Process passes that read from the old versions of resources passes the pass writes to
+    // Process passes that read from the old versions of resources the pass writes to
+    LOG_TRACE("  Process passes that read from the old versions of resources the pass {} writes to", pass.name);
     for(auto const &dep : pass.writes)
     {
         auto &usage = mResourceUsage.get(dep.eResource.id());
         for(auto const &[pass, version] : usage.readInPasses)
-            if(version == usage.lastPassWrite)
-                processPass(pass);
+            if(version == usage.lastPassWrite && pass != index)
+                processPass(pass, true);
         usage.lastPassWrite = index;
     }
-    
     // Process all dependencies
+    LOG_TRACE("  Process all dependencies of pass {}", pass.name);
     for(auto const &dep : pass.reads)
     {
         auto const &usage = mResourceUsage.get(dep.eResource.id());
         for(auto const &pass : usage.writtenInPasses)
             if(mPassNameToIndex.at(dep.pass) == pass)
-                processPass(pass);
+                processPass(pass, true);
     }
 
-    LOG_TRACE("Adding pass {} {}", index, pass.name);
-    mVisitedPasses.emplace(index);
-    mPassStack.emplace_back(index);
+    if(mNodeState[index] != NodeState::Added)
+    {
+        mNodeState[index] = NodeState::Added;
+        LOG_TRACE(" Adding pass {}", pass.name);
+        mPassStack.emplace_back(index);
+
+        if(backtrack)
+            return;
+    }
 
     // Process all passes that read resources from this pass
+    LOG_TRACE("  Process all passes that read resources from the pass {}", pass.name);
     for(auto const &dep : pass.writes)
     {
         auto const &usage = mResourceUsage.get(dep.eResource.id());
         for(auto const &[pass, version] : usage.readInPasses)
             if(version == index)
-                processPass(pass);
+                processPass(pass, backtrack);
     }
-}
-
-// Remove duplicates from unsorted std::vector
-template<typename T>
-static void removeDuplicates(std::vector<T> &list)
-{
-	std::unordered_set<T> seen;
-
-	auto output_itr = std::begin(list);
-	for(auto itr = std::begin(list); itr != std::end(list); ++itr)
-	{
-		if(!seen.count(*itr))
-		{
-			*output_itr = *itr;
-			seen.insert(*itr);
-			++output_itr;
-		}
-	}
-	list.erase(output_itr, std::end(list));
 }
 
 void RenderGraph::build()
@@ -156,7 +146,7 @@ void RenderGraph::build()
             processPass(index);
     }
 
-    if(mVisitedPasses.size() != mPasses.size())
+    if(mNodeState.size() != mPasses.size())
         LOG_WARN("not all passes visited!");
 
     LOG_TRACE("Pass stack: {}", mPassStack);

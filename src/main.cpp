@@ -708,7 +708,6 @@ int main(int argc, char **argv)
         .writes = {{Entity(nullptr, 3)}}
     });
 
-
     renderGraph.addPass({
         .name = "Custom",
         .reads = {{Entity(nullptr, 1), "D"}, {Entity(nullptr, 0), "A"}},

@@ -51,7 +51,9 @@ public:
     RenderGraph &operator=(RenderGraph &&) = delete;
 
     void addPass(RenderPass const &pass);
+    /// @returns A pointer to the pass with the @p name, nullptr if no such pass exists
     RenderPass const *findPass(std::string const &name) const;
+    /// @copydoc findPass 
     RenderPass *findPass(std::string const &name);
     void removePass(std::string const &name);
     void clear();
@@ -73,15 +75,16 @@ private:
         std::vector<uint32_t> writtenInPasses;
         uint32_t lastPassWrite = 0; // Intermediate. The last pass that wrote to resource.
     };
+    enum class NodeState { None = 0, Visited, Added };
     // 0 - invalid
     uint32_t mNextIndex = 1;
     SparseSet<RenderPass> mPasses;
     SparseSet<ResourceUsage> mResourceUsage;
-    std::unordered_set<uint32_t> mVisitedPasses;
+    std::unordered_map<uint32_t, NodeState> mNodeState;
     std::unordered_map<std::string, uint32_t> mPassNameToIndex;
 
     std::vector<uint32_t> mPassStack;
-    void processPass(uint32_t index);
+    void processPass(uint32_t index, bool backtrack = false);
     void processUsage(uint32_t passIndex);
 };
 
