@@ -61,8 +61,9 @@ public:
     void execute(/* TODO */);
     /// @brief Generate a DOT graph.
     /// @param indent If indent is nonnegative, then array elements and object members will be pretty-printed with that indent level. An indent level of 0 will only insert newlines. -1 (the default) selects the most compact representation.
+    /// @param implicitDependencies If set to true, dashed arrows will point to implicit pass dependencies (read before next write).
     // TODO: https://en.wikipedia.org/wiki/DOT_(graph_description_language)
-    std::string dump(int indent = -1) const;
+    std::string dump(int indent = -1, bool implicitDependencies = true) const;
 private:
     struct ResourceUsage
     {
@@ -73,19 +74,24 @@ private:
         };
         std::vector<Usage> readInPasses;
         std::vector<uint32_t> writtenInPasses;
-        uint32_t lastPassWrite = 0; // Intermediate. The last pass that wrote to resource.
+        uint32_t lastPassWrite = 0; // Intermediate
+        std::unordered_map<uint32_t, uint32_t> passVersions; // if version of A is less than version of B, then A writes to the pass before B.
+        uint32_t nextVersion = 1;
     };
-    enum class NodeState { None = 0, Visited, Added };
+    enum class NodeState { None = 0, Added };
+
     // 0 - invalid
     uint32_t mNextIndex = 1;
     SparseSet<RenderPass> mPasses;
-    SparseSet<ResourceUsage> mResourceUsage;
-    std::unordered_map<uint32_t, NodeState> mNodeState;
     std::unordered_map<std::string, uint32_t> mPassNameToIndex;
-
+    
+    std::unordered_map<uint32_t, NodeState> mNodeState;
+    SparseSet<ResourceUsage> mResourceUsage;
     std::vector<uint32_t> mPassStack;
-    void processPass(uint32_t index, bool backtrack = false);
-    void processUsage(uint32_t passIndex);
+    bool mUpToDate = false;
+    
+    void processValidation(uint32_t index);
+    void processPass(uint32_t index, bool backtrack = false); ///< Recursively process a pass and construct an #mPassStack that contains a valid pass order that obeys the strict dependencies
 };
 
 } // namespace vk

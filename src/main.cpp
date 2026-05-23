@@ -708,13 +708,14 @@ int main(int argc, char **argv)
         .writes = {{Entity(nullptr, 3)}}
     });
 
-    renderGraph.addPass({
-        .name = "Custom",
-        .reads = {{Entity(nullptr, 1), "D"}, {Entity(nullptr, 0), "A"}},
-        .writes = {{Entity(nullptr, 10)}}
-    });
-    renderGraph.findPass("F")->reads.emplace_back(vk::ResourceDependency{Entity(nullptr, 10), "Custom"});
+    // renderGraph.addPass({
+    //     .name = "Custom",
+    //     .reads = {{Entity(nullptr, 1), "D"}, {Entity(nullptr, 0), "A"}},
+    //     .writes = {{Entity(nullptr, 10)}}
+    // });
+    // renderGraph.findPass("F")->reads.emplace_back(vk::ResourceDependency{Entity(nullptr, 10), "Custom"});
     renderGraph.build();
+    std::ofstream("RenderGraph.dot", std::ios::trunc) << renderGraph.dump(4);
 
     return 0;
 
