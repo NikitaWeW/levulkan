@@ -98,7 +98,8 @@ struct Image
     /// Free anytime after submitting the command buffer.
     Buffer srcBuffer;
     
-    VkImageCreateInfo createInfo;
+    VkImageCreateInfo imageCreateInfo;
+    VkSamplerCreateInfo samplerCreateInfo;
     VmaAllocationCreateInfo allocationInfo;
     VkImageType imageType = VK_IMAGE_TYPE_2D;
     VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D;

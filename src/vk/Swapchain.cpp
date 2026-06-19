@@ -80,7 +80,7 @@ static void getImages(Swapchain &swapchain)
             }
         };
 
-        VK_CHK(vkCreateImageView(swapchain.alloc.device, &createInfo, nullptr, &swapchain.imageViews[i]));
+        CHECK_VK_RES(vkCreateImageView(swapchain.alloc.device, &createInfo, nullptr, &swapchain.imageViews[i]));
     }
 }
 
@@ -116,7 +116,7 @@ Swapchain vk::makeSwapchain(SwapchainCreateInfo const &ci)
     };
     LOG_TRACE("Making swapchain. Present mode: {}, surface format: {}, colorspace: {}", string_VkPresentModeKHR(swapchain.createInfo.presentMode), string_VkFormat(swapchain.createInfo.imageFormat), string_VkColorSpaceKHR(swapchain.createInfo.imageColorSpace));
 
-    VK_CHK(vkCreateSwapchainKHR(swapchain.alloc.device, &swapchain.createInfo, nullptr, &swapchain.swapchain));
+    CHECK_VK_RES(vkCreateSwapchainKHR(swapchain.alloc.device, &swapchain.createInfo, nullptr, &swapchain.swapchain));
 
     getImages(swapchain);
 
@@ -127,7 +127,7 @@ void vk::resizeSwapchain(Swapchain &swapchain, VkExtent2D size)
     swapchain.createInfo.oldSwapchain = swapchain.swapchain;
     swapchain.createInfo.imageExtent = size;
 
-    VK_CHK(vkCreateSwapchainKHR(swapchain.alloc.device, &swapchain.createInfo, nullptr, &swapchain.swapchain));
+    CHECK_VK_RES(vkCreateSwapchainKHR(swapchain.alloc.device, &swapchain.createInfo, nullptr, &swapchain.swapchain));
     getImages(swapchain);
     vkDestroySwapchainKHR(swapchain.alloc.device, swapchain.createInfo.oldSwapchain, nullptr);
 }

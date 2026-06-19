@@ -8,14 +8,15 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
    \$  /   $$ | \$$\   
     \_/    \__|  \__|  Various vulkan qol and utility functions.
 */
+// FIXME: Why do I keep hearing wine booms when reading this code?
 #pragma once
 #include "vulkan.h"
 
 #ifndef DONT_CHECK_VK_RESULT
 extern std::string _sChkLastFileLine;
-#define VK_CHK(x) { _sChkLastFileLine = std::string(__FILE__) + ':' + std::to_string(__LINE__); VkResult _result = x; if(_result != VK_SUCCESS) { LOG_ERROR("{}:{}: Failed to {}: {}.", __FILE__, __LINE__, #x, string_VkResult(_result)); /* LOG_WARN("Aborting..."); abort(); */ } _sChkLastFileLine.append(" <out of date>"); }
+#define CHECK_VK_RES(x) { _sChkLastFileLine = std::string(__FILE__) + ':' + std::to_string(__LINE__); VkResult _result = x; if(_result != VK_SUCCESS) { LOG_ERROR("{}:{}: Failed to {}: {}.", __FILE__, __LINE__, #x, string_VkResult(_result)); /* LOG_WARN("Aborting..."); abort(); */ } _sChkLastFileLine.append(" <out of date>"); }
 #else
-#define VK_CHK(x) x
+#define CHECK_VK_RES(x) x
 #endif
 
 namespace vk {

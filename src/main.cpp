@@ -96,6 +96,7 @@ struct Program
 
     inline bool valid() const { return pipeline.valid && shader.valid; }
 };
+struct ResizeToSwapchain {};
 
 ////////////////////////////////////////////////////////////////
 
@@ -199,7 +200,7 @@ static VkFence createFence(VkDevice dev)
     VkFenceCreateInfo fenceCI{
         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
     };
-    VK_CHK(vkCreateFence(dev, &fenceCI, nullptr, &fence));
+    CHECK_VK_RES(vkCreateFence(dev, &fenceCI, nullptr, &fence));
     return fence;
 }
 
@@ -291,7 +292,7 @@ public:
             .commandPool = commandPool,
             .commandBufferCount = 1,
         };
-        VK_CHK(vkAllocateCommandBuffers(mAllocInfo.device, &commandBufferAllocInfo, &mCommandBuffer));
+        CHECK_VK_RES(vkAllocateCommandBuffers(mAllocInfo.device, &commandBufferAllocInfo, &mCommandBuffer));
         mFence = createFence(mAllocInfo.device);
         mQueue = queue;
     }
@@ -300,11 +301,11 @@ public:
     }
     inline std::vector<Entity> getProcessedImages() const { return mProcessedImages; }
 
-
     inline uint32_t processImage(Entity eImage)
     {
+        assert(eImage.valid() && (eImage.has<Texture>()) && "Invalid model!");
         assert(mCommandBuffer && "ResourceAllocator uninitialized! (Make sure to not use the default constructor)");
-        if(!eImage.has<vk::Image>())
+        if(!eImage.has<vk::Image>() && eImage.has<Texture>())
         {
             auto &image = eImage.get<Texture>();
 
@@ -321,6 +322,7 @@ public:
                 case Texture::AddressMode::MirrorClampToEdge: addressMode = VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE; break;
                 default: LOG_WARN("Unknown address mode in e{}!", eImage.id()); break;
             }
+            // FIXME: wth is this bro
             vk::ImageCreateInfo ci{
                 .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
                 .allocInfo = mAllocInfo,
@@ -370,6 +372,7 @@ public:
     }
     inline void processModel(Entity eModel)
     {
+        assert(eModel.valid() && eModel.has<Model>() && "Invalid model!");
         if(eModel.has<VulkanModel>())
             return;
 
@@ -407,9 +410,9 @@ public:
     {
         VkCommandBufferBeginInfo beginInfo{
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-            .flags = 0
+            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
         };
-        VK_CHK(vkBeginCommandBuffer(mCommandBuffer, &beginInfo));
+        CHECK_VK_RES(vkBeginCommandBuffer(mCommandBuffer, &beginInfo));
     }
     inline void end()
     {
@@ -420,8 +423,8 @@ public:
             .commandBufferCount = 1,
             .pCommandBuffers = &mCommandBuffer,
         };
-        VK_CHK(vkQueueSubmit(mQueue, 1, &submitInfo, mFence));
-        VK_CHK(vkWaitForFences(mAllocInfo.device, 1, &mFence, true, UINT64_MAX));
+        CHECK_VK_RES(vkQueueSubmit(mQueue, 1, &submitInfo, mFence));
+        CHECK_VK_RES(vkWaitForFences(mAllocInfo.device, 1, &mFence, true, UINT64_MAX));
     }
 };
 
@@ -526,14 +529,15 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    vk::Swapchain swapchain = vk::makeSwapchain({
+    auto eSwapchain = sReg.create(vk::makeSwapchain({
         .alloc = {
             .device = device,
             .physicalDevice = initRes.physicalDevice,
             .surface = initRes.surface,
         },
         .size = {window.size.x, window.size.y}
-    });
+    }));
+    vk::Swapchain &swapchain = eSwapchain.get<vk::Swapchain>();
 
     VkCommandPool commandPool = createCommandPool(initRes.queueFamilies.indices.at(VK_QUEUE_GRAPHICS_BIT), device);
     VkQueue graphicsQueue = initRes.queueFamilies.getQueue(VK_QUEUE_GRAPHICS_BIT);
@@ -680,13 +684,45 @@ int main(int argc, char **argv)
 
     vk::RenderGraph renderGraph;
     renderGraph.addPass({
+        .name = "F",
+        .reads = { {Entity(nullptr, 2), "E"}, {Entity(nullptr, 0), "B"}, {Entity(nullptr, 3), "C"} },
+        .writes = {}
+    });
+    renderGraph.addPass({
+        .name = "D",
+        .reads = { {Entity(nullptr, 1), "A"} },
+        .writes = { {Entity(nullptr, 1)} }
+    }); 
+    renderGraph.addPass({
+        .name = "A",
+        .reads = {},
+        .writes = { {Entity(nullptr, 0)}, {Entity(nullptr, 1)} }
+    });
+    renderGraph.addPass({
+        .name = "E",
+        .reads = { {Entity(nullptr, 0), "A"}, {Entity(nullptr, 1), "D"} },
+        .writes = { {Entity(nullptr, 2)} }
+    });
+    renderGraph.addPass({
+        .name = "B",
+        .reads = { {Entity(nullptr, 0), "A"} },
+        .writes = { {Entity(nullptr, 0)} }
+    });
+    renderGraph.addPass({
+        .name = "C",
+        .reads = { {Entity(nullptr, 1), "A"} },
+        .writes = { {Entity(nullptr, 3)} }
+    });
+
+/* 
+    renderGraph.addPass({
         .name = "B",
         .reads = {{Entity(nullptr, 0), "A"}},
         .writes = {{Entity(nullptr, 0)}}
     });
     renderGraph.addPass({
         .name = "D",
-        .reads = {{Entity(nullptr, 1), "A"}},
+        .reads = {{Entity(nullptr, 1), "A"}, {Entity(nullptr, 0), "Accumulation"}},
         .writes = {{Entity(nullptr, 1)}}
     });
     renderGraph.addPass({
@@ -708,16 +744,89 @@ int main(int argc, char **argv)
         .writes = {{Entity(nullptr, 3)}}
     });
 
-    // renderGraph.addPass({
-    //     .name = "Custom",
-    //     .reads = {{Entity(nullptr, 1), "D"}, {Entity(nullptr, 0), "A"}},
-    //     .writes = {{Entity(nullptr, 10)}}
-    // });
-    // renderGraph.findPass("F")->reads.emplace_back(vk::ResourceDependency{Entity(nullptr, 10), "Custom"});
-    renderGraph.build();
-    std::ofstream("RenderGraph.dot", std::ios::trunc) << renderGraph.dump(4);
+    renderGraph.addPass({
+        .name = "Custom",
+        .reads = {{Entity(nullptr, 1), "D"}, {Entity(nullptr, 0), "A"}},
+        .writes = {{Entity(nullptr, 10)}}
+    });
+    renderGraph.addPass({
+        .name = "Accumulation",
+        .reads = {{Entity(nullptr, 0), ""}},
+        .writes = {{Entity(nullptr, 0)}}
+    });
+    renderGraph.findPass("F")->reads.emplace_back(vk::RenderPass::ResourceDependency{Entity(nullptr, 10), "Custom"});
+*/
+/* 
+    auto gbuffer_albedo = sReg.create(
+        vk::ImageCreateInfo{
+            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            .allocInfo = ALLOCATION_INFO,
+            .format = VK_FORMAT_R8G8B8_UNORM,
+            .dimensions = {1, 1},
+        },
+        ResizeToSwapchain{}
+    );
+    auto gbuffer_normal = sReg.create(
+        vk::ImageCreateInfo{
+            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            .allocInfo = ALLOCATION_INFO,
+            .format = VK_FORMAT_R8G8B8_UNORM,
+            .dimensions = {1, 1},
+        },
+        ResizeToSwapchain{}
+    );
+    auto gbuffer_depth = sReg.create(
+        vk::ImageCreateInfo{
+            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            .allocInfo = ALLOCATION_INFO,
+            .format = VK_FORMAT_R8G8B8_UNORM,
+            .dimensions = {1, 1},
+        },
+        ResizeToSwapchain{}
+    );
+    auto hdr_color = sReg.create(
+        vk::ImageCreateInfo{
+            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            .allocInfo = ALLOCATION_INFO,
+            .format = VK_FORMAT_R8G8B8_UNORM,
+            .dimensions = {1, 1},
+        },
+        ResizeToSwapchain{}
+    );
+    // r - roughness
+    // g - metallic
+    auto gbuffer_roughness = sReg.create(
+        vk::ImageCreateInfo{
+            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            .allocInfo = ALLOCATION_INFO,
+            .format = VK_FORMAT_R8G8B8_UNORM,
+            .dimensions = {1, 1},
+        },
+        ResizeToSwapchain{}
+    );
+    renderGraph.addPass({
+        .name = "G Buffer",
+        .writes = {gbuffer_albedo, gbuffer_normal, gbuffer_roughness}
+    });
+    renderGraph.addPass({
+        .name = "Lighting",
+        .reads = {{gbuffer_albedo, "G Buffer"}, {gbuffer_normal, "G Buffer"}, {gbuffer_roughness, "G Buffer"}},
+        .writes = {hdr_color}
+    });
+    renderGraph.addPass({
+        .name = "Post processing",
+        .reads = {{hdr_color, "Lighting"}},
+        .writes = {hdr_color}
+    });
+    renderGraph.addPass({
+        .name = "Swapchain blit",
+        .reads = {{hdr_color, "Post processing"}},
+        .writes = {eSwapchain}
+    });
+*/
 
-    return 0;
+    assert(renderGraph.build());
+    std::ofstream("RenderGraph.dot", std::ios::trunc) << renderGraph.dumpGraphviz(4);
 
     ////////////////////////////////////////////////////////////////
 
@@ -734,7 +843,7 @@ int main(int argc, char **argv)
             .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
             .commandBufferCount = 1,
         };
-        VK_CHK(vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, &commandBuffers[i]));
+        CHECK_VK_RES(vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, &commandBuffers[i]));
 
         VkSemaphoreCreateInfo semaphoreCI{
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -747,7 +856,7 @@ int main(int argc, char **argv)
             .flags = VK_FENCE_CREATE_SIGNALED_BIT
         };
 
-        VK_CHK(vkCreateFence(device, &fenceCI, nullptr, &fences[i]));
+        CHECK_VK_RES(vkCreateFence(device, &fenceCI, nullptr, &fences[i]));
     }
 
     renderSemaphores.resize(swapchain.images.size());
@@ -792,10 +901,15 @@ int main(int argc, char **argv)
 
             resizeSwapchain(swapchain, windowExtent);
 
-            vk::destroy(depthImage);
-            depthImageCreateInfo.dimensions.width = windowExtent.width;
-            depthImageCreateInfo.dimensions.height = windowExtent.height;
-            depthImage = vk::makeImage(depthImageCreateInfo);
+            for(auto e : sReg.view<vk::Image, vk::ImageCreateInfo, ResizeToSwapchain>())
+            {
+                auto &image = e.get<vk::Image>();
+                auto &ci = e.get<vk::ImageCreateInfo>();
+                vk::destroy(image);
+                ci.dimensions.width = windowExtent.width;
+                ci.dimensions.height = windowExtent.height;
+                image = vk::makeImage(ci);
+            }
 
             shouldResize = false;
         }
@@ -824,8 +938,8 @@ int main(int argc, char **argv)
 /////////////////////////////////////////////////////////////////////
 
         // Wait on fence
-        VK_CHK(vkWaitForFences(device, 1, &fences[frameIndex], true, UINT64_MAX));
-        VK_CHK(vkResetFences(device, 1, &fences[frameIndex]));
+        CHECK_VK_RES(vkWaitForFences(device, 1, &fences[frameIndex], true, UINT64_MAX));
+        CHECK_VK_RES(vkResetFences(device, 1, &fences[frameIndex]));
         
         uniformBuffer.free(frameIndex);
         if(uniformBuffer.realloc())
@@ -857,7 +971,7 @@ int main(int argc, char **argv)
             continue;
         } else if((imageAcquireRes != VK_SUCCESS) && (imageAcquireRes != VK_SUBOPTIMAL_KHR))
         {
-            VK_CHK(imageAcquireRes);
+            CHECK_VK_RES(imageAcquireRes);
             LOG_ERROR("Could not acquire the next swap chain image!");
             break;
         }
@@ -870,13 +984,13 @@ int main(int argc, char **argv)
 
         // Record command buffer
         auto cb = commandBuffers[frameIndex];
-        VK_CHK(vkResetCommandBuffer(cb, 0));
+        CHECK_VK_RES(vkResetCommandBuffer(cb, 0));
 
         VkCommandBufferBeginInfo cbBI{
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
             .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
         };
-        VK_CHK(vkBeginCommandBuffer(cb, &cbBI));
+        CHECK_VK_RES(vkBeginCommandBuffer(cb, &cbBI));
 
 		vk::insertImageMemoryBarrier(cb, 
             swapchain.images[imageIndex],
@@ -1019,7 +1133,7 @@ int main(int argc, char **argv)
             .signalSemaphoreCount = 1,
             .pSignalSemaphores = &renderSemaphores[imageIndex],
         };
-        VK_CHK(vkQueueSubmit(graphicsQueue, 1, &submitInfo, fences[frameIndex]));
+        CHECK_VK_RES(vkQueueSubmit(graphicsQueue, 1, &submitInfo, fences[frameIndex]));
 
         frameIndex = (frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
         
@@ -1032,12 +1146,12 @@ int main(int argc, char **argv)
             .pSwapchains = &swapchain.swapchain,
             .pImageIndices = &imageIndex
         };
-        VK_CHK(vkQueuePresentKHR(presentQueue, &presentInfo));
+        CHECK_VK_RES(vkQueuePresentKHR(presentQueue, &presentInfo));
         deltatime = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - start).count() * 1e-9f;
         // LOG_INFO("dt {:.2f}ms fps {:.2f}", deltatime * 1e3, 1 / deltatime);
     }
 
-    VK_CHK(vkDeviceWaitIdle(device));
+    CHECK_VK_RES(vkDeviceWaitIdle(device));
 
     ////////////////////////////////////////////////////////////////
 

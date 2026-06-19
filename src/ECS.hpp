@@ -3,6 +3,7 @@
 #pragma once
 #include "nicecs/ecs.hpp"
 #include <cstdint>
+#include <mutex>
 #include <shared_mutex>
 
 class Entity;
@@ -36,6 +37,8 @@ public:
 
     /// @brief Get the shared mutex.
     inline std::shared_mutex &getMutex() const { return mMutex; }
+    inline std::shared_lock<std::shared_mutex> lockShared() const { return std::shared_lock(mMutex); }
+    inline std::unique_lock<std::shared_mutex> lockUnique() const { return std::unique_lock(mMutex); }
 
     /// @copydoc ecs::registry::create
     template <typename... Components_t> 
@@ -78,15 +81,17 @@ public:
     inline explicit constexpr Entity() = default;
     inline explicit constexpr Entity(Registry *reg, ecs::entity e) : mReg(reg), mEntity(e) {}
     inline ecs::entity id() const { return mEntity; }
+    inline Registry const *pReg() const { return mReg; }
+    inline Registry *pReg() { return mReg; }
     inline Registry const &reg() const 
     { 
-        assert(mReg && "Invalid registry!");
-        return *mReg; 
+        assert(pReg() && "Invalid registry!");
+        return *pReg(); 
     }
     inline Registry &reg() 
     { 
-        assert(mReg && "Invalid registry!");
-        return *mReg; 
+        assert(pReg() && "Invalid registry!");
+        return *pReg(); 
     }
 
     template <typename component_t, class... Args>
@@ -115,19 +120,14 @@ public:
 
     /// @copydoc ecs::registry::valid
     /// Also checks if the registry is valid (not nullptr)
-    inline bool valid() const { return mReg && reg()->valid(id()); }
+    inline bool valid() const { return pReg() && reg()->valid(id()); }
 
-    inline bool operator==(Entity const &o) const { return mEntity == o.mEntity && mReg == o.mReg; }
+    inline bool operator==(Entity const &o) const { return mEntity == o.mEntity && pReg() == o.pReg(); }
+    inline bool operator<(Entity const &o) const { return pReg() < o.pReg() || mEntity < o.mEntity; }
 };
 
-inline Registry::Registry(Registry const &o)
-{
-    *this = o;
-}
-inline Registry::Registry(Registry &&o)
-{
-    *this = std::move(o);
-}
+inline Registry::Registry(Registry const &o) { *this = o; }
+inline Registry::Registry(Registry &&o) { *this = std::move(o); }
 inline Registry &Registry::operator=(Registry const &o)
 {
     mReg = o.mReg;
@@ -165,7 +165,7 @@ inline std::vector<Entity> Registry::view(exclude<Exclude...> toExclude) const
 {
     std::vector<Entity> res;
     for(auto const &e : getReg().view<Include...>(toExclude))
-        res.emplace_back(const_cast<Registry *>(this), e); // Whats the worst that could happen :clueless:
+        res.emplace_back(const_cast<Registry *>(this), e); // Whats the worst that could happen (clueless)
 
     return res;
 }
@@ -204,8 +204,8 @@ namespace std {
     template<>
     struct hash<Entity> {
         size_t operator()(Entity const &e) const {
-            size_t seed = std::hash<std::uintptr_t>{}(reinterpret_cast<std::uintptr_t>(&e.reg()));
-            seed ^= std::hash<ecs::entity>{}(e.id()) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+            size_t seed = std::hash<ecs::entity>{}(e.id());
+            seed ^= std::hash<std::uintptr_t>{}(reinterpret_cast<std::uintptr_t>(e.pReg())) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
             return seed;
         }
     };

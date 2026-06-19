@@ -90,7 +90,7 @@ static bool createInstance(InitInfo const &info, InitResult &result)
 }
 
 template<typename C, typename P>
-requires requires (P p) { { p() } -> std::convertible_to<bool>; } // Ah, c++ truly required such a feature...
+requires requires (P p) { { p() } -> std::convertible_to<bool>; }
 static bool containsIf(C const &cont, P const &pred)
 {
     return std::find_if(cont.begin(), cont.end(), pred) != cont.end();
@@ -424,9 +424,9 @@ static void createAllocator(InitInfo const &info, InitResult &result)
         .vulkanApiVersion = info.version
     };
     VmaVulkanFunctions functions;
-    VK_CHK(vmaImportVulkanFunctionsFromVolk(&allocatorCI, &functions));
+    CHECK_VK_RES(vmaImportVulkanFunctionsFromVolk(&allocatorCI, &functions));
     allocatorCI.pVulkanFunctions = &functions;
-    VK_CHK(vmaCreateAllocator(&allocatorCI, &result.vma));
+    CHECK_VK_RES(vmaCreateAllocator(&allocatorCI, &result.vma));
 }
 
 InitResult vk::init(InitInfo info)

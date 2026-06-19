@@ -270,7 +270,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
         .poolSizeCount = (uint32_t) poolSizes.size(),
         .pPoolSizes = poolSizes.dense().data()
     };
-    VK_CHK(vkCreateDescriptorPool(dev, &poolCI, nullptr, &layout.descPool));
+    CHECK_VK_RES(vkCreateDescriptorPool(dev, &poolCI, nullptr, &layout.descPool));
 
     // Allocate descriptors
     layout.descSets.resize(ci.framesInFlight);
@@ -310,7 +310,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
             .pSetLayouts = &layout.descLayouts.get(set)
         };
         for(uint i = 0; i < ci.framesInFlight; ++i)
-            VK_CHK(vkAllocateDescriptorSets(dev, &descSetAlloc, &layout.descSets[i][set]));
+            CHECK_VK_RES(vkAllocateDescriptorSets(dev, &descSetAlloc, &layout.descSets[i][set]));
     }
 
     // Write descriptors
@@ -390,7 +390,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
         .pushConstantRangeCount = (uint32_t) pushConstants.size(),
         .pPushConstantRanges = pushConstants.data(),
     };
-    VK_CHK(vkCreatePipelineLayout(dev, &pipelineLayoutCI, nullptr, &layout.layout));
+    CHECK_VK_RES(vkCreatePipelineLayout(dev, &pipelineLayoutCI, nullptr, &layout.layout));
 
     return layout;
 }
@@ -501,7 +501,7 @@ Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const
         .pDynamicState = &dynamicState,
         .layout = pipeline.layout.layout
     };
-    VK_CHK(vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &pipeline.pipeline));
+    CHECK_VK_RES(vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &pipeline.pipeline));
 
     pipeline.valid = true;
     return pipeline;
@@ -524,7 +524,7 @@ Pipeline vk::makePipeline(Shader const &shader, ComputePipelineCreateInfo const 
         .stage = *std::find_if(reflection.stages.begin(), reflection.stages.end(), [](VkPipelineShaderStageCreateInfo const &stage){return stage.stage == VK_SHADER_STAGE_COMPUTE_BIT;}),
         .layout = pipeline.layout.layout,
     };
-    VK_CHK(vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &pipeline.pipeline));
+    CHECK_VK_RES(vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &pipeline.pipeline));
 
     pipeline.valid = true;
     return pipeline;

@@ -38,9 +38,9 @@ static void writeImage(Image &image, ImageCreateInfo const &ci)
             .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
             .mipLevel = 0,
             .baseArrayLayer = 0,
-            .layerCount = image.createInfo.arrayLayers,
+            .layerCount = image.imageCreateInfo.arrayLayers,
         },
-        .imageExtent = image.createInfo.extent
+        .imageExtent = image.imageCreateInfo.extent
     };
     VkCopyBufferToImageInfo2 copyInfo{
         .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2,
@@ -58,7 +58,7 @@ static void writeImage(Image &image, ImageCreateInfo const &ci)
         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         VK_PIPELINE_STAGE_NONE,
         VK_PIPELINE_STAGE_TRANSFER_BIT,
-        {VK_IMAGE_ASPECT_COLOR_BIT, 0, image.createInfo.mipLevels, 0, 1}
+        {VK_IMAGE_ASPECT_COLOR_BIT, 0, image.imageCreateInfo.mipLevels, 0, 1}
     );
     
     vkCmdCopyBufferToImage2(ci.commandBuffer, &copyInfo);
@@ -73,7 +73,7 @@ static void writeImage(Image &image, ImageCreateInfo const &ci)
         {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
     );
 
-    for(uint32_t i = 1; i < image.createInfo.mipLevels; i++)
+    for(uint32_t i = 1; i < image.imageCreateInfo.mipLevels; i++)
     {
         VkImageBlit2 imageBlit{
             .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
@@ -84,7 +84,7 @@ static void writeImage(Image &image, ImageCreateInfo const &ci)
             },
             .srcOffsets = {
                 { 0, 0, 0 },
-                { int32_t(image.createInfo.extent.width >> (i - 1)), int32_t(image.createInfo.extent.height >> (i - 1)), 1 }
+                { int32_t(image.imageCreateInfo.extent.width >> (i - 1)), int32_t(image.imageCreateInfo.extent.height >> (i - 1)), 1 }
             },
             .dstSubresource = {
                 .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -93,7 +93,7 @@ static void writeImage(Image &image, ImageCreateInfo const &ci)
             },
             .dstOffsets = {
                 { 0, 0, 0 },
-                { int32_t(image.createInfo.extent.width >> i), int32_t(image.createInfo.extent.height >> i), 1 }
+                { int32_t(image.imageCreateInfo.extent.width >> i), int32_t(image.imageCreateInfo.extent.height >> i), 1 }
             }
         };
         VkBlitImageInfo2 imageBlitInfo{
@@ -155,7 +155,7 @@ Image vk::makeImage(ImageCreateInfo const &ci)
     if(ci.data)
         image.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
-    image.createInfo = {
+    image.imageCreateInfo = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = image.imageType,
         .format = image.format,
@@ -174,7 +174,7 @@ Image vk::makeImage(ImageCreateInfo const &ci)
     };
     image.allocationInfo = makeAllocInfo(ci.allocInfo);
 
-    VK_CHK(vmaCreateImage(image.allocator, &image.createInfo, &image.allocationInfo, &image.image, &image.allocation, nullptr));
+    CHECK_VK_RES(vmaCreateImage(image.allocator, &image.imageCreateInfo, &image.allocationInfo, &image.image, &image.allocation, nullptr));
 
     if(ci.data)
         writeImage(image, ci);
@@ -188,7 +188,7 @@ Image vk::makeImage(ImageCreateInfo const &ci)
             },
             .format = image.format
         };
-        VkSamplerCreateInfo samplerCI{
+        image.samplerCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
             .pNext = ci.sampler.borderColor == VK_BORDER_COLOR_FLOAT_CUSTOM_EXT ? &customBorder : nullptr,
             .flags = ci.sampler.flags,
@@ -204,11 +204,11 @@ Image vk::makeImage(ImageCreateInfo const &ci)
             .compareEnable = ci.sampler.compareEnable,
             .compareOp = ci.sampler.compareOp,
             .minLod = ci.sampler.minLod,
-            .maxLod = (float) image.createInfo.mipLevels,
+            .maxLod = (float) image.imageCreateInfo.mipLevels,
             .borderColor = ci.sampler.borderColor,
             .unnormalizedCoordinates = ci.sampler.unnormalizedCoordinates,
         };
-        VK_CHK(vkCreateSampler(ci.allocInfo.device, &samplerCI, nullptr, &image.sampler));
+        CHECK_VK_RES(vkCreateSampler(ci.allocInfo.device, &image.samplerCreateInfo, nullptr, &image.sampler));
     }
 
     if(ci.view.aspectMask != VK_IMAGE_ASPECT_NONE)
@@ -221,12 +221,12 @@ Image vk::makeImage(ImageCreateInfo const &ci)
             .subresourceRange = {
                 .aspectMask = ci.view.aspectMask,
                 .baseMipLevel = 0,
-                .levelCount = image.createInfo.mipLevels,
+                .levelCount = image.imageCreateInfo.mipLevels,
                 .baseArrayLayer = 0,
-                .layerCount = image.createInfo.arrayLayers,
+                .layerCount = image.imageCreateInfo.arrayLayers,
             }
         };
-        VK_CHK(vkCreateImageView(ci.allocInfo.device, &viewCI, nullptr, &image.view));
+        CHECK_VK_RES(vkCreateImageView(ci.allocInfo.device, &viewCI, nullptr, &image.view));
     }
 
     return image;
@@ -266,10 +266,10 @@ Buffer vk::makeBuffer(BufferCreateInfo const &ci)
         LOG_ERROR("Creating a buffer with size of 0!");
         return buffer;
     }
-    VK_CHK(vmaCreateBuffer(ci.allocInfo.allocator, &buffer.createInfo, &buffer.allocationInfo, &buffer.buffer, &buffer.allocation, nullptr));
+    CHECK_VK_RES(vmaCreateBuffer(ci.allocInfo.allocator, &buffer.createInfo, &buffer.allocationInfo, &buffer.buffer, &buffer.allocation, nullptr));
     
     if(ci.data || ci.map)
-        VK_CHK(vmaMapMemory(buffer.allocator, buffer.allocation, &buffer.mapped)); 
+        CHECK_VK_RES(vmaMapMemory(buffer.allocator, buffer.allocation, &buffer.mapped)); 
     if(ci.data)
         std::memcpy(buffer.mapped, ci.data, buffer.createInfo.size);
 
