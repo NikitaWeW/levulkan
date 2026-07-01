@@ -1,10 +1,18 @@
 // TODO: merge this into the engine
 
 #pragma once
-#include "nicecs/ecs.hpp"
 #include <cstdint>
 #include <mutex>
 #include <shared_mutex>
+#include <functional>
+#include "Exception.hpp"
+
+struct EcsException : EngineException {
+    inline explicit EcsException(std::string_view msg) : EngineException(msg) {}
+};
+#define ECS_ASSERT(x, msg) if(!static_cast<bool>(x)) { throw EcsException(msg); }
+
+#include "nicecs/ecs.hpp"
 
 class Entity;
 
@@ -56,11 +64,17 @@ public:
 
     /// @copydoc ecs::registry::view
     template<typename... Include, typename... Exclude>
-    std::vector<Entity> view(exclude<Exclude...> toExclude = exclude{}) const;
+    std::vector<Entity> const view(exclude<Exclude...> toExclude = exclude{}) const;
+    /// @copydoc ecs::registry::view
+    template<typename... Include, typename... Exclude>
+    std::vector<Entity> view(exclude<Exclude...> toExclude = exclude{});
 
     /// @copydoc ecs::registry::viewAny
     template<typename... May, typename... Exclude>
-    std::vector<Entity> viewAny(exclude<Exclude...> toExclude = exclude{}) const;
+    std::vector<Entity> const viewAny(exclude<Exclude...> toExclude = exclude{}) const;
+    /// @copydoc ecs::registry::viewAny
+    template<typename... May, typename... Exclude>
+    std::vector<Entity> viewAny(exclude<Exclude...> toExclude = exclude{});
 
     /// @copydoc ecs::registry::merged
     Registry merged(Registry const &other) const;
@@ -93,37 +107,68 @@ public:
         assert(pReg() && "Invalid registry!");
         return *pReg(); 
     }
+    inline operator ecs::entity() const { return mEntity; }
 
     template <typename component_t, class... Args>
-    inline void emplace(Args&&... args) { return reg()->emplace<component_t, Args...>(id(), std::forward<Args>(args)...); }
+    inline void emplace(Args&&... args) { assert(pReg()); return reg()->emplace<component_t, Args...>(id(), std::forward<Args>(args)...); }
 
     /// @copydoc ecs::registry::has
     template <typename component_t> 
-    inline bool has() const { return reg()->has<component_t>(id()); }
+    inline bool has() const { assert(pReg()); return reg()->has<component_t>(id()); }
 
     /// @copydoc ecs::registry::get
     template <typename component_t> 
-    inline component_t const &get() const { return reg()->get<component_t>(id()); }
+    inline component_t const &get() const { assert(pReg()); return reg()->get<component_t>(id()); }
     /// @copydoc ecs::registry::get
     template <typename component_t> 
-    inline component_t &get() { return reg()->get<component_t>(id()); }
+    inline component_t &get() { assert(pReg()); return reg()->get<component_t>(id()); }
 
     /// @copydoc ecs::registry::remove
     template <typename component_t> 
-    inline void remove() { return reg()->remove<component_t>(id()); }
+    inline void remove() { assert(pReg()); return reg()->remove<component_t>(id()); }
 
     /// @copydoc Registry::destroy
-    inline void destroy() { reg().destroy(*this); };
+    inline void destroy() { assert(pReg()); reg().destroy(*this); };
 
     /// @copydoc ecs::registry::size
-    inline std::size_t size() const { return reg()->size(id()); }
+    inline std::size_t size() const { assert(pReg()); return reg()->size(id()); }
 
     /// @copydoc ecs::registry::valid
-    /// Also checks if the registry is valid (not nullptr)
+    /// Also checks if the registry pointer is valid (not nullptr)
     inline bool valid() const { return pReg() && reg()->valid(id()); }
 
     inline bool operator==(Entity const &o) const { return mEntity == o.mEntity && pReg() == o.pReg(); }
     inline bool operator<(Entity const &o) const { return pReg() < o.pReg() || mEntity < o.mEntity; }
+};
+
+/// @brief Entity handle that requires specified components
+template<typename Op = std::logical_and<bool>, typename... Components>
+class RestrictedEntity : public Entity
+{
+private:
+    struct OpWrapper
+    {
+        bool obj;
+        inline OpWrapper operator%(OpWrapper const &rhs) {
+            return {Op{}(obj, rhs.obj)};
+        }
+    };
+public:
+    inline bool valid() const { 
+        if(!this->Entity::valid())
+            return false;
+        return (OpWrapper(this->has<Components>()) % ...).obj;
+    }
+    
+    inline RestrictedEntity() = default;
+    inline RestrictedEntity(Entity const &e) { *this = e; }
+    inline RestrictedEntity(Entity &&e) { *this = std::move(e); }
+    inline RestrictedEntity &operator=(Entity const &e) { 
+        ECS_ASSERT(valid(), "Invalid RestrictedEntity!");
+    }
+    inline RestrictedEntity &operator=(Entity &&e) { 
+        ECS_ASSERT(valid(), "Invalid RestrictedEntity!");
+    }
 };
 
 inline Registry::Registry(Registry const &o) { *this = o; }
@@ -143,49 +188,60 @@ inline Entity Registry::create()
 {
     return Entity{ this, getReg().create<Components_t...>() };
 }
-/// @copydoc ecs::registry::create
 template <typename... Components_t> 
 inline Entity Registry::create(Components_t&&... components)
 {
     return Entity{ this, getReg().create(std::forward<Components_t>(components)...) };
 }
-/// @copydoc ecs::registry::destroy
 inline void Registry::destroy(Entity const &entity)
 {
     getReg().destroy(entity.id());
 }
-/// @copydoc ecs::registry::size
 inline std::size_t Registry::size() const
 {
     return getReg().size();
 }
-/// @copydoc ecs::registry::view
 template<typename... Include, typename... Exclude>
-inline std::vector<Entity> Registry::view(exclude<Exclude...> toExclude) const
+inline std::vector<Entity> const Registry::view(exclude<Exclude...> toExclude) const
 {
     std::vector<Entity> res;
     for(auto const &e : getReg().view<Include...>(toExclude))
-        res.emplace_back(const_cast<Registry *>(this), e); // Whats the worst that could happen (clueless)
+        res.emplace_back(const_cast<Registry *>(this), e); // Should be fine because the entity is const
 
     return res;
 }
-/// @copydoc ecs::registry::viewAny
 template<typename... Include, typename... Exclude>
-inline std::vector<Entity> Registry::viewAny(exclude<Exclude...> toExclude) const
+inline std::vector<Entity> Registry::view(exclude<Exclude...> toExclude)
+{
+    std::vector<Entity> res;
+    for(auto const &e : getReg().view<Include...>(toExclude))
+        res.emplace_back(this, e);
+
+    return res;
+}
+template<typename... Include, typename... Exclude>
+inline std::vector<Entity> const Registry::viewAny(exclude<Exclude...> toExclude) const
 {
     std::vector<Entity> res;
     for(auto const &e : getReg().viewAny<Include...>(toExclude))
-        res.emplace_back(const_cast<Registry *>(this), e); // Please dont kill me for my sins
+        res.emplace_back(const_cast<Registry *>(this), e);
 
     return res;
 }
-/// @copydoc ecs::registry::merged
+template<typename... Include, typename... Exclude>
+inline std::vector<Entity> Registry::viewAny(exclude<Exclude...> toExclude)
+{
+    std::vector<Entity> res;
+    for(auto const &e : getReg().viewAny<Include...>(toExclude))
+        res.emplace_back(const_cast<Registry *>(this), e);
+
+    return res;
+}
 inline void Registry::merge(Registry const &other)
 {
     for(auto e : other.view())
         copy(e);
 }
-/// @copydoc ecs::registry::merged
 inline Registry Registry::merged(Registry const &other) const
 {
     Registry reg;

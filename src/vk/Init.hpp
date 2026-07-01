@@ -11,6 +11,7 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 #pragma once
 #include "vulkan.h"
 
+#include <unordered_set>
 #include <vector>
 #include <map>
 #include <optional>
@@ -59,7 +60,7 @@ struct QueueFamilies
     std::optional<uint32_t> presentQueue;
 
     SparseSet<VkDeviceQueueCreateInfo> deviceCreateInfo;
-    SparseSet<uint32_t> uniqueFamilies;
+    std::unordered_set<uint32_t> uniqueFamilies;
     uint32_t count = 0;
 
     /// @brief Get the queue from a queue family

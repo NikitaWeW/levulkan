@@ -174,7 +174,7 @@ static void addToFamilies(QueueFamilies &indices, uint32_t i)
         .queueCount = 1,
         .pQueuePriorities = &priorities
     };
-    indices.uniqueFamilies[i] = i;
+    indices.uniqueFamilies.insert(i);
     ++indices.count;
 }
 static bool complete(QueueFamilies const &families, std::vector<VkQueueFlagBits> const &queues, bool offscreen)

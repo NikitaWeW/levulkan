@@ -107,7 +107,7 @@ static std::string printTexture(Entity e)
     auto const &texture = e.get<Texture>();
     return fmt::format("e{}, \"{:<30} {}x{}, {:>3} {} mips", e.id(), texture.path + "\",", texture.bitmap.size.x, texture.bitmap.size.y,(texture.srgb ? "srgb" : "not srgb"), texture.numMipLevels);
 }
-static void printModelData(Entity e)
+[[maybe_unused]] static void printModelData(Entity e)
 {
     assert(e.valid() && e.has<Model>());
     Model const &model = e.get<Model>();
@@ -202,6 +202,26 @@ static VkFence createFence(VkDevice dev)
     };
     CHECK_VK_RES(vkCreateFence(dev, &fenceCI, nullptr, &fence));
     return fence;
+}
+static void updateUniformBufferDescriptors(vk::RingBuffer const &buffer, vk::Pipeline const &pipeline, uint32_t set = 0, uint32_t desc = 0)
+{
+    std::vector<VkWriteDescriptorSet> writes;
+    for(uint i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    {
+        VkDescriptorBufferInfo bufferInfo{
+            .buffer = buffer.getBuffer().buffer,
+            .range = sizeof(UniformBuffer)
+        };
+        writes.emplace_back(VkWriteDescriptorSet{
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = pipeline.layout.descSets[i].get(set),
+            .dstBinding = desc,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+            .pBufferInfo = &bufferInfo
+        });
+    }
+    vkUpdateDescriptorSets(pipeline.device, writes.size(), writes.data(), 0, nullptr);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -580,37 +600,6 @@ int main(int argc, char **argv)
 
     ////////////////////////////////////////////////////////////////
 
-    vk::ImageCreateInfo depthImageCreateInfo{
-        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-        .allocInfo = ALLOCATION_INFO,
-        .dimensions = {
-            .width = window.size.x,
-            .height = window.size.y,
-        },
-        .view = {
-            .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
-            .imageType = VK_IMAGE_TYPE_2D,
-            .viewType = VK_IMAGE_VIEW_TYPE_2D
-        },
-    };
-    std::vector<VkFormat> depthFormatList{ VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM_S8_UINT };
-    for(VkFormat &format : depthFormatList) {
-        VkFormatProperties2 formatProperties{ .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2 };
-        vkGetPhysicalDeviceFormatProperties2(initRes.physicalDevice, format, &formatProperties);
-        if(formatProperties.formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
-            depthImageCreateInfo.format = format;
-            break;
-        }
-    }
-
-    if(depthImageCreateInfo.format == VK_FORMAT_UNDEFINED)
-    {
-        LOG_ERROR("Failed to pick depth image format!");
-        depthImageCreateInfo.format = depthFormatList.at(0);
-    }
-
-    vk::Image &depthImage = sReg.create(vk::makeImage(depthImageCreateInfo)).get<vk::Image>();
-
     std::vector<VkDescriptorImageInfo> imageInfos;
     for(auto eImage : alloc.getProcessedImages())
     {
@@ -631,201 +620,261 @@ int main(int argc, char **argv)
         .map = true
     });
 
-    vk::GraphicsPipelineCreateInfo pipelineCI{
-        .layout = {
-            .descriptorTypeOverride = {
-                {{.set = 0, .binding = 0}, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC}
-            },
-            .descriptorBindingFlags = {
-                // Explicitly state that the count is variable, because compiler might optimize it away
-                {{.set = 1, .binding = 0}, VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT},
-            },
-            .descriptorWrites = {
-                {{.set = 0, .binding = 0}, vk::PipelineLayoutCreateInfo::DescriptorWrite{
-                    .bufferInfo = {{
-                        .buffer = uniformBuffer.getBuffer().buffer,
-                        .offset = 0,
-                        .range = sizeof(UniformBuffer)
-                    }}
-                }},
-                {{.set = 1, .binding = 0}, vk::PipelineLayoutCreateInfo::DescriptorWrite{
-                    .imageInfo = imageInfos
-                }},
-            },
-            .framesInFlight = MAX_FRAMES_IN_FLIGHT,
-        },
-        .dynamicState = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR },
-        .allocator = initRes.vma,
-        .input = {
-            .bindings = {
-                { 0, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX },
-                { 1, sizeof(glm::vec2), VK_VERTEX_INPUT_RATE_VERTEX },
-                { 2, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX },
-                { 3, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX },
-            },
-            .attributes = {
-                { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0 },
-                { 1, 1, VK_FORMAT_R32G32_SFLOAT,    0 },
-                { 2, 2, VK_FORMAT_R32G32B32_SFLOAT, 0 },
-                { 3, 3, VK_FORMAT_R32G32B32_SFLOAT, 0 },
-            },
-        },
-        .attachments = {
-            .color = { swapchain.createInfo.imageFormat },
-            .depth = depthImage.format,
-        },
-        .depthStencil = {
-        },
-        .blending = {
-            .attachments = { DEFAULT_BLENDING }
+    /////////////////////////////////////////////////////////
+
+    vk::ImageCreateInfo DEPTH_ATTACHMENT_CREATE_INFO{
+        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        .allocInfo = ALLOCATION_INFO,
+        .dimensions = {swapchain.createInfo.imageExtent.width, swapchain.createInfo.imageExtent.height},
+        .view = {
+            .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+            .imageType = VK_IMAGE_TYPE_2D,
+            .viewType = VK_IMAGE_VIEW_TYPE_2D
         },
     };
-    vk::Pipeline pipeline = vk::makePipeline(shader, pipelineCI);
+    std::vector<VkFormat> depthFormatList{ VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM_S8_UINT };
+    for(VkFormat &format : depthFormatList) {
+        VkFormatProperties2 formatProperties{ .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2 };
+        vkGetPhysicalDeviceFormatProperties2(initRes.physicalDevice, format, &formatProperties);
+        if(formatProperties.formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+            DEPTH_ATTACHMENT_CREATE_INFO.format = format;
+            break;
+        }
+    }
+    if(DEPTH_ATTACHMENT_CREATE_INFO.format == VK_FORMAT_UNDEFINED)
+    {
+        LOG_ERROR("Failed to pick depth image format!");
+        DEPTH_ATTACHMENT_CREATE_INFO.format = depthFormatList.at(0);
+    }
 
-    vk::RenderGraph renderGraph;
-    renderGraph.addPass({
-        .name = "F",
-        .reads = { {Entity(nullptr, 2), "E"}, {Entity(nullptr, 0), "B"}, {Entity(nullptr, 3), "C"} },
-        .writes = {}
-    });
-    renderGraph.addPass({
-        .name = "D",
-        .reads = { {Entity(nullptr, 1), "A"} },
-        .writes = { {Entity(nullptr, 1)} }
-    }); 
-    renderGraph.addPass({
-        .name = "A",
-        .reads = {},
-        .writes = { {Entity(nullptr, 0)}, {Entity(nullptr, 1)} }
-    });
-    renderGraph.addPass({
-        .name = "E",
-        .reads = { {Entity(nullptr, 0), "A"}, {Entity(nullptr, 1), "D"} },
-        .writes = { {Entity(nullptr, 2)} }
-    });
-    renderGraph.addPass({
-        .name = "B",
-        .reads = { {Entity(nullptr, 0), "A"} },
-        .writes = { {Entity(nullptr, 0)} }
-    });
-    renderGraph.addPass({
-        .name = "C",
-        .reads = { {Entity(nullptr, 1), "A"} },
-        .writes = { {Entity(nullptr, 3)} }
-    });
-
-/* 
-    renderGraph.addPass({
-        .name = "B",
-        .reads = {{Entity(nullptr, 0), "A"}},
-        .writes = {{Entity(nullptr, 0)}}
-    });
-    renderGraph.addPass({
-        .name = "D",
-        .reads = {{Entity(nullptr, 1), "A"}, {Entity(nullptr, 0), "Accumulation"}},
-        .writes = {{Entity(nullptr, 1)}}
-    });
-    renderGraph.addPass({
-        .name = "E",
-        .reads = {{Entity(nullptr, 0), "A"}, {Entity(nullptr, 1), "D"}},
-        .writes = {{Entity(nullptr, 2)}}
-    });
-    renderGraph.addPass({
-        .name = "A",
-        .writes = {{Entity(nullptr, 0)}, {Entity(nullptr, 1)}}
-    });
-    renderGraph.addPass({
-        .name = "F",
-        .reads = {{Entity(nullptr, 0), "B"}, {Entity(nullptr, 2), "E"}, {Entity(nullptr, 3), "C"}}
-    });
-    renderGraph.addPass({
-        .name = "C",
-        .reads = {{Entity(nullptr, 1), "A"}},
-        .writes = {{Entity(nullptr, 3)}}
-    });
-
-    renderGraph.addPass({
-        .name = "Custom",
-        .reads = {{Entity(nullptr, 1), "D"}, {Entity(nullptr, 0), "A"}},
-        .writes = {{Entity(nullptr, 10)}}
-    });
-    renderGraph.addPass({
-        .name = "Accumulation",
-        .reads = {{Entity(nullptr, 0), ""}},
-        .writes = {{Entity(nullptr, 0)}}
-    });
-    renderGraph.findPass("F")->reads.emplace_back(vk::RenderPass::ResourceDependency{Entity(nullptr, 10), "Custom"});
-*/
-/* 
-    auto gbuffer_albedo = sReg.create(
-        vk::ImageCreateInfo{
-            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-            .allocInfo = ALLOCATION_INFO,
-            .format = VK_FORMAT_R8G8B8_UNORM,
-            .dimensions = {1, 1},
+    vk::ImageCreateInfo COLOR_ATTACHMENT_CREATE_INFO{
+        .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .allocInfo = ALLOCATION_INFO,
+        .format = VK_FORMAT_R8G8B8A8_UNORM,
+        .dimensions = {swapchain.createInfo.imageExtent.width, swapchain.createInfo.imageExtent.height},
+        .view = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .imageType = VK_IMAGE_TYPE_2D,
+            .viewType = VK_IMAGE_VIEW_TYPE_2D
         },
+    };
+
+    ///////////////////////////////////////////////////
+
+    bool uniformBufferRealloc = false;
+    uint frameIndex = 0;
+    uint imageIndex = 0;
+    float deltatime = 1e-6;
+
+    auto eCamera = Controller::createCamera(sReg, {0, 2, 4}, {0, 0, 0});
+    Controller::Camera &camera = eCamera.get<Controller::Camera>();
+
+    auto gbuffer_albedo = sReg.create(
+        vk::makeImage(COLOR_ATTACHMENT_CREATE_INFO),
         ResizeToSwapchain{}
     );
     auto gbuffer_normal = sReg.create(
-        vk::ImageCreateInfo{
+        vk::makeImage(vk::ImageCreateInfo{
             .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
             .allocInfo = ALLOCATION_INFO,
-            .format = VK_FORMAT_R8G8B8_UNORM,
-            .dimensions = {1, 1},
-        },
+            .format = VK_FORMAT_R8G8B8A8_UNORM,
+            .dimensions = {swapchain.createInfo.imageExtent.width, swapchain.createInfo.imageExtent.height},
+        }),
         ResizeToSwapchain{}
     );
     auto gbuffer_depth = sReg.create(
-        vk::ImageCreateInfo{
-            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-            .allocInfo = ALLOCATION_INFO,
-            .format = VK_FORMAT_R8G8B8_UNORM,
-            .dimensions = {1, 1},
-        },
+        vk::makeImage(COLOR_ATTACHMENT_CREATE_INFO),
         ResizeToSwapchain{}
     );
     auto hdr_color = sReg.create(
-        vk::ImageCreateInfo{
-            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-            .allocInfo = ALLOCATION_INFO,
-            .format = VK_FORMAT_R8G8B8_UNORM,
-            .dimensions = {1, 1},
-        },
+        vk::makeImage(COLOR_ATTACHMENT_CREATE_INFO),
         ResizeToSwapchain{}
     );
     // r - roughness
     // g - metallic
-    auto gbuffer_roughness = sReg.create(
-        vk::ImageCreateInfo{
-            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-            .allocInfo = ALLOCATION_INFO,
-            .format = VK_FORMAT_R8G8B8_UNORM,
-            .dimensions = {1, 1},
-        },
+    auto gbuffer_material = sReg.create(
+        vk::makeImage(COLOR_ATTACHMENT_CREATE_INFO),
         ResizeToSwapchain{}
     );
+    
+    ///////////////////////////////////////////////////
+
+    auto gbuffer_pass = [&](vk::RenderPass const &pass, VkCommandBuffer cb) {
+        if(uniformBufferRealloc)
+            updateUniformBufferDescriptors(uniformBuffer, pass.pipeline);
+
+        
+        // Update matrix data
+        UniformBuffer uniformBufferData;
+        uniformBufferData.uMatrixData.projMat = camera.projMat;
+        uniformBufferData.uMatrixData.viewMat = camera.viewMat;
+
+        VkRenderingAttachmentInfo colorAttachmentInfo{
+            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView = swapchain.imageViews[imageIndex],
+            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .clearValue{.color{{ 0.0f, 0.0f, 0.2f, 1.0f }}}
+        };
+        VkRenderingAttachmentInfo depthAttachmentInfo{
+            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView = gbuffer_depth.get<vk::Image>().view,
+            .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .clearValue = {.depthStencil = {1.0f,  0}}
+        };
+
+        VkRenderingInfo renderingInfo{
+            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+            .renderArea = {
+                .offset = { 0, 0 },
+                .extent = { window.size.x, window.size.y },
+            },
+            .layerCount = 1,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &colorAttachmentInfo,
+            .pDepthAttachment = &depthAttachmentInfo
+        };
+
+        vkCmdBeginRendering(cb, &renderingInfo);
+
+        VkViewport vp{
+            .x = 0,
+            .y = static_cast<float>(window.size.y),
+            .width = static_cast<float>(window.size.x),
+            .height = -static_cast<float>(window.size.y),
+            .minDepth = 0.0f,
+            .maxDepth = 1.0f
+        };
+        vkCmdSetViewport(cb, 0, 1, &vp);
+        VkRect2D scissor{ .extent{ .width = window.size.x, .height = window.size.y } };
+        vkCmdSetScissor(cb, 0, 1, &scissor);
+
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.pipeline);
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 1, 1, &pass.pipeline.layout.descSets[frameIndex].get(1), 0, nullptr);
+
+        for(auto eInstance : sReg.view<ModelInstance>())
+        {
+            auto const &instance = eInstance.get<ModelInstance>();
+            if(!instance.eModel.valid())
+            {
+                LOG_ERROR("Model instance e{} has invalid eModel {}", eInstance.id(), instance.eModel.id());
+                continue;
+            }
+            if(!instance.eModel.has<VulkanModel>())
+            {
+                LOG_ERROR("Model e{} doesent have VulkanModel component!", instance.eModel.id());
+                continue;
+            }
+
+            uniformBufferData.uMatrixData.modelMat = {1.0f};
+            if(eInstance.has<Transform>())
+                uniformBufferData.uMatrixData.modelMat = eInstance.get<Transform>().getMat();
+
+            uniformBufferData.uMatrixData.normMat = glm::transpose(glm::inverse(glm::mat3(uniformBufferData.uMatrixData.modelMat)));
+
+            auto &model = instance.eModel.get<VulkanModel>();
+            for(auto &mesh : model.meshes)
+            {
+                uniformBufferData.uMaterial = mesh.material;
+
+                uint32_t offset = uniformBuffer.request(sizeof(UniformBuffer), frameIndex, properties.limits.minUniformBufferOffsetAlignment);
+                vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 0, 1, &pass.pipeline.layout.descSets[frameIndex].get(0), 1, &offset);
+                std::memcpy(static_cast<char *>(uniformBuffer.getBuffer().mapped) + offset, &uniformBufferData, sizeof(UniformBuffer));
+
+                VkDeviceSize vOffset = 0;
+                vkCmdBindVertexBuffers(cb, 0, 1, &mesh.buffers.pos .buffer, &vOffset);
+                vkCmdBindVertexBuffers(cb, 1, 1, &mesh.buffers.uv  .buffer, &vOffset);
+                vkCmdBindVertexBuffers(cb, 2, 1, &mesh.buffers.norm.buffer, &vOffset);
+                vkCmdBindVertexBuffers(cb, 3, 1, &mesh.buffers.tan .buffer, &vOffset);
+                vkCmdBindIndexBuffer(cb, mesh.buffers.idx.buffer, 0, VK_INDEX_TYPE_UINT32);
+        
+                vkCmdDrawIndexed(cb, mesh.indexCount, 1, 0, 0, 0);
+            }
+        }
+
+        vkCmdEndRendering(cb);
+    };
+
+    ///////////////////////////////////////////////////
+
+    vk::ShaderCreateInfo gbuffer_shader{
+        .src = "shaders/gbuffer.glsl",
+        .bin = "shaders-bin/gbuffer",
+        .device = device,
+    };
+
+    ///////////////////////////////////////////////////
+
+    vk::RenderGraph renderGraph(vk::RenderGraph::RenderGraphCreateInfo{
+        .device = device,
+        .commandPool = commandPool,
+        .queueFamilies = initRes.queueFamilies,
+    });
+
+    // TODO: automate resource creation
+    vk::RenderPass::ResourceTraits const COLOR_ATTACHMENT_TRAITS{
+        .imageTraits = {
+            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+            .layout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+        },
+        .access = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+        .stages = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT
+    };
+    vk::RenderPass::ResourceTraits const DEPTH_STENCIL_ATTACHMENT_TRAITS{
+        .imageTraits = {
+            .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+            .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
+            .layout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+        },
+        .access = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        .stages = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT
+    };
+    vk::RenderPass::ResourceTraits const SHADER_SAMPLED_TRAITS{
+        .imageTraits = {
+            .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+            .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        },
+        .access = VK_ACCESS_2_SHADER_READ_BIT,
+        .stages = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT
+    };
     renderGraph.addPass({
         .name = "G Buffer",
-        .writes = {gbuffer_albedo, gbuffer_normal, gbuffer_roughness}
+        .writes = {
+            {gbuffer_albedo,   COLOR_ATTACHMENT_TRAITS        }, 
+            {gbuffer_normal,   COLOR_ATTACHMENT_TRAITS        }, 
+            {gbuffer_material, COLOR_ATTACHMENT_TRAITS        },
+            {gbuffer_depth,    DEPTH_STENCIL_ATTACHMENT_TRAITS}
+        },
+        .callback = gbuffer_pass,
+        .shader = vk::makeShader(gbuffer_shader)
     });
     renderGraph.addPass({
         .name = "Lighting",
-        .reads = {{gbuffer_albedo, "G Buffer"}, {gbuffer_normal, "G Buffer"}, {gbuffer_roughness, "G Buffer"}},
-        .writes = {hdr_color}
+        .reads = {
+            {gbuffer_albedo,   "G Buffer", SHADER_SAMPLED_TRAITS}, 
+            {gbuffer_normal,   "G Buffer", SHADER_SAMPLED_TRAITS}, 
+            {gbuffer_material, "G Buffer", SHADER_SAMPLED_TRAITS}
+        },
+        .writes = {{hdr_color, COLOR_ATTACHMENT_TRAITS}}
     });
     renderGraph.addPass({
         .name = "Post processing",
-        .reads = {{hdr_color, "Lighting"}},
-        .writes = {hdr_color}
+        .reads = {{hdr_color, "Lighting", SHADER_SAMPLED_TRAITS}},
+        .writes = {{hdr_color, COLOR_ATTACHMENT_TRAITS}}
     });
     renderGraph.addPass({
         .name = "Swapchain blit",
-        .reads = {{hdr_color, "Post processing"}},
-        .writes = {eSwapchain}
+        .reads = {{hdr_color, "Post processing", SHADER_SAMPLED_TRAITS}},
+        .writes = {{eSwapchain, COLOR_ATTACHMENT_TRAITS}}
     });
-*/
 
-    assert(renderGraph.build());
+    auto renderGraphResult = renderGraph.build();
+    assert(renderGraphResult.valid);
     std::ofstream("RenderGraph.dot", std::ios::trunc) << renderGraph.dumpGraphviz(4);
 
     ////////////////////////////////////////////////////////////////
@@ -867,14 +916,8 @@ int main(int argc, char **argv)
         };
         vkCreateSemaphore(device, &semaphoreCI, nullptr, &semaphore);
     }
-
-    uint frameIndex = 0;
-    uint imageIndex = 0;
-    float deltatime = 1e-6;
-
-    Controller::Camera &camera = Controller::createCamera(sReg, {0, 2, 4}, {0, 0, 0}).get<Controller::Camera>();
+    
     Controller cameraController;
-
     auto eListener = sReg.create<io::EventListener>();
 
     VkQueue presentQueue;
@@ -900,8 +943,8 @@ int main(int argc, char **argv)
             vkDeviceWaitIdle(device);
 
             resizeSwapchain(swapchain, windowExtent);
-
-            for(auto e : sReg.view<vk::Image, vk::ImageCreateInfo, ResizeToSwapchain>())
+ 
+            for(auto e : sReg.view<vk::Image, ResizeToSwapchain>())
             {
                 auto &image = e.get<vk::Image>();
                 auto &ci = e.get<vk::ImageCreateInfo>();
@@ -922,16 +965,16 @@ int main(int argc, char **argv)
 
             if(event.key == GLFW_KEY_R && event.action == GLFW_PRESS)
             {
-                LOG_INFO("Recompiling \"{}\"", shader.createInfo.src);
-                auto newShader = vk::makeShader(shader.createInfo);
-                if(newShader.valid)
-                {
-                    vkDeviceWaitIdle(device);
-                    vk::destroy(shader);
-                    vk::destroy(pipeline);
-                    shader = newShader;
-                    pipeline = vk::makePipeline(shader, pipelineCI);
-                }
+                // LOG_INFO("Recompiling \"{}\"", shader.createInfo.src);
+                // auto newShader = vk::makeShader(shader.createInfo);
+                // if(newShader.valid)
+                // {
+                //     vkDeviceWaitIdle(device);
+                //     vk::destroy(shader);
+                //     vk::destroy(pipeline);
+                //     shader = newShader;
+                //     pipeline = vk::makePipeline(shader, pipelineCI);
+                // }
             }
         }
 
@@ -953,7 +996,7 @@ int main(int argc, char **argv)
                 };
                 writes.emplace_back(VkWriteDescriptorSet{
                     .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                    .dstSet = pipeline.layout.descSets[i].get(0),
+                    .dstSet = pass.pipeline.layout.descSets[i].get(0),
                     .dstBinding = 0,
                     .descriptorCount = 1,
                     .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
@@ -976,11 +1019,7 @@ int main(int argc, char **argv)
             break;
         }
 
-        // Update matrix data
         cameraController.update(sReg, deltatime);
-        UniformBuffer uniformBufferData;
-        uniformBufferData.uMatrixData.projMat = camera.projMat;
-        uniformBufferData.uMatrixData.viewMat = camera.viewMat;
 
         // Record command buffer
         auto cb = commandBuffers[frameIndex];
@@ -992,115 +1031,7 @@ int main(int argc, char **argv)
         };
         CHECK_VK_RES(vkBeginCommandBuffer(cb, &cbBI));
 
-		vk::insertImageMemoryBarrier(cb, 
-            swapchain.images[imageIndex],
-            0,
-            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-            VK_IMAGE_LAYOUT_UNDEFINED,
-            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            VkImageSubresourceRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 }
-        );
-		vk::insertImageMemoryBarrier(cb,
-            depthImage.image, 
-            0, 
-            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, 
-            VK_IMAGE_LAYOUT_UNDEFINED, 
-            VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 
-            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, 
-            VkImageSubresourceRange{ VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1 }
-        );
-
-        VkRenderingAttachmentInfo colorAttachmentInfo{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView = swapchain.imageViews[imageIndex],
-            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-            .clearValue{.color{{ 0.0f, 0.0f, 0.2f, 1.0f }}}
-        };
-        VkRenderingAttachmentInfo depthAttachmentInfo{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView = depthImage.view,
-            .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-            .clearValue = {.depthStencil = {1.0f,  0}}
-        };
-
-        VkRenderingInfo renderingInfo{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-            .renderArea = {
-                .offset = { 0, 0 },
-                .extent = windowExtent,
-            },
-            .layerCount = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &colorAttachmentInfo,
-            .pDepthAttachment = &depthAttachmentInfo
-        };
-
-        vkCmdBeginRendering(cb, &renderingInfo);
-
-        VkViewport vp{
-            .x = 0,
-            .y = static_cast<float>(window.size.y),
-            .width = static_cast<float>(window.size.x),
-            .height = -static_cast<float>(window.size.y),
-            .minDepth = 0.0f,
-            .maxDepth = 1.0f
-        };
-        vkCmdSetViewport(cb, 0, 1, &vp);
-        VkRect2D scissor{ .extent{ .width = window.size.x, .height = window.size.y } };
-        vkCmdSetScissor(cb, 0, 1, &scissor);
-
-        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
-        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout.layout, 1, 1, &pipeline.layout.descSets[frameIndex].get(1), 0, nullptr);
-
-        for(auto eInstance : sReg.view<ModelInstance>())
-        {
-            auto const &instance = eInstance.get<ModelInstance>();
-            if(!instance.eModel.valid())
-            {
-                LOG_ERROR("Model instance e{} has invalid eModel {}", eInstance.id(), instance.eModel.id());
-                continue;
-            }
-            if(!instance.eModel.has<VulkanModel>())
-            {
-                LOG_ERROR("Model e{} doesent have VulkanModel component!", instance.eModel.id());
-                continue;
-            }
-
-            uniformBufferData.uMatrixData.modelMat = {1.0f};
-            if(eInstance.has<Transform>())
-                uniformBufferData.uMatrixData.modelMat = eInstance.get<Transform>().getMat();
-
-            uniformBufferData.uMatrixData.normMat = glm::transpose(glm::inverse(glm::mat3(uniformBufferData.uMatrixData.modelMat)));
-
-            auto &model = instance.eModel.get<VulkanModel>();
-            for(auto &mesh : model.meshes)
-            {
-                uniformBufferData.uMaterial = mesh.material;
-
-                uint32_t offset = uniformBuffer.request(sizeof(UniformBuffer), frameIndex, properties.limits.minUniformBufferOffsetAlignment);
-                vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout.layout, 0, 1, &pipeline.layout.descSets[frameIndex].get(0), 1, &offset);
-                std::memcpy(static_cast<char *>(uniformBuffer.getBuffer().mapped) + offset, &uniformBufferData, sizeof(UniformBuffer));
-
-                VkDeviceSize vOffset = 0;
-                vkCmdBindVertexBuffers(cb, 0, 1, &mesh.buffers.pos .buffer, &vOffset);
-                vkCmdBindVertexBuffers(cb, 1, 1, &mesh.buffers.uv  .buffer, &vOffset);
-                vkCmdBindVertexBuffers(cb, 2, 1, &mesh.buffers.norm.buffer, &vOffset);
-                vkCmdBindVertexBuffers(cb, 3, 1, &mesh.buffers.tan .buffer, &vOffset);
-                vkCmdBindIndexBuffer(cb, mesh.buffers.idx.buffer, 0, VK_INDEX_TYPE_UINT32);
-        
-                vkCmdDrawIndexed(cb, mesh.indexCount, 1, 0, 0, 0);
-            }
-        }
-
-        vkCmdEndRendering(cb);
-
+        // Swapchain barrier
         VkImageMemoryBarrier2 barrierPresent{
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
             .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
