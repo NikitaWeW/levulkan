@@ -268,4 +268,17 @@ namespace std {
 }
 
 template <typename T>
-using SparseSet = ecs::sparse_set<T>;
+class SparseSet : public ecs::sparse_set<T>
+{
+public:
+    using ecs::sparse_set<T>::sparse_set;
+
+    /// @brief Get a range of the dense data.
+    inline std::ranges::subrange<T *> range() {
+        return {this->pDense(), this->pDense() + this->size()};
+    }
+    /// @copydoc range
+    inline std::ranges::subrange<T const *> range() const {
+        return {this->dense().data(), this->dense().data() + this->size()};
+    }
+};
