@@ -28,7 +28,6 @@ struct AllocationCreateInfo
 
 struct BufferCreateInfo
 {
-    ///
     VkBufferUsageFlags usage = 0;
     VkBufferCreateFlags createFlags = 0;
     AllocationCreateInfo allocInfo;
@@ -46,7 +45,8 @@ struct Buffer
     VmaAllocation allocation = VK_NULL_HANDLE;
     
     VmaAllocator allocator = VK_NULL_HANDLE;
-    VkBufferCreateInfo createInfo;
+    BufferCreateInfo createInfo;
+    VkBufferCreateInfo bufferCreateInfo;
     VmaAllocationCreateInfo allocationInfo;
 
     VkDeviceAddress deviceAddress = 0;
@@ -83,33 +83,6 @@ inline Buffer makeBuffer(VmaAllocator allocator, std::vector<T> const &vec, VkBu
     });
 }
 
-/// @brief The image allocated on the gpu
-struct Image
-{
-    VmaAllocator allocator = VK_NULL_HANDLE;
-    VkDevice device = VK_NULL_HANDLE;
-
-    VmaAllocation allocation = VK_NULL_HANDLE;
-    VkImage image = VK_NULL_HANDLE;
-    VkImageView view = VK_NULL_HANDLE; ///< A view on the entire texture in the original format.
-    VkSampler sampler = VK_NULL_HANDLE;
-
-    /// The transfer buffer.
-    /// Free anytime after submitting the command buffer.
-    Buffer srcBuffer;
-    
-    VkImageCreateInfo imageCreateInfo;
-    VkSamplerCreateInfo samplerCreateInfo;
-    VmaAllocationCreateInfo allocationInfo;
-    VkImageType imageType = VK_IMAGE_TYPE_2D;
-    VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D;
-    
-    VkImageUsageFlags usage = 0;
-    VkFormat format = VK_FORMAT_UNDEFINED;
-
-    /// @brief A small helper function that checks if necessary members handles are not null
-    bool valid() const; 
-};
 struct ImageCreateInfo
 {
     /// VK_IMAGE_USAGE_TRANSFER_XXX_BIT is added automatically if data is not nullptr.
@@ -156,6 +129,34 @@ struct ImageCreateInfo
         VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D;
     } view;
     void const *data = nullptr;
+};
+/// @brief The image allocated on the gpu
+struct Image
+{
+    VmaAllocator allocator = VK_NULL_HANDLE;
+    VkDevice device = VK_NULL_HANDLE;
+
+    VmaAllocation allocation = VK_NULL_HANDLE;
+    VkImage image = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE; ///< A view on the entire texture in the original format.
+    VkSampler sampler = VK_NULL_HANDLE;
+
+    /// The transfer buffer.
+    /// Free anytime after submitting the command buffer.
+    Buffer srcBuffer;
+    
+    ImageCreateInfo createInfo;
+    VkImageCreateInfo imageCreateInfo;
+    VkSamplerCreateInfo samplerCreateInfo;
+    VmaAllocationCreateInfo allocationInfo;
+    VkImageType imageType = VK_IMAGE_TYPE_2D;
+    VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D;
+    
+    VkImageUsageFlags usage = 0;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+
+    /// @brief A small helper function that checks if necessary members handles are not null
+    bool valid() const; 
 };
 
 Image makeImage(ImageCreateInfo const &ci);

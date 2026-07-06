@@ -146,6 +146,7 @@ Image vk::makeImage(ImageCreateInfo const &ci)
     Image image{
         .allocator = ci.allocInfo.allocator,
         .device = ci.allocInfo.device,
+        .createInfo = ci,
         .imageType = ci.view.imageType,
         .viewType = ci.view.viewType,
         .usage = ci.usage,
@@ -246,9 +247,10 @@ Buffer vk::makeBuffer(BufferCreateInfo const &ci)
 
     Buffer buffer{
         .allocator = ci.allocInfo.allocator,
+        .createInfo = ci
     };
 
-    buffer.createInfo = {
+    buffer.bufferCreateInfo = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = ci.size,
         .usage = ci.usage,
@@ -258,20 +260,20 @@ Buffer vk::makeBuffer(BufferCreateInfo const &ci)
 
     if(ci.data || ci.map)
         buffer.allocationInfo.flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-    if(buffer.createInfo.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
+    if(buffer.bufferCreateInfo.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
         buffer.allocationInfo.requiredFlags |= VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
 
-    if(buffer.createInfo.size == 0)
+    if(buffer.bufferCreateInfo.size == 0)
     {
         LOG_ERROR("Creating a buffer with size of 0!");
         return buffer;
     }
-    CHECK_VK_RES(vmaCreateBuffer(ci.allocInfo.allocator, &buffer.createInfo, &buffer.allocationInfo, &buffer.buffer, &buffer.allocation, nullptr));
+    CHECK_VK_RES(vmaCreateBuffer(ci.allocInfo.allocator, &buffer.bufferCreateInfo, &buffer.allocationInfo, &buffer.buffer, &buffer.allocation, nullptr));
     
     if(ci.data || ci.map)
         CHECK_VK_RES(vmaMapMemory(buffer.allocator, buffer.allocation, &buffer.mapped)); 
     if(ci.data)
-        std::memcpy(buffer.mapped, ci.data, buffer.createInfo.size);
+        std::memcpy(buffer.mapped, ci.data, buffer.bufferCreateInfo.size);
 
     return buffer;
 }
