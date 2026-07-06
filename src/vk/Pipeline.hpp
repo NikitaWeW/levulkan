@@ -33,8 +33,10 @@ struct Pipeline
     {
         VkPipelineLayout layout;
         SparseSet<VkDescriptorSetLayout> descLayouts;
-        std::vector<SparseSet<VkDescriptorSet>> descSets; ///< Per frame in flight
+        SparseSet<VkDescriptorSet> descSets;
         VkDescriptorPool descPool;
+
+        void *_reflection = nullptr; // Internal
     };
 
     Type type = Type::INVALID;
@@ -43,48 +45,34 @@ struct Pipeline
     // Owning
     VkPipeline pipeline;
     Layout layout;
-    /// Descriptor buffers allocated automatically. 
-    /// Frame -> binding
-    /// Of size blockSize * descCout
-    std::vector<std::map<Pipeline::DescriptorBinding, Buffer>> descResources; 
 
     // Not owning
     VkDevice device;
     VmaAllocator allocator;
-
-    /// @brief Access the automatically allocated buffer.
-    /// @param binding The buffer binding.
-    /// @param frame The frame index.
-    /// @param index The array index.
-    inline Buffer const &getBuffer(Pipeline::DescriptorBinding binding, uint frame = 0) const 
-    { 
-        return descResources.at(frame).at(binding); 
-    }
 };
 // FIXME: this runs on hopes and dreams
+struct DescriptorWrite
+{
+    uint32_t dstSet = 0;
+    uint32_t dstBinding = 0;
+    uint32_t dstArrayElement = 0;
+
+    // One of
+    std::vector<VkDescriptorImageInfo> imageInfo;
+    std::vector<VkDescriptorBufferInfo> bufferInfo;
+    std::vector<VkBufferView> texelBufferView;
+
+    inline uint32_t size() const { return std::max(imageInfo.size(), std::max(bufferInfo.size(), texelBufferView.size())); }
+};
 struct PipelineLayoutCreateInfo
 {
-    struct DescriptorWrite
-    {
-        uint32_t dstFrame = 0;
-        uint32_t dstArrayElement = 0;
-
-        // One of
-        std::vector<VkDescriptorImageInfo> imageInfo;
-        std::vector<VkDescriptorBufferInfo> bufferInfo;
-        std::vector<VkBufferView> texelBufferView;
-
-        inline uint32_t size() const { return std::max(imageInfo.size(), std::max(bufferInfo.size(), texelBufferView.size())); }
-    };
-
     std::map<Pipeline::DescriptorBinding, VkDescriptorType> descriptorTypeOverride; ///< Optional overrides of the descriptor type for specific bindings. Useful to make some descriptors dynamic.
-    std::map<uint32_t, VkDescriptorSetLayoutCreateFlags> descriptorSetFlags; ///< Optional flags for descriptor sets.
     std::map<Pipeline::DescriptorBinding, VkDescriptorBindingFlags> descriptorBindingFlags; ///< Optional additional flags for descriptor bindings. VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT is set automatically.s
-    std::map<Pipeline::DescriptorBinding, DescriptorWrite> descriptorWrites; ///< Descriptor data for static descriptors. If no write, creates the resource for each frame in flight.
+    std::map<uint32_t, VkDescriptorSetLayoutCreateFlags> descriptorSetFlags; ///< Optional flags for descriptor sets.
+    std::map<Pipeline::DescriptorBinding, uint32_t> unsizedDescriptorSize; ///< Self explanatory. Each unsized descriptor array must have an entry here.
 
     uint32_t maxVariableCountSize = 100;
     uint32_t maxDescriptorSets = 16;
-    uint32_t framesInFlight = 1; ///< Used to determine the descriptor count
 };
 struct GraphicsPipelineCreateInfo
 {
@@ -172,6 +160,8 @@ Pipeline makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const &ci
 Pipeline makePipeline(Shader const &shader, ComputePipelineCreateInfo const &ci);
 /// @copydoc makePipeline
 Pipeline makePipeline(Shader const &shader, RaytracingPipelineCreateInfo const &ci);
+
+void writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite> const &writes);
 
 void destroy(Pipeline &pipeline);
 

@@ -99,13 +99,12 @@ static constexpr VkFormat toVulkanFormat(SpvReflectFormat const &format)
     }
 }
 
-using Binding = Pipeline::DescriptorBinding;
 struct Reflection 
 {
     std::vector<VkPipelineShaderStageCreateInfo> stages;
     std::map<uint32_t, SparseSet<VkDescriptorSetLayoutBinding>> descSets;
-    std::map<Binding, SpvReflectDescriptorBinding> descBindings;
-    std::map<Binding, VkPushConstantRange> pushConstants;
+    std::map<Pipeline::DescriptorBinding, SpvReflectDescriptorBinding> descBindings;
+    std::map<Pipeline::DescriptorBinding, VkPushConstantRange> pushConstants;
     std::unordered_map<uint32_t, VkFormat> input;
     std::unordered_map<uint32_t, VkFormat> output;
 };
@@ -172,28 +171,6 @@ static Reflection reflect(Shader const &shader)
     return reflection;
 }
 
-static VkBufferUsageFlags descriptorUsage(SpvReflectDescriptorType type)
-{
-    switch (type) {
-        case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
-        case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
-            return VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-
-        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER:
-        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
-            return VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-
-        case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
-            return VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT;
-
-        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
-            return VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT;
-
-        default:
-            return 0;
-    }
-}
-
 template <> struct fmt::formatter<SpvReflectDescriptorBinding> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
     auto format(SpvReflectDescriptorBinding const &binding, format_context &ctx) const {
@@ -201,14 +178,12 @@ template <> struct fmt::formatter<SpvReflectDescriptorBinding> {
     }
 };
 
-// WARNING: nested spaghetti code incoming
+// WARNING: nested spaghetti code incoming (works on hopes and dreams, or not)
 // TODO: Add more error checking
-static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Reflection const &reflection, VmaAllocator allocator, decltype(Pipeline::descResources) &resources, uint framesInFlight)
+static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Reflection &reflection, VmaAllocator allocator)
 {
     Pipeline::Layout layout;
     std::map<uint32_t, SparseSet<VkDescriptorBindingFlags>> descFlags;
-    // Has an actual descriptor count for unsized descriptors instead of 0
-    std::map<uint32_t, SparseSet<VkDescriptorSetLayoutBinding>> descSets = reflection.descSets;
  
     // Descriptor flags
     for(auto [binding, desc] : reflection.descBindings)
@@ -216,24 +191,28 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
         auto &flags = descFlags[binding.set][binding.binding];
         if(ci.descriptorBindingFlags.contains(binding))
             flags |= ci.descriptorBindingFlags.at(binding);
-        if((desc.array.dims_count > 0 && desc.array.dims[0] == 0) || desc.type_description->op == SpvOpTypeRuntimeArray)
+
+        if((desc.array.dims_count > 0 && desc.array.dims[0] == 0) || 
+            desc.type_description->op == SpvOpTypeRuntimeArray || 
+            ci.unsizedDescriptorSize.contains({binding.set, binding.binding})
+        )
             flags |= VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
     }
 
-    for(auto &[set, bindings] : descSets) 
+    for(auto &[set, bindings] : reflection.descSets) 
     {
         for(auto [binding, desc] : bindings) 
         {
-            if(ci.descriptorWrites.contains({set, (uint32_t) binding}))
-                desc.descriptorCount = std::max(desc.descriptorCount, ci.descriptorWrites.at({set, (uint32_t) binding}).size());
+            if(ci.unsizedDescriptorSize.contains({set, (uint32_t) binding}))
+                desc.descriptorCount = std::max(desc.descriptorCount, ci.unsizedDescriptorSize.at({set, (uint32_t) binding}));
             if(ci.descriptorTypeOverride.contains({set, (uint32_t) binding}))
                 desc.descriptorType = ci.descriptorTypeOverride.at({set, (uint32_t) binding});
         }
     }
 
     // Descriptor set layouts
-    layout.descLayouts.reserve(descSets.size());
-    for(auto const &[set, bindings] : descSets)
+    layout.descLayouts.reserve(reflection.descSets.size());
+    for(auto const &[set, bindings] : reflection.descSets)
     {
         VkDescriptorSetLayoutBindingFlagsCreateInfo flagsCI{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
@@ -252,7 +231,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
 
     // Descriptor pool
     SparseSet<VkDescriptorPoolSize> poolSizes;
-    for(auto const &[set, bindings] : descSets)
+    for(auto const &[set, bindings] : reflection.descSets)
     {
         for(auto const &binding : bindings.dense())
         {
@@ -262,33 +241,27 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
             size.descriptorCount += flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT ? ci.maxVariableCountSize : binding.descriptorCount;
         }
     }
-    for(auto &size : std::ranges::subrange{poolSizes.denseBegin(), poolSizes.denseEnd()})
-        size.descriptorCount *= ci.framesInFlight;
     VkDescriptorPoolCreateInfo poolCI{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .maxSets = ci.maxDescriptorSets * ci.framesInFlight,
+        .maxSets = ci.maxDescriptorSets,
         .poolSizeCount = (uint32_t) poolSizes.size(),
         .pPoolSizes = poolSizes.dense().data()
     };
     CHECK_VK_RES(vkCreateDescriptorPool(dev, &poolCI, nullptr, &layout.descPool));
 
     // Allocate descriptors
-    layout.descSets.resize(ci.framesInFlight);
-    for(auto const &[set, bindings] : descSets)
+    for(auto const &[set, bindings] : reflection.descSets)
     {
         uint32_t count;
         std::optional<VkDescriptorSetVariableDescriptorCountAllocateInfo> variableSizedBinding;
         for(auto binding : bindings.dense())
         {
-            bool hasWrite = ci.descriptorWrites.contains({set, binding.binding});
-            LOG_TRACE("{} -- {}", reflection.descBindings.at({set, binding.binding}), hasWrite ? "Provided" : "Generated");
             auto const &flags = descFlags.at(set).get(binding.binding);
             if(flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT)
             {
-                if(hasWrite)
+                if(ci.unsizedDescriptorSize.contains({set, binding.binding}))
                 {
-                    auto const &write = ci.descriptorWrites.at({set, binding.binding});
-                    count = write.size();
+                    count = ci.unsizedDescriptorSize.at({set, binding.binding});
                     variableSizedBinding = {
                         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO,
                         .descriptorSetCount = 1,
@@ -296,7 +269,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
                     };
                     break;
                 } else {
-                    LOG_ERROR("You must specify a write for a variable sized array descriptor binding {}", reflection.descBindings.at({set, binding.binding}));
+                    LOG_ERROR("You must specify an unsizedDescriptorSize a variable sized array descriptor binding {}", reflection.descBindings.at({set, binding.binding}));
                     continue;
                 }
             }
@@ -309,74 +282,8 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
             .descriptorSetCount = 1,
             .pSetLayouts = &layout.descLayouts.get(set)
         };
-        for(uint i = 0; i < ci.framesInFlight; ++i)
-            CHECK_VK_RES(vkAllocateDescriptorSets(dev, &descSetAlloc, &layout.descSets[i][set]));
+        CHECK_VK_RES(vkAllocateDescriptorSets(dev, &descSetAlloc, &layout.descSets[set]));
     }
-
-    // Write descriptors
-    std::vector<VkWriteDescriptorSet> descWrites;
-    std::vector<PipelineLayoutCreateInfo::DescriptorWrite> writes;
-    descWrites.reserve(ci.descriptorWrites.size() * ci.framesInFlight);
-    resources.resize(ci.framesInFlight);
-    for(auto const &[set, bindings] : descSets)
-    {
-        for(auto const &binding : bindings.dense())
-        {
-            for(uint frame = 0; frame < ci.framesInFlight; ++frame)
-            {
-                auto &write = writes.emplace_back();
-        
-                if(ci.descriptorWrites.contains({set, binding.binding})) {
-                    write = ci.descriptorWrites.at({set, binding.binding});
-                } else {
-                    auto const &descBinding = reflection.descBindings.at({set, binding.binding});
-                    
-                    if(!descriptorUsage(descBinding.descriptor_type))
-                    {
-                        LOG_ERROR("Cannot create resource for descriptor {}, frame index: {}", descBinding, frame);
-                        continue;
-                    }
-
-                    write = {
-                        .dstFrame = frame,
-                    };
-                    write.bufferInfo.reserve(descBinding.count);
-
-                    auto &buffer = resources[frame][{set, binding.binding}];
-                    buffer = makeBuffer(BufferCreateInfo{
-                        .usage = descriptorUsage(descBinding.descriptor_type),
-                        .allocInfo = {
-                            .allocator = allocator
-                        },
-                        .size = descBinding.block.size * descBinding.count,
-                        .map = true
-                    });
-                    if(!buffer.valid())
-                    {
-                        LOG_ERROR("Failed to create a buffer for descriptor {}, frame index: {}, usage: {}", descBinding, frame, string_VkBufferUsageFlags(descriptorUsage(descBinding.descriptor_type)));
-                        continue;
-                    }
-                    write.bufferInfo.emplace_back(VkDescriptorBufferInfo{
-                        .buffer = buffer.buffer,
-                        .range = VK_WHOLE_SIZE
-                    });
-                }
-        
-                descWrites.emplace_back(VkWriteDescriptorSet{
-                    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                    .dstSet = layout.descSets[frame].get(set),
-                    .dstBinding = binding.binding,
-                    .dstArrayElement = write.dstArrayElement,
-                    .descriptorCount = write.size(),
-                    .descriptorType = descSets.at(set).get(binding.binding).descriptorType,
-                    .pImageInfo = write.imageInfo.data(),
-                    .pBufferInfo = write.bufferInfo.data(),
-                    .pTexelBufferView = write.texelBufferView.data(),
-                });
-            }
-        }
-    }
-    vkUpdateDescriptorSets(dev, descWrites.size(), descWrites.data(), 0, nullptr);
 
     std::vector<VkPushConstantRange> pushConstants;
     pushConstants.reserve(reflection.pushConstants.size());
@@ -392,6 +299,8 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
     };
     CHECK_VK_RES(vkCreatePipelineLayout(dev, &pipelineLayoutCI, nullptr, &layout.layout));
 
+    // HACK
+    layout._reflection = new Reflection(reflection);
     return layout;
 }
 Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const &ci)
@@ -404,7 +313,7 @@ Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const
     };
 
     Reflection reflection = reflect(shader);
-    pipeline.layout = makePipelineLayout(dev, ci.layout, reflection, ci.allocator, pipeline.descResources, ci.layout.framesInFlight);
+    pipeline.layout = makePipelineLayout(dev, ci.layout, reflection, ci.allocator);
 
     VkPipelineVertexInputStateCreateInfo vertexInputState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -516,7 +425,7 @@ Pipeline vk::makePipeline(Shader const &shader, ComputePipelineCreateInfo const 
     };
 
     Reflection reflection = reflect(shader);
-    pipeline.layout = makePipelineLayout(dev, ci.layout, reflection, ci.allocator, pipeline.descResources, ci.layout.framesInFlight);
+    pipeline.layout = makePipelineLayout(dev, ci.layout, reflection, ci.allocator);
 
     VkComputePipelineCreateInfo pipelineCI{
         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
@@ -536,7 +445,7 @@ Pipeline vk::makePipeline(Shader const &shader, RaytracingPipelineCreateInfo con
     Reflection reflection = reflect(shader);
     Pipeline pipeline{
         .type = Pipeline::Type::GRAPHICS,
-        .layout = makePipelineLayout(dev, ci.layout, reflection, ci.allocator, pipeline.descResources, ci.layout.framesInFlight),
+        .layout = makePipelineLayout(dev, ci.layout, reflection, ci.allocator),
         .device = shader.createInfo.device,
     };
 
@@ -544,6 +453,31 @@ Pipeline vk::makePipeline(Shader const &shader, RaytracingPipelineCreateInfo con
 
     pipeline.valid = false;
     return pipeline;
+}
+
+void vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite> const &writes)
+{
+    assert(pipeline.layout._reflection);
+    auto const &reflection = *static_cast<Reflection *>(pipeline.layout._reflection);
+
+    std::vector<VkWriteDescriptorSet> descWrites;
+    descWrites.reserve(writes.size());
+    for(auto const &write : writes)
+    {
+        descWrites.emplace_back(VkWriteDescriptorSet{
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = pipeline.layout.descSets.get(write.dstSet),
+            .dstBinding = write.dstBinding,
+            .dstArrayElement = write.dstArrayElement,
+            .descriptorCount = write.size(),
+            .descriptorType = reflection.descSets.at(write.dstSet).get(write.dstBinding).descriptorType,
+            .pImageInfo = write.imageInfo.data(),
+            .pBufferInfo = write.bufferInfo.data(),
+            .pTexelBufferView = write.texelBufferView.data(),
+        });
+    }
+
+    vkUpdateDescriptorSets(pipeline.device, descWrites.size(), descWrites.data(), 0, nullptr);
 }
 
 void vk::destroy(Pipeline &pipeline)
@@ -559,9 +493,8 @@ void vk::destroy(Pipeline &pipeline)
             vkDestroyDescriptorSetLayout(pipeline.device, layout, nullptr);
     }
 
-    for(auto &bindings : pipeline.descResources)
-        for(auto &[binding, buffer] : bindings)
-                destroy(buffer);
+    if(pipeline.layout._reflection)
+        delete static_cast<Reflection *>(pipeline.layout._reflection);
 
     vkDestroyPipelineLayout(pipeline.device, pipeline.layout.layout, nullptr);
 

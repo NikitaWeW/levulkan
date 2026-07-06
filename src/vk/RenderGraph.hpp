@@ -7,8 +7,6 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
   \$$$  /  $$ |\$$\    
    \$  /   $$ | \$$\   
     \_/    \__|  \__|  Vulkan render graph.
-
-Good resource: https://www.gdcvault.com/play/1024045/FrameGraph-Extensible-Rendering-Architecture-in
 */
 #pragma once
 #include "Init.hpp"
@@ -20,36 +18,36 @@ Good resource: https://www.gdcvault.com/play/1024045/FrameGraph-Extensible-Rende
 
 namespace vk {
 
-struct RenderPass
+struct ResourceTraits
 {
-    struct ResourceTraits
-    {
-        struct {
-            VkBufferUsageFlags2 usage = 0;
-            VkDeviceSize offset = 0;
-            VkDeviceSize size = 0;
-
-            bool valid() const {
-                return usage != 0 && size != 0;
-            }
-        } bufferTraits;
-        struct {
-            VkImageUsageFlags usage = 0;
-            VkImageSubresourceRange subresourceRange = {VK_IMAGE_ASPECT_NONE, 0, 1, 0, 1};
-            VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-            bool valid() const {
-                return usage != 0 && layout != VK_IMAGE_LAYOUT_UNDEFINED;
-            }
-        } imageTraits;
-
-        VkAccessFlags2 access = VK_ACCESS_NONE;
-        VkPipelineStageFlags2 stages = VK_PIPELINE_STAGE_NONE;
+    struct {
+        VkBufferUsageFlags2 usage = 0;
+        VkDeviceSize offset = 0;
+        VkDeviceSize size = 0;
 
         bool valid() const {
-            return access != VK_ACCESS_NONE && stages != VK_PIPELINE_STAGE_NONE && (bufferTraits.valid() || imageTraits.valid());
+            return usage != 0 && size != 0;
         }
-    };
+    } bufferTraits;
+    struct {
+        VkImageUsageFlags usage = 0;
+        VkImageSubresourceRange subresourceRange = {VK_IMAGE_ASPECT_NONE, 0, 1, 0, 1};
+        VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        bool valid() const {
+            return usage != 0 && layout != VK_IMAGE_LAYOUT_UNDEFINED;
+        }
+    } imageTraits;
+
+    VkAccessFlags2 access = VK_ACCESS_NONE;
+    VkPipelineStageFlags2 stages = VK_PIPELINE_STAGE_NONE;
+
+    bool valid() const {
+        return access != VK_ACCESS_NONE && stages != VK_PIPELINE_STAGE_NONE && (bufferTraits.valid() || imageTraits.valid());
+    }
+};
+struct RenderPass
+{
     struct ResourceDependency
     {
         /// Could be vk::Image, vk::Buffer.
