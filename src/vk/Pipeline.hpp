@@ -19,57 +19,19 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 
 namespace vk {
 
-/// @brief The vulkan pipeline.
-struct Pipeline
+struct DescriptorBinding
 {
-    enum class Type { INVALID = 0, GRAPHICS, COMPUTE, RAYTRACING };
-    struct DescriptorBinding
-    {
-        uint32_t set = 0;
-        uint32_t binding = 0;
-        auto operator<=>(DescriptorBinding const &other) const = default;
-    };
-    struct Layout
-    {
-        VkPipelineLayout layout;
-        SparseSet<VkDescriptorSetLayout> descLayouts;
-        SparseSet<VkDescriptorSet> descSets;
-        VkDescriptorPool descPool;
-
-        void *_reflection = nullptr; // Internal
-    };
-
-    Type type = Type::INVALID;
-    bool valid = false;
-
-    // Owning
-    VkPipeline pipeline;
-    Layout layout;
-
-    // Not owning
-    VkDevice device;
-    VmaAllocator allocator;
+    uint32_t set = 0;
+    uint32_t binding = 0;
+    auto operator<=>(DescriptorBinding const &other) const = default;
 };
-// FIXME: this runs on hopes and dreams
-struct DescriptorWrite
-{
-    uint32_t dstSet = 0;
-    uint32_t dstBinding = 0;
-    uint32_t dstArrayElement = 0;
 
-    // One of
-    std::vector<VkDescriptorImageInfo> imageInfo;
-    std::vector<VkDescriptorBufferInfo> bufferInfo;
-    std::vector<VkBufferView> texelBufferView;
-
-    inline uint32_t size() const { return std::max(imageInfo.size(), std::max(bufferInfo.size(), texelBufferView.size())); }
-};
 struct PipelineLayoutCreateInfo
 {
-    std::map<Pipeline::DescriptorBinding, VkDescriptorType> descriptorTypeOverride; ///< Optional overrides of the descriptor type for specific bindings. Useful to make some descriptors dynamic.
-    std::map<Pipeline::DescriptorBinding, VkDescriptorBindingFlags> descriptorBindingFlags; ///< Optional additional flags for descriptor bindings. VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT is set automatically.s
+    std::map<DescriptorBinding, VkDescriptorType> descriptorTypeOverride; ///< Optional overrides of the descriptor type for specific bindings. Useful to make some descriptors dynamic.
+    std::map<DescriptorBinding, VkDescriptorBindingFlags> descriptorBindingFlags; ///< Optional additional flags for descriptor bindings. VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT is set automatically.s
     std::map<uint32_t, VkDescriptorSetLayoutCreateFlags> descriptorSetFlags; ///< Optional flags for descriptor sets.
-    std::map<Pipeline::DescriptorBinding, uint32_t> unsizedDescriptorSize; ///< Self explanatory. Each unsized descriptor array must have an entry here.
+    std::map<DescriptorBinding, uint32_t> unsizedDescriptorSize; ///< Self explanatory. Each unsized descriptor array must have an entry here.
 
     uint32_t maxVariableCountSize = 100;
     uint32_t maxDescriptorSets = 16;
@@ -94,7 +56,7 @@ struct GraphicsPipelineCreateInfo
     } attachments;
     struct DepthStencil {
         VkPipelineDepthStencilStateCreateFlags flags = 0;
-        bool depthTestEnable = true;
+        bool depthTestEnable = false;
         bool depthWriteEnable = true;
         VkCompareOp depthCompareOp = VK_COMPARE_OP_LESS;
         bool depthBoundsTestEnable = false;
@@ -108,7 +70,7 @@ struct GraphicsPipelineCreateInfo
         VkPipelineRasterizationStateCreateFlags flags = 0; 
         bool depthClampEnable = false;
         bool rasterizerDiscardEnable = false;
-        VkPolygonMode polygonMode;
+        VkPolygonMode polygonMode = VK_POLYGON_MODE_FILL;
         VkCullModeFlags cullMode = VK_CULL_MODE_NONE;
         VkFrontFace frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         bool depthBiasEnable = false;
@@ -152,6 +114,52 @@ struct RaytracingPipelineCreateInfo
     PipelineLayoutCreateInfo layout; ///< Pipeline layout create info
     VkPipelineCreateFlags flags = 0;
     VmaAllocator allocator = VK_NULL_HANDLE;
+};
+
+/// @brief The vulkan pipeline.
+struct Pipeline
+{
+    enum class Type { INVALID = 0, GRAPHICS, COMPUTE, RAYTRACING };
+    struct Layout
+    {
+        VkPipelineLayout layout;
+        SparseSet<VkDescriptorSetLayout> descLayouts;
+        SparseSet<VkDescriptorSet> descSets;
+        VkDescriptorPool descPool;
+
+        void *_reflection = nullptr; // Internal
+    };
+
+    Type type = Type::INVALID;
+    struct {
+        GraphicsPipelineCreateInfo graphics;
+        ComputePipelineCreateInfo compute;
+        RaytracingPipelineCreateInfo raytracing;
+    } createInfo;
+
+    bool valid = false;
+
+    // Owning
+    VkPipeline pipeline;
+    Layout layout;
+
+    // Not owning
+    VkDevice device;
+    VmaAllocator allocator;
+};
+// FIXME: this runs on hopes and dreams
+struct DescriptorWrite
+{
+    uint32_t dstSet = 0;
+    uint32_t dstBinding = 0;
+    uint32_t dstArrayElement = 0;
+
+    // One of
+    std::vector<VkDescriptorImageInfo> imageInfo;
+    std::vector<VkDescriptorBufferInfo> bufferInfo;
+    std::vector<VkBufferView> texelBufferView;
+
+    inline uint32_t size() const { return std::max(imageInfo.size(), std::max(bufferInfo.size(), texelBufferView.size())); }
 };
 
 /// @brief Make a pipeline based on the shader reflection and other stuff.

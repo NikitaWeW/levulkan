@@ -146,28 +146,35 @@ template<typename Op = std::logical_and<bool>, typename... Components>
 class RestrictedEntity : public Entity
 {
 private:
-    struct OpWrapper
-    {
-        bool obj;
+    class OpWrapper {
+    private:
+        bool mValue;
+    public:
+        inline OpWrapper(bool value) : mValue(value) {}
         inline OpWrapper operator%(OpWrapper const &rhs) {
-            return {Op{}(obj, rhs.obj)};
+            return {Op{}(mValue, rhs.mValue)};
         }
+        inline bool get() const { return mValue; }
     };
 public:
     inline bool valid() const { 
         if(!this->Entity::valid())
             return false;
-        return (OpWrapper(this->has<Components>()) % ...).obj;
+        return (OpWrapper(this->has<Components>()) % ...).get();
     }
     
     inline RestrictedEntity() = default;
     inline RestrictedEntity(Entity const &e) { *this = e; }
     inline RestrictedEntity(Entity &&e) { *this = std::move(e); }
     inline RestrictedEntity &operator=(Entity const &e) { 
+        this->Entity::operator=(e);
         ECS_ASSERT(valid(), "Invalid RestrictedEntity!");
+        return *this;
     }
     inline RestrictedEntity &operator=(Entity &&e) { 
+        this->Entity::operator=(std::move(e));
         ECS_ASSERT(valid(), "Invalid RestrictedEntity!");
+        return *this;
     }
 };
 
@@ -281,4 +288,9 @@ public:
     inline std::ranges::subrange<T const *> range() const {
         return {this->dense().data(), this->dense().data() + this->size()};
     }
+
+    /// @copydoc ecs::sparse_set::get
+    inline T &at(size_t index) { return this->get(index); }
+    /// @copydoc ecs::sparse_set::get
+    inline T const &at(size_t index) const { return this->get(index); }
 };

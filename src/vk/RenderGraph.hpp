@@ -50,36 +50,36 @@ struct RenderPass
 {
     struct ResourceDependency
     {
-        /// Could be vk::Image, vk::Buffer.
-        /// The physical resource.
-        RestrictedEntity<std::logical_or<>, vk::Image, vk::Buffer> eResource;
+        /// The physical resource name.
+        std::string resource;
+
         /// The name of the pass that wrote to the resource.
         /// The "version" of a resource, e.g. this pass reads resource x from pass y.
         /// Could be used for resource aliasing.
         /// Leave empty to read from previous frame.
         std::string pass;
 
+        /// Resource traits
         ResourceTraits traits;
-
-        inline uint32_t id() const { return eResource.id(); }
     };
     struct ResourceWrite
     {
-        /// Could be vk::Image, vk::Buffer, vk::Swapchain.
-        /// The physical resource.
-        RestrictedEntity<std::logical_or<>, vk::Image, vk::Buffer, vk::Swapchain> eResource;
-        ResourceTraits traits;
+        /// The physical resource name.
+        std::string resource;
 
-        inline uint32_t id() const { return eResource.id(); }
+        /// Resource traits
+        ResourceTraits traits;
     };
 
-    std::string                           name;
-    std::vector<ResourceDependency>       reads;
-    std::vector<ResourceWrite>            writes;
-    VkQueueFlagBits                       queue = VK_QUEUE_GRAPHICS_BIT;
-    std::function<void (vk::RenderPass const &, VkCommandBuffer)> callback;
-    vk::Shader                            shader;
-    vk::Pipeline                          pipeline;
+    using callback_t = void (vk::RenderPass const &, VkCommandBuffer);
+
+    std::string                     name;
+    std::vector<ResourceDependency> reads;
+    std::vector<ResourceWrite>      writes;
+    VkQueueFlagBits                 queue = VK_QUEUE_GRAPHICS_BIT;
+    std::function<callback_t>       callback;
+    vk::Shader                      shader;
+    vk::Pipeline                    pipeline;
 };
 struct Barrier
 {
@@ -94,7 +94,7 @@ struct Barrier
         VkPipelineStageFlags2 stages = VK_PIPELINE_STAGE_2_NONE;
     };
 
-    RestrictedEntity<std::logical_or<>, vk::Image, vk::Buffer> eResource;
+    uint32_t resourceIndex;
     Scope src;
     Scope dst;
     
@@ -102,12 +102,14 @@ struct Barrier
     VkDeviceSize offset;
     VkDeviceSize size;
 
-    inline VkImageMemoryBarrier2 getImageBarrier() const {
+    inline VkImageMemoryBarrier2 getImageBarrier(RestrictedEntity<std::logical_or<>, vk::Image, vk::Buffer> eResource) const {
         assert(eResource.has<vk::Image>());
         auto const &image = eResource.get<vk::Image>();
         return {
-            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = src.stages,
             .srcAccessMask = src.access,
+            .dstStageMask = dst.stages,
             .dstAccessMask = dst.access,
             .oldLayout = src.layout,
             .newLayout = dst.layout,
@@ -117,12 +119,14 @@ struct Barrier
             .subresourceRange = subresourceRange
         };
     }
-    inline VkBufferMemoryBarrier2 getBufferBarrier() const {
+    inline VkBufferMemoryBarrier2 getBufferBarrier(RestrictedEntity<std::logical_or<>, vk::Image, vk::Buffer> eResource) const {
         assert(eResource.has<vk::Buffer>());
         auto const &buffer = eResource.get<vk::Buffer>();
         return {
-            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+            .srcStageMask = src.stages,
             .srcAccessMask = src.access,
+            .dstStageMask = dst.stages,
             .dstAccessMask = dst.access,
             .srcQueueFamilyIndex = src.queueIndex,
             .dstQueueFamilyIndex = dst.queueIndex,
@@ -148,17 +152,7 @@ class RenderGraph
 public:
     struct RenderGraphCreateInfo
     {
-        VkDevice device = VK_NULL_HANDLE;
-        VkCommandPool commandPool = VK_NULL_HANDLE;
         QueueFamilies queueFamilies;
-    };
-    struct Result
-    {
-        bool valid = false;
-        SparseSet<RenderPass> passes;
-        std::unordered_map<std::string, uint32_t> passNameToIndex;
-        SparseSet<std::vector<Barrier>> barriers;
-        std::vector<uint32_t> passStack; // The order the passes are executed in that obeys the dependencies
     };
 
     explicit RenderGraph();
@@ -177,18 +171,29 @@ public:
     RenderPass *findPass(std::string const &name);
     void removePass(std::string const &name);
 
-    void clear();
+    /// Set a physical resource associated with the name.
+    /// Does not outdate the render graph, e.g. can be used without rebuilding.
+    void setResource(std::string const &name, RestrictedEntity<std::logical_or<>, vk::Image, vk::Buffer> resource);
+    /// @returns Invalid entity if not found.
+    Entity findResource(std::string const &name) const;
+    void removeResource(std::string const &name);
 
     /// @brief Build a render graph
     /// Please note that if there is a complicated dependency loop the algorithm will crash and burn horribly and destroy half of the world population in a terrible accident
     bool build();
+    void clear();
 
     /// @brief Generate a DOT graph.
     /// @param indent If indent is nonnegative, then array elements and object members will be pretty-printed with that indent level. An indent level of 0 will only insert newlines. -1 (the default) selects the most compact representation.
     std::string dumpGraphviz(int indent = -1, GraphvizSettings settings = {}) const;
 
-    Result getResult() const;
     bool isUpToDate() const;
+    SparseSet<RenderPass> const &getPasses() const;
+    std::ranges::subrange<RenderPass *> getPassesRange();
+    SparseSet<Entity> const &getResources() const;
+    std::ranges::subrange<Entity *> getResourcesRange();
+    SparseSet<std::vector<Barrier>> const &getBarriers() const;
+    std::vector<uint32_t> const &getPassStack() const;
 private:
     struct ResourceUsage
     {
@@ -224,22 +229,25 @@ private:
 
     // 0 - invalid
     uint32_t mNextIndex = 1;
-    std::unordered_map<Entity, ResourceUsage> mResourceUsage;
+
+    std::unordered_map<std::string, uint32_t> mPassNameToIndex;
+    SparseSet<RenderPass> mPasses;
+    SparseSet<std::vector<Barrier>> mBarriers;
     std::unordered_map<uint32_t, NodeState> mNodeState;
+    std::vector<uint32_t> mPassStack; // The order the passes are executed in that obeys the dependencies
+    
+    std::unordered_map<std::string, uint32_t> mResourceNameToIndex;
+    SparseSet<ResourceUsage> mResourceUsage;
+    SparseSet<Entity> mResources;
 
     bool mUpToDate = false;
     bool mFailed = false;
 
-    VkDevice mDevice = VK_NULL_HANDLE;
-    SparseSet<VkCommandBuffer> mCommandBuffers;
     QueueFamilies mQueueFamilies;
 
-    Result mResult;
-    
     void validate(uint32_t index);
     void processPass(uint32_t index, bool backtrack = false); ///< Recursively process a pass and construct an #mPassStack that contains a valid pass order that obeys the strict dependencies
     void buildBarriers();
-    void record();
 };
 
 } // namespace vk

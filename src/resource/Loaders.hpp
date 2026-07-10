@@ -1,5 +1,5 @@
 #pragma once
-#include "nicecs/ecs.hpp"
+#include "ECS.hpp"
 #include "Resources.hpp"
 
 struct TextureLoaderOptions

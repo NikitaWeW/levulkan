@@ -2,7 +2,7 @@
 #include "common/Extensions.glsl"
 
 #stage "vertex"
-#include "common/Fullscreen.vert"
+#include "lib/Fullscreen.vert"
 
 #stage fragment
 
@@ -12,8 +12,7 @@ layout(location = 0) out vec4 oColor;
 layout(set = 0, binding = 0) uniform sampler2D uAlbedo;
 layout(set = 0, binding = 1) uniform sampler2D uPosition;
 layout(set = 0, binding = 2) uniform sampler2D uNormal;
-layout(set = 0, binding = 3) uniform sampler2D uTangent;
-layout(set = 0, binding = 4) uniform sampler2D uPBR;
+layout(set = 0, binding = 3) uniform sampler2D uPBR;
 
 const vec3 uSunDir = vec3(0.5, -1, 1);
 

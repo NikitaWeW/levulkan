@@ -1,6 +1,7 @@
 #include "Init.hpp"
 #include "Utility.hpp"
 #include "Logging.hpp"
+#include "vk/Resource.hpp"
 using namespace vk;
 
 static VkExtent2D chooseExtent(VkSurfaceCapabilitiesKHR capabilities, VkExtent2D size)
@@ -48,21 +49,29 @@ static VkPresentModeKHR chooseSwapPresentMode(SwapchainCreateInfo const ci)
 
     return VK_PRESENT_MODE_FIFO_KHR;
 }
-static void getImages(Swapchain &swapchain)
+static void getImages(Swapchain &swapchain, Registry &reg)
 {
-    for(auto &view : swapchain.imageViews)
-        vkDestroyImageView(swapchain.alloc.device, view, nullptr);
+    // FIXME: what the hell is this
+    for(auto &view : swapchain.images)
+    {
+        vkDestroyImageView(swapchain.alloc.device, view.get<vk::Image>().view, nullptr);
+        reg.destroy(view);
+    }
+    swapchain.images.clear();
 
     uint32_t imageCount = 0;
+    std::vector<VkImage> images;
     vkGetSwapchainImagesKHR(swapchain.alloc.device, swapchain.swapchain, &imageCount, nullptr);
-    swapchain.images.resize(imageCount);
-    vkGetSwapchainImagesKHR(swapchain.alloc.device, swapchain.swapchain, &imageCount, swapchain.images.data());
-    swapchain.imageViews.resize(imageCount);
+    images.resize(imageCount);
+    std::vector<VkImageView> imageViews;
+    vkGetSwapchainImagesKHR(swapchain.alloc.device, swapchain.swapchain, &imageCount, images.data());
+    imageViews.resize(imageCount);
     
     for(size_t i = 0; i < imageCount; i++) {
+        
         VkImageViewCreateInfo createInfo{
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .image = swapchain.images[i],
+            .image = images[i],
             .viewType = VK_IMAGE_VIEW_TYPE_2D,
             .format = swapchain.createInfo.imageFormat,
             .components = {
@@ -80,7 +89,41 @@ static void getImages(Swapchain &swapchain)
             }
         };
 
-        CHECK_VK_RES(vkCreateImageView(swapchain.alloc.device, &createInfo, nullptr, &swapchain.imageViews[i]));
+        CHECK_VK_RES(vkCreateImageView(swapchain.alloc.device, &createInfo, nullptr, &imageViews[i]));
+    }
+
+    for(uint i = 0; i < imageCount; ++i)
+    {
+        swapchain.images.emplace_back(reg.create(vk::Image{
+            .image = images[i],
+            .view = imageViews[i],
+            .createInfo = {
+                .usage = swapchain.createInfo.imageUsage,
+                .allocInfo = {
+                    .device = swapchain.alloc.device,
+                    .sharingMode = swapchain.sharingMode
+                },
+                .imageType = VK_IMAGE_TYPE_2D,
+                .format = swapchain.createInfo.imageFormat,
+                .dimensions = {
+                    .width = swapchain.createInfo.imageExtent.width,
+                    .height = swapchain.createInfo.imageExtent.height,
+                },
+                .view = {
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .viewType = VK_IMAGE_VIEW_TYPE_2D
+                },
+                .name = fmt::format("swapchain_image_{}", i),
+            },
+            .owns = false,
+        }));
+        VkDebugUtilsObjectNameInfoEXT name_info{
+            .sType        = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+            .objectType   = VK_OBJECT_TYPE_IMAGE,
+            .objectHandle = (uint64_t) images[i],
+            .pObjectName  = swapchain.images.back().get<vk::Image>().createInfo.name.c_str(),
+        };
+        vkSetDebugUtilsObjectNameEXT(swapchain.alloc.device, &name_info);
     }
 }
 
@@ -91,6 +134,7 @@ Swapchain vk::makeSwapchain(SwapchainCreateInfo const &ci)
         LOG_ERROR("No surface provided for swapchain creation!");
         return {};
     }
+    assert(ci.registry);
     Swapchain swapchain;
     swapchain.alloc = ci.alloc;
     swapchain.sharingMode = ci.sharingMode;
@@ -106,7 +150,7 @@ Swapchain vk::makeSwapchain(SwapchainCreateInfo const &ci)
         .imageColorSpace = format.colorSpace,
         .imageExtent = chooseExtent(swapchain.capabilities, ci.size),
         .imageArrayLayers = 1,
-        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .imageUsage = ci.imageUsage,
         .imageSharingMode = swapchain.sharingMode,
         .preTransform = swapchain.capabilities.currentTransform,
         .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
@@ -118,7 +162,7 @@ Swapchain vk::makeSwapchain(SwapchainCreateInfo const &ci)
 
     CHECK_VK_RES(vkCreateSwapchainKHR(swapchain.alloc.device, &swapchain.createInfo, nullptr, &swapchain.swapchain));
 
-    getImages(swapchain);
+    getImages(swapchain, *ci.registry);
 
     return swapchain;
 }
@@ -128,15 +172,18 @@ void vk::resizeSwapchain(Swapchain &swapchain, VkExtent2D size)
     swapchain.createInfo.imageExtent = size;
 
     CHECK_VK_RES(vkCreateSwapchainKHR(swapchain.alloc.device, &swapchain.createInfo, nullptr, &swapchain.swapchain));
-    getImages(swapchain);
+    assert(swapchain.images.size() >= 1);
+    getImages(swapchain, swapchain.images[0].reg());
     vkDestroySwapchainKHR(swapchain.alloc.device, swapchain.createInfo.oldSwapchain, nullptr);
 }
 
 
 void vk::destroy(Swapchain &swapchain)
 {
-    for(auto &view : swapchain.imageViews)
-        vkDestroyImageView(swapchain.alloc.device, view, nullptr);
+    for(auto &image : swapchain.images)
+    {
+        vkDestroyImageView(swapchain.alloc.device, image.get<vk::Image>().view, nullptr);
+    }
 
     vkDestroySwapchainKHR(swapchain.alloc.device, swapchain.swapchain, nullptr);
 }

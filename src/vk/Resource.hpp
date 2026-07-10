@@ -11,6 +11,7 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 
 #pragma once
 #include "vulkan.h"
+#include "spdlog/fmt/fmt.h"
 #include <vector>
 
 namespace vk
@@ -24,6 +25,7 @@ struct AllocationCreateInfo
     VkMemoryAllocateFlags allocFlags = 0;
     VkMemoryPropertyFlags requiredFlags = 0;
     VkMemoryPropertyFlags preferredFlags = 0;
+    VkSharingMode sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 };
 
 struct BufferCreateInfo
@@ -31,11 +33,11 @@ struct BufferCreateInfo
     VkBufferUsageFlags usage = 0;
     VkBufferCreateFlags createFlags = 0;
     AllocationCreateInfo allocInfo;
-    VkSharingMode sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     void const *data = nullptr; ///< If not nullptr, appropriate memory flags are added automatically and the data is copied to mapped location. Adds appropriate flags.
     uint32_t size = 0; // In bytes
     bool map = true; ///< Map the buffer to host memory persistently. Adds appropriate flags.
+    std::string name = ""; ///< Debug name
 };
 
 /// @brief A buffer data allocated on the gpu
@@ -51,6 +53,8 @@ struct Buffer
 
     VkDeviceAddress deviceAddress = 0;
     void *mapped = VK_NULL_HANDLE;
+
+    bool owns = true;
 
     bool valid() const;
 };
@@ -89,7 +93,7 @@ struct ImageCreateInfo
     /// VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER or VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE will create the sampler.
     VkImageUsageFlags usage = 0; 
     AllocationCreateInfo allocInfo;
-    VkSharingMode sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkImageType imageType = VK_IMAGE_TYPE_2D;
 
     // Command buffer to record transfer commands to
     VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
@@ -125,17 +129,56 @@ struct ImageCreateInfo
     } sampler;
     struct View {
         VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_NONE; ///< Leave at VK_IMAGE_ASPECT_NONE to skip view creation.
-        VkImageType imageType = VK_IMAGE_TYPE_2D;
         VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D;
     } view;
     void const *data = nullptr;
+    std::string name = ""; ///< Debug name
+
+    inline VkImageCreateInfo getImageCreateInfo() const {
+        return {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType = imageType,
+            .format = format,
+            .extent = {
+                .width = dimensions.width, 
+                .height = dimensions.height, 
+                .depth = dimensions.depth 
+            },
+            .mipLevels = dimensions.mipLevels,
+            .arrayLayers = dimensions.arrayLayers,
+            .samples = dimensions.samples,
+            .tiling = VK_IMAGE_TILING_OPTIMAL,
+            .usage = usage,
+            .sharingMode = allocInfo.sharingMode,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        };
+    }
+    // Doesent include custom border
+    inline VkSamplerCreateInfo getSamplerCreateInfo() const {
+        return {
+            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .flags = sampler.flags,
+            .magFilter = sampler.magFilter,
+            .minFilter = sampler.minFilter,
+            .mipmapMode = sampler.mipmapMode,
+            .addressModeU = sampler.addressModeU,
+            .addressModeV = sampler.addressModeV,
+            .addressModeW = sampler.addressModeW,
+            .mipLodBias = sampler.mipLodBias,
+            .anisotropyEnable = sampler.anisotropyEnable,
+            .maxAnisotropy = sampler.maxAnisotropy,
+            .compareEnable = sampler.compareEnable,
+            .compareOp = sampler.compareOp,
+            .minLod = sampler.minLod,
+            .maxLod = (float) dimensions.mipLevels,
+            .borderColor = sampler.borderColor,
+            .unnormalizedCoordinates = sampler.unnormalizedCoordinates,
+        };
+    }
 };
 /// @brief The image allocated on the gpu
 struct Image
 {
-    VmaAllocator allocator = VK_NULL_HANDLE;
-    VkDevice device = VK_NULL_HANDLE;
-
     VmaAllocation allocation = VK_NULL_HANDLE;
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE; ///< A view on the entire texture in the original format.
@@ -146,17 +189,14 @@ struct Image
     Buffer srcBuffer;
     
     ImageCreateInfo createInfo;
-    VkImageCreateInfo imageCreateInfo;
-    VkSamplerCreateInfo samplerCreateInfo;
     VmaAllocationCreateInfo allocationInfo;
-    VkImageType imageType = VK_IMAGE_TYPE_2D;
-    VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D;
-    
-    VkImageUsageFlags usage = 0;
-    VkFormat format = VK_FORMAT_UNDEFINED;
+
+    bool owns = true;
 
     /// @brief A small helper function that checks if necessary members handles are not null
     bool valid() const; 
+
+    inline std::string name() const { return createInfo.name.empty() ? fmt::format("{:#x}", reinterpret_cast<uintptr_t>(this)) : createInfo.name; }
 };
 
 Image makeImage(ImageCreateInfo const &ci);

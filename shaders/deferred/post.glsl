@@ -2,11 +2,11 @@
 #include "common/Extensions.glsl"
 
 #stage "vertex"
-#include "common/Fullscreen.vert"
+#include "lib/Fullscreen.vert"
 
 #stage fragment
 
-#include "common/Tonemap.glsl"
+#include "lib/Tonemap.glsl"
 
 layout(location = 0) in vec2 uv;
 
@@ -17,7 +17,7 @@ const vec3 uSunDir = vec3(0.5, -1, 1);
 
 void main()
 {
-    vec3 color = texture(uImage, uv);
+    vec3 color = texture(uImage, uv).rgb;
 
     // Tone mapping
     color = reinhard(color);

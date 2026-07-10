@@ -30,7 +30,7 @@ namespace vk {
         VkImageLayout newImageLayout,
         VkPipelineStageFlags srcStageMask,
         VkPipelineStageFlags dstStageMask,
-        VkImageSubresourceRange subresourceRange
+        VkImageSubresourceRange subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
     ) {
         VkImageMemoryBarrier2 barrier{
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,

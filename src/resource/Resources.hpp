@@ -57,6 +57,7 @@ struct Material
 
         float shininess;
         float metallic;
+        float roughness;
         float ior;
     } properties;
 };

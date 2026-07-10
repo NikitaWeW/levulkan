@@ -98,13 +98,14 @@ struct SwapchainCreateInfo
     } alloc;
     VkSharingMode sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VkExtent2D size = {0, 0};
+    VkImageUsageFlags imageUsage = 0;
+    Registry *registry = nullptr;
 };
 struct Swapchain
 {
     VkSwapchainKHR swapchain;
 
-    std::vector<VkImage> images;
-    std::vector<VkImageView> imageViews;
+    std::vector<Entity> images;
 
     VkSwapchainCreateInfoKHR createInfo;
     VkSurfaceCapabilitiesKHR capabilities;
@@ -117,4 +118,4 @@ void resizeSwapchain(Swapchain &swapchain, VkExtent2D size);
 void destroy(Swapchain &pipeline);
 
 
-} // namespace vkm
+} // namespace vk

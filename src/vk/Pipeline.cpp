@@ -103,8 +103,8 @@ struct Reflection
 {
     std::vector<VkPipelineShaderStageCreateInfo> stages;
     std::map<uint32_t, SparseSet<VkDescriptorSetLayoutBinding>> descSets;
-    std::map<Pipeline::DescriptorBinding, SpvReflectDescriptorBinding> descBindings;
-    std::map<Pipeline::DescriptorBinding, VkPushConstantRange> pushConstants;
+    std::map<DescriptorBinding, SpvReflectDescriptorBinding> descBindings;
+    std::map<DescriptorBinding, VkPushConstantRange> pushConstants;
     std::unordered_map<uint32_t, VkFormat> input;
     std::unordered_map<uint32_t, VkFormat> output;
 };

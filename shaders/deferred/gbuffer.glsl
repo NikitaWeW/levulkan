@@ -54,8 +54,7 @@ layout(set = 1, binding = 0) uniform sampler2D textures[];
 layout(location = 0) out vec4 oAlbedo;
 layout(location = 1) out vec4 oPosition;
 layout(location = 2) out vec4 oNormal;
-layout(location = 3) out vec4 oTangent;
-layout(location = 4) out vec4 oPBR;
+layout(location = 3) out vec4 oPBR;
 
 vec4 sampleTexture(uint index)
 {
@@ -70,4 +69,6 @@ void main()
     oNormal.a = 1;
     oPBR.r = uMaterial.properties.metallic * sampleTexture(uMaterial.textures.metallic).r;
     oPBR.g = uMaterial.properties.roughness * sampleTexture(uMaterial.textures.roughness).r;
+    oPBR.b = 0;
+    oPBR.a = 0;
 }

@@ -14,124 +14,131 @@ using namespace vk;
 RenderGraph::RenderGraph() = default;
 RenderGraph::RenderGraph(RenderGraphCreateInfo const &createInfo)
 {
-    assert(createInfo.device);
-    assert(createInfo.commandPool);
-
-    mDevice = createInfo.device;
     mQueueFamilies = createInfo.queueFamilies;
-    std::vector<VkCommandBuffer> commandBuffers(mQueueFamilies.uniqueFamilies.size());
-    VkCommandBufferAllocateInfo commandBufferAllocateInfo{
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = createInfo.commandPool,
-        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = static_cast<uint32_t>(commandBuffers.size()),
-    };
-
-    CHECK_VK_RES(vkAllocateCommandBuffers(mDevice, &commandBufferAllocateInfo, commandBuffers.data()));
-
-    for(auto familyIndex : mQueueFamilies.uniqueFamilies)
-    {
-        mCommandBuffers[familyIndex] = commandBuffers.back();
-        commandBuffers.pop_back();
-    }
-
-    // VkSemaphoreTypeCreateInfo semaphoreTypeCI{
-    //     .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
-    //     .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
-    //     .initialValue = 0,
-    // };
-    // VkSemaphoreCreateInfo semaphoreCI{
-    //     .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-    //     .pNext = &semaphoreTypeCI,
-    // };
-    // CHECK_VK_RES(vkCreateSemaphore(mDevice, &semaphoreCI, nullptr, &mTimelineSemaphore));
 }
 RenderGraph::RenderGraph(RenderGraph &&) = default;
 RenderGraph &RenderGraph::operator=(RenderGraph &&) = default;
-RenderGraph::~RenderGraph() 
-{
-    if(mDevice)
-    {
-        vkDeviceWaitIdle(mDevice);
-
-        // vkDestroySemaphore(mDevice, mTimelineSemaphore, nullptr);
-
-        // Command buffers will be destroyed with the pool
-    }
-}
+RenderGraph::~RenderGraph() = default;
 void RenderGraph::addPass(RenderPass const &pass)
 {
-    if(mResult.passNameToIndex.contains(pass.name))
+    if(mPassNameToIndex.contains(pass.name))
     {
         LOG_ERROR("Render graph already contains \"{}\" pass", pass.name);
         return;
     }
 
-    auto index = (mResult.passNameToIndex[pass.name] = mNextIndex++);
-    mResult.passes.emplace(index, pass);
+    auto index = (mPassNameToIndex[pass.name] = mNextIndex++);
+    mPasses.emplace(index, pass);
     mUpToDate = false;
 }
 void RenderGraph::removePass(std::string const &name)
 {
-    if(!mResult.passNameToIndex.contains(name))
+    if(!mPassNameToIndex.contains(name))
     {
         LOG_ERROR("Render graph does not contain \"{}\" pass", name);
         return;
     }
 
-    mResult.passes.erase(mResult.passNameToIndex.at(name));
-    mResult.passNameToIndex.erase(name);
+    mPasses.erase(mPassNameToIndex.at(name));
+    mPassNameToIndex.erase(name);
     mUpToDate = false;
 }
 RenderPass const *RenderGraph::findPass(std::string const &name) const
 {
-    if(!mResult.passNameToIndex.contains(name))
+    if(!mPassNameToIndex.contains(name))
         return nullptr;
 
-    return &mResult.passes.get(mResult.passNameToIndex.at(name));
+    return &mPasses.get(mPassNameToIndex.at(name));
 }
 RenderPass *RenderGraph::findPass(std::string const &name)
 {
-    if(!mResult.passNameToIndex.contains(name))
+    if(!mPassNameToIndex.contains(name))
         return nullptr;
 
     mUpToDate = false;
-    return &mResult.passes.get(mResult.passNameToIndex.at(name));
+    return &mPasses.get(mPassNameToIndex.at(name));
 }
 void RenderGraph::clear()
 {
-    mResult.passes.clear();
-    mResult.passNameToIndex.clear();
+    mPasses.clear();
+    mPassNameToIndex.clear();
+    mResources.clear();
+    mResourceNameToIndex.clear();
 }
 
-RenderGraph::Result RenderGraph::getResult() const
+void RenderGraph::setResource(std::string const &name, RestrictedEntity<std::logical_or<>, vk::Image, vk::Buffer> resource)
 {
-    return mResult;
+    auto index = mResourceNameToIndex.contains(name) ? mResourceNameToIndex.at(name) : (mResourceNameToIndex[name] = mNextIndex++);
+    mResources[index] = resource;
 }
-bool RenderGraph::isUpToDate() const
+Entity RenderGraph::findResource(std::string const &name) const
 {
-    return mUpToDate;
+    if(!mResourceNameToIndex.contains(name))
+        return Entity();
+
+    return mResources.get(mResourceNameToIndex.at(name));
 }
+void RenderGraph::removeResource(std::string const &name)
+{
+    if(!mResourceNameToIndex.contains(name))
+    {
+        LOG_ERROR("Render graph does not contain \"{}\" resource", name);
+        return;
+    }
+
+    mResources.erase(mResourceNameToIndex.at(name));
+    mResourceNameToIndex.erase(name);
+}
+
+bool RenderGraph::isUpToDate() const { return mUpToDate; }
+SparseSet<RenderPass> const &RenderGraph::getPasses() const { return mPasses; }
+std::ranges::subrange<RenderPass *> RenderGraph::getPassesRange() { return mPasses.range(); }
+SparseSet<Entity> const &RenderGraph::getResources() const { return mResources; }
+std::ranges::subrange<Entity *> RenderGraph::getResourcesRange() { return mResources.range(); }
+SparseSet<std::vector<Barrier>> const &RenderGraph::getBarriers() const { return mBarriers; }
+std::vector<uint32_t> const &RenderGraph::getPassStack() const { return mPassStack; }
 
 void RenderGraph::validate(uint32_t passIndex)
 {
-    #define VALIDATION_ASSERT(x) if(!static_cast<bool>(x)) { LOG_ERROR("{}:{} Render graph validation assertion failed: {}", __FILE__, __LINE__, #x); mFailed = true; }
+    #define VALIDATION_ASSERT(x) if(!static_cast<bool>(x)) { LOG_ERROR("{}:{} Render graph validation assertion failed: {}", __FILE__, __LINE__, #x); mFailed = true; return; }
 
     VALIDATION_ASSERT(passIndex != 0);
-    auto const &pass = mResult.passes[passIndex];
+    auto const &pass = mPasses[passIndex];
     
     VALIDATION_ASSERT(!pass.name.empty());
-    VALIDATION_ASSERT(!pass.callback);
-    for(auto const &resource : pass.reads)
+    VALIDATION_ASSERT(pass.callback);
+    for(auto const &dependency : pass.reads)
     {
-        VALIDATION_ASSERT(resource.eResource.valid());
-        VALIDATION_ASSERT(resource.pass.empty() || mResult.passNameToIndex.contains(resource.pass));
-        VALIDATION_ASSERT(resource.traits.valid());
+        VALIDATION_ASSERT(dependency.pass.empty() || mPassNameToIndex.contains(dependency.pass));
+        VALIDATION_ASSERT(dependency.traits.valid());
+        
+        auto resourceIndex = mResourceNameToIndex.at(dependency.resource);
+        VALIDATION_ASSERT(mResourceNameToIndex.contains(dependency.resource));
+        if(mResources.contains(resourceIndex))
+        {
+            auto const &resource = mResources.get(resourceIndex);
+            VALIDATION_ASSERT(resource.valid());
+            if(resource.has<vk::Image>())
+                VALIDATION_ASSERT(dependency.traits.imageTraits.valid());
+            if(resource.has<vk::Buffer>())
+                VALIDATION_ASSERT(dependency.traits.bufferTraits.valid());
+        }
     }
-    for(auto const &resource : pass.writes)
+    for(auto const &dependent : pass.writes)
     {
-        VALIDATION_ASSERT(resource.eResource.valid());
-        VALIDATION_ASSERT(resource.traits.valid());
+        VALIDATION_ASSERT(dependent.traits.valid());
+
+        auto resourceIndex = mResourceNameToIndex.at(dependent.resource);
+        VALIDATION_ASSERT(mResourceNameToIndex.contains(dependent.resource));
+        if(mResources.contains(resourceIndex))
+        {
+            auto const &resource = mResources.get(resourceIndex);
+            VALIDATION_ASSERT(resource.valid());
+            if(resource.has<vk::Image>())
+                VALIDATION_ASSERT(dependent.traits.imageTraits.valid());
+            if(resource.has<vk::Buffer>())
+                VALIDATION_ASSERT(dependent.traits.bufferTraits.valid());
+        }
     }
 
     // TODO: More sophisticated cycle detection.
@@ -139,7 +146,7 @@ void RenderGraph::validate(uint32_t passIndex)
 
     for(auto const &resource : pass.writes)
     {
-        auto const &usage = mResourceUsage.at(resource.eResource);
+        auto const &usage = mResourceUsage.at(mResourceNameToIndex.at(resource.resource));
         for(auto const &[pass, version] : usage.readInPasses)
             if(version == passIndex)
                 validate(pass);
@@ -169,9 +176,9 @@ std::string RenderGraph::dumpGraphviz(int indent, GraphvizSettings settings) con
     std::string explicitEdgeAttributes = collapseAttributes(settings.explicitEdgeAttributes);
     std::string historyEdgeAttributes = collapseAttributes(settings.historyEdgeAttributes);
 
-    for(auto index : mResult.passStack)
+    for(auto index : mPassStack)
     {
-        auto const &pass = mResult.passes.get(index);
+        auto const &pass = mPasses.get(index);
         auto name = pass.name;
         name.erase(std::remove(name.begin(), name.end(), '\"'), name.end());
 
@@ -182,14 +189,15 @@ std::string RenderGraph::dumpGraphviz(int indent, GraphvizSettings settings) con
         {
             for(auto const &resource : pass.writes)
             {  
-                auto &usage = mResourceUsage.at(resource.eResource);
+                auto resourceIndex = mResourceNameToIndex.at(resource.resource);
+                auto &usage = mResourceUsage.get(resourceIndex);
                 auto currentVersion = usage.versions.passToVersion.at(index);
                 for(auto const &[dependency, passVersion] : usage.readInPasses) {
                     if(dependency == index)
                         continue;
                     auto version = passVersion ? usage.versions.passToVersion.at(passVersion) : 1;
                     if(currentVersion - version == 1)
-                        ss << newline(indent) << "\"" << mResult.passes.get(dependency).name << "\" -> \"" << name << "\" [label=\"" << resource.id() << "\"]" << implicitEdgeAttributes << ";";
+                        ss << newline(indent) << fmt::format("\"{}\" -> \"{}\" [label=\"{} ({})\"]{}", mPasses.get(dependency).name, name, resource.resource, mResources.get(resourceIndex).id(), implicitEdgeAttributes);
                 }
             }
         }
@@ -201,15 +209,16 @@ std::string RenderGraph::dumpGraphviz(int indent, GraphvizSettings settings) con
             if(history && !settings.showHistory)
                 continue;
             
-            auto const &usage = mResourceUsage.at(resource.eResource);
-            auto const &version = history ? usage.versions.getLastVersion() : mResult.passNameToIndex.at(resource.pass);
-            ss << newline(indent) << "\"" << mResult.passes.get(version).name << "\" -> \"" << name << "\" [label=\"" << resource.id() << "\"]" << (history ? historyEdgeAttributes : explicitEdgeAttributes) << ";";
+            auto resourceIndex = mResourceNameToIndex.at(resource.resource);
+            auto &usage = mResourceUsage.get(resourceIndex);
+            auto const &version = history ? usage.versions.getLastVersion() : mPassNameToIndex.at(resource.pass);
+            ss << newline(indent) << fmt::format("\"{}\" -> \"{}\" [label=\"{} ({})\"]{}", mPasses.get(version).name, name, resource.resource, mResources.get(resourceIndex).id(), history ? historyEdgeAttributes : explicitEdgeAttributes);
         }
     }
 
     std::string title;
-    for(auto index : mResult.passStack)
-        title.append(mResult.passes.get(index).name).append(" -> ");
+    for(auto index : mPassStack)
+        title.append(mPasses.get(index).name).append(" -> ");
     title.erase(title.size() - std::string_view(" -> ").size());
     ss << newline(indent) << newline(indent) << "label = \"" << title << "\";";
 
@@ -220,17 +229,17 @@ std::string RenderGraph::dumpGraphviz(int indent, GraphvizSettings settings) con
 static std::string printDependencies(RenderPass const &pass)
 {
     std::string reads;
-    for(auto resource : pass.reads)
-        reads.append(fmt::format("{}/{}; ", resource.pass, resource.id()));
+    for(auto dependency : pass.reads)
+        reads.append(fmt::format("{}/{}; ", dependency.pass, dependency.resource));
     if(reads.empty())
         reads = "none";
     std::string writes;
-    for(auto resource : pass.writes)
-        writes.append(fmt::format("{}/{}; ", pass.name, resource.id()));
+    for(auto dependent : pass.writes)
+        writes.append(fmt::format("{}; ", dependent.resource));
     if(writes.empty())
         writes = "none";
 
-    return fmt::format("    reads {:>40} | writes {:>40}", reads, writes);
+    return fmt::format("reads {:>40} | writes {:>40}", reads, writes);
 }
 
 // There gotta be a simpler way
@@ -238,8 +247,8 @@ void RenderGraph::processPass(uint32_t passIndex, bool backtrack)
 {
     assert(passIndex != 0);
     
-    auto const &pass = mResult.passes[passIndex];
-    RENDER_GRAPH_TRACE("Processing pass {}, backtrack {}, {}", pass.name, backtrack, printDependencies(pass));
+    auto const &pass = mPasses[passIndex];
+    RENDER_GRAPH_TRACE("Processing pass {}, backtrack {},     {}", pass.name, backtrack, printDependencies(pass));
 
     if(mNodeState[passIndex] != NodeState::None)
         return;
@@ -249,7 +258,7 @@ void RenderGraph::processPass(uint32_t passIndex, bool backtrack)
     RENDER_GRAPH_TRACE("  Processing all implicit dependencies of pass {}", pass.name);
     for(auto const &resource : pass.writes)
     {
-        auto &usage = mResourceUsage.at(resource.eResource);
+        auto &usage = mResourceUsage.get(mResourceNameToIndex.at(resource.resource));
         for(auto const &[dependency, version] : usage.readInPasses)
             if(dependency != passIndex && (version == usage.versions.lastPassWrite || version == 0))
             {
@@ -263,7 +272,7 @@ void RenderGraph::processPass(uint32_t passIndex, bool backtrack)
     {
         if(!resource.pass.empty())
         {
-            auto const &dependency = mResult.passNameToIndex.at(resource.pass);
+            auto const &dependency = mPassNameToIndex.at(resource.pass);
             processPass(dependency, true);
             RENDER_GRAPH_TRACE("Back to processing pass {}, backtrack {}", pass.name, backtrack);
         }
@@ -273,15 +282,15 @@ void RenderGraph::processPass(uint32_t passIndex, bool backtrack)
     {
         mNodeState[passIndex] = NodeState::Added;
         RENDER_GRAPH_TRACE(" Adding pass {}", pass.name);
-        mResult.passStack.emplace_back(passIndex);
+        mPassStack.emplace_back(passIndex);
 
         RENDER_GRAPH_TRACE("  Adding pass {} to resource versions.", pass.name);
         for(auto const &resource : pass.writes)
         {
-            auto &usage = mResourceUsage.at(resource.eResource);
+            auto &usage = mResourceUsage.get(mResourceNameToIndex.at(resource.resource));
             // For future use
             auto version = usage.versions.nextVersion++;
-            RENDER_GRAPH_TRACE(": Adding pass {} to versions of resource {}, version {}, last write {}", pass.name, resource.id(), version, usage.versions.lastPassWrite == 0 ? "none" : mResult.passes.get(usage.versions.lastPassWrite).name);
+            RENDER_GRAPH_TRACE(": Adding pass {} to versions of resource {}, version {}, last write {}", pass.name, resource.resource, version, usage.versions.lastPassWrite == 0 ? "none" : mPasses.get(usage.versions.lastPassWrite).name);
             usage.versions.passToVersion[passIndex] = version; 
             usage.versions.versionToPass[version] = passIndex;
             usage.versions.lastPassWrite = passIndex;
@@ -297,7 +306,7 @@ void RenderGraph::processPass(uint32_t passIndex, bool backtrack)
     RENDER_GRAPH_TRACE("  Process all dependents on the pass {}", pass.name);
     for(auto const &resource : pass.writes)
     {
-        auto &usage = mResourceUsage.at(resource.eResource);
+        auto &usage = mResourceUsage.get(mResourceNameToIndex.at(resource.resource));
         for(auto const &[dependent, version] : usage.readInPasses)
             if(version == passIndex)
                 processPass(dependent, backtrack);
@@ -306,10 +315,10 @@ void RenderGraph::processPass(uint32_t passIndex, bool backtrack)
 
 void RenderGraph::buildBarriers()
 {
-    std::unordered_map<Entity, Barrier::Scope> resourceState;
-    for(auto passIndex : mResult.passStack)
+    std::unordered_map<uint32_t, Barrier::Scope> resourceState;
+    for(auto passIndex : mPassStack)
     {
-        auto const &pass = mResult.passes.get(passIndex);
+        auto const &pass = mPasses.get(passIndex);
         uint32_t queue = VK_QUEUE_FAMILY_IGNORED;
         if(!mQueueFamilies.indices.contains(pass.queue)) {
             LOG_ERROR("Pass {} needs queue {} which is not in queue families provided to the frame graph!", pass.name, string_VkQueueFlagBits(pass.queue));
@@ -323,9 +332,10 @@ void RenderGraph::buildBarriers()
         for(auto const &dependency : pass.reads) {
             bool history = dependency.pass.empty();
 
-            auto const &usage = mResourceUsage.at(dependency.eResource);
-            auto version = history ? usage.versions.getLastVersion() : mResult.passNameToIndex.at(dependency.pass);
-            auto &state = resourceState[dependency.eResource];
+            auto resourceIndex = mResourceNameToIndex.at(dependency.resource);
+            auto const &usage = mResourceUsage.get(resourceIndex);
+            auto version = history ? usage.versions.getLastVersion() : mPassNameToIndex.at(dependency.pass);
+            auto &state = resourceState[resourceIndex];
             auto prevState = state;
 
             if(version != 1)
@@ -340,8 +350,8 @@ void RenderGraph::buildBarriers()
 
                 };
             }
-            mResult.barriers[passIndex].emplace_back(Barrier{
-                .eResource = dependency.eResource,
+            mBarriers[passIndex].emplace_back(Barrier{
+                .resourceIndex = resourceIndex,
                 .src = prevState,
                 .dst = state,
                 .subresourceRange = dependency.traits.imageTraits.subresourceRange,
@@ -351,7 +361,8 @@ void RenderGraph::buildBarriers()
         }
         for(auto const &dependent : pass.writes)
         {
-            auto &state = resourceState[dependent.eResource];
+            auto resourceIndex = mResourceNameToIndex.at(dependent.resource);
+            auto &state = resourceState[resourceIndex];
             auto prevState = state;
             
             state = {
@@ -361,10 +372,9 @@ void RenderGraph::buildBarriers()
                 .queueIndex = queue,
                 .access = dependent.traits.access,
                 .stages = dependent.traits.stages,
-
             };
-            mResult.barriers[passIndex].emplace_back(Barrier{
-                .eResource = dependent.eResource,
+            mBarriers[passIndex].emplace_back(Barrier{
+                .resourceIndex = resourceIndex,
                 .src = prevState,
                 .dst = state,
                 .subresourceRange = dependent.traits.imageTraits.subresourceRange,
@@ -383,21 +393,25 @@ bool RenderGraph::build()
 
     // Very optimistic
     mFailed = false;
-    mResult.valid = false;
 
     // Index resources
     RENDER_GRAPH_TRACE("Indexing resources");
     mResourceUsage.clear();
-    for(auto const &[index, pass] : mResult.passes)
+    for(auto const &[index, pass] : mPasses)
     {
         for(auto const &resource : pass.reads)
         {
-            auto &usage = mResourceUsage[resource.eResource];
-            usage.readInPasses.emplace_back(index, resource.pass.empty() ? 0 : mResult.passNameToIndex.at(resource.pass));
+            // Maybe it will be set after building
+            if(!mResourceNameToIndex.contains(resource.resource))
+                mResourceNameToIndex[resource.resource] = mNextIndex++;
+            auto &usage = mResourceUsage[mResourceNameToIndex.at(resource.resource)];
+            usage.readInPasses.emplace_back(index, resource.pass.empty() ? 0 : mPassNameToIndex.at(resource.pass));
         }
         for(auto const &resource : pass.writes)
         {
-            auto &usage = mResourceUsage[resource.eResource];
+            if(!mResourceNameToIndex.contains(resource.resource))
+                mResourceNameToIndex[resource.resource] = mNextIndex++;
+            auto &usage = mResourceUsage[mResourceNameToIndex.at(resource.resource)];
             usage.writtenInPasses.emplace_back(index);
         }
     }
@@ -406,7 +420,7 @@ bool RenderGraph::build()
     // TODO: more validation
     RENDER_GRAPH_TRACE("Validating passes");
     mNodeState.clear();
-    for(auto const &[index, pass] : mResult.passes)
+    for(auto const &[index, pass] : mPasses)
     {
         if(pass.reads.empty())
             validate(index);
@@ -417,21 +431,21 @@ bool RenderGraph::build()
     // Recursively process every pass that has no dependencies
     RENDER_GRAPH_TRACE("Processing passes");
     mNodeState.clear();
-    mResult.passStack.clear();
-    for(auto const &[index, pass] : mResult.passes)
+    mPassStack.clear();
+    for(auto const &[index, pass] : mPasses)
     {
         if(pass.reads.empty())
             processPass(index);
     }
 
-    if(mNodeState.size() != mResult.passes.size())
+    if(mNodeState.size() != mPasses.size())
         LOG_WARN("not all passes visited!");
 
-    RENDER_GRAPH_TRACE("Pass stack: {}", mResult.passStack);
-    for(uint32_t i = 0; i < mResult.passStack.size(); ++i)
+    RENDER_GRAPH_TRACE("Pass stack: {}", mPassStack);
+    for(uint32_t i = 0; i < mPassStack.size(); ++i)
     {
-        auto passIndex = mResult.passStack[i];
-        auto const &pass = mResult.passes.get(passIndex);
+        auto passIndex = mPassStack[i];
+        auto const &pass = mPasses.get(passIndex);
         RENDER_GRAPH_TRACE("{:>2}) {:>15}: {}", i, pass.name, printDependencies(pass));
     }
 
@@ -441,6 +455,5 @@ bool RenderGraph::build()
         return false;
 
     mUpToDate = true;
-    mResult.valid = true;
     return true;
 }

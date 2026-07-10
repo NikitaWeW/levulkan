@@ -406,6 +406,7 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg)
 
             .shininess = 32.0f,
             .metallic = 0.0f,
+            .roughness = 1.0f,
             .ior       = 1.5f
         }
     };
@@ -515,6 +516,7 @@ Material ModelLoaderImpl::convertMaterial(aiMaterial const *aimaterial, Material
 
         .shininess     = getColor(aimaterial, defaultProperties.shininess,     AI_MATKEY_SHININESS),
         .metallic      = getColor(aimaterial, defaultProperties.metallic,      AI_MATKEY_METALLIC_FACTOR),
+        .roughness     = getColor(aimaterial, defaultProperties.roughness,     AI_MATKEY_ROUGHNESS_FACTOR),
         .ior           = getColor(aimaterial, defaultProperties.ior,           AI_MATKEY_REFRACTI)
     };
 

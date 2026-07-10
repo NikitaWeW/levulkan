@@ -1,6 +1,7 @@
 #include "Init.hpp"
 #include "Utility.hpp"
 #include "Logging.hpp"
+#include "cpptrace/cpptrace.hpp"
 #include <set>
 using namespace vk;
 
@@ -137,11 +138,8 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
         break;
     }
 
-    std::string fileLine = "<unknown location>";
-    #ifndef DONT_CHECK_VK_RESULT
-    fileLine = _sChkLastFileLine;
-    #endif
-    LOG(level, "{}: vulkan {} {} message:\n{}", fileLine, type, severity, pCallbackData->pMessage);
+    LOG(level, "vulkan {} {} message:\n{}", type, severity, pCallbackData->pMessage);
+    LOG_TRACE(cpptrace::generate_trace().to_string(false));
 
     return VK_FALSE;
 }

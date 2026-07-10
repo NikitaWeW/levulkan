@@ -590,6 +590,7 @@ Shader vk::makeShader(ShaderCreateInfo const &ci)
     if(canCompile)
         program.source = readFileString(program.createInfo.src);
 
+    // FIXME: What about outdated includes?
     bool outdated = fs::exists(program.createInfo.src) && fs::exists(program.createInfo.bin) && (std::filesystem::last_write_time(program.createInfo.src).time_since_epoch() > std::filesystem::last_write_time(program.createInfo.bin).time_since_epoch());
     outdated = outdated || program.createInfo.force;
     if(outdated && canCompile)
