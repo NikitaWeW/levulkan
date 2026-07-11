@@ -1,11 +1,12 @@
 #include "Resources.hpp" 
 #include "Loaders.hpp"
 #include "Logging.hpp"
+
 #include <filesystem>
-#include <fmt/chrono.h>
-#include <glm/ext/quaternion_geometric.hpp>
-#include <glm/gtc/quaternion.hpp>
-#include <glm/trigonometric.hpp>
+
+#include "glm/ext/quaternion_geometric.hpp"
+#include "glm/gtc/quaternion.hpp"
+#include "glm/trigonometric.hpp"
 
 #include "meshoptimizer.h"
 #include "assimp/Importer.hpp"
@@ -341,8 +342,8 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg)
                 .numComponents = 3,
                 .size = {1, 1},
             },
-            .srgb = false,
             .path = "default/white",
+            .srgb = false,
         });
     if(!normal)
         normal = mRegistry->create(Texture{
@@ -353,8 +354,8 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg)
                 .numComponents = 3,
                 .size = {1, 1},
             },
+            .path = "default/normal",
             .srgb = false,
-            .path = "default/normal"
         });
     if(!black)
         black = mRegistry->create(Texture{
@@ -365,8 +366,8 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg)
                 .numComponents = 3,
                 .size = {1, 1},
             },
+            .path = "default/black",
             .srgb = false,
-            .path = "default/black"
         });
     if(!tile)
         tile = mRegistry->create(Texture{
@@ -384,8 +385,8 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg)
                 .numComponents = 3,
                 .size = {8, 8},
             },
+            .path = "default/tile",
             .srgb = true,
-            .path = "default/tile"
         });
 
     mDefaultMaterial = {
@@ -405,6 +406,7 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg)
 
             .shininess = 32.0f,
             .metallic = 0.0f,
+            .roughness = 1.0f,
             .ior       = 1.5f
         }
     };
@@ -514,6 +516,7 @@ Material ModelLoaderImpl::convertMaterial(aiMaterial const *aimaterial, Material
 
         .shininess     = getColor(aimaterial, defaultProperties.shininess,     AI_MATKEY_SHININESS),
         .metallic      = getColor(aimaterial, defaultProperties.metallic,      AI_MATKEY_METALLIC_FACTOR),
+        .roughness     = getColor(aimaterial, defaultProperties.roughness,     AI_MATKEY_ROUGHNESS_FACTOR),
         .ior           = getColor(aimaterial, defaultProperties.ior,           AI_MATKEY_REFRACTI)
     };
 
@@ -742,6 +745,22 @@ ModelLoader::ModelLoader(ecs::registry &reg)
     mImpl = new ModelLoaderImpl{reg};
     mImpl->mTextureLoader = TextureLoader{*mImpl->mRegistry}; 
 }
+ModelLoader::ModelLoader(ModelLoader const &o)
+{
+    *this = o;
+}
+ModelLoader &ModelLoader::operator=(ModelLoader const &o)
+{
+    if(o.mImpl)
+        mImpl = new ModelLoaderImpl(*o.mImpl);
+
+    return *this;
+}
+ModelLoader::~ModelLoader()
+{
+    if(mImpl)
+        delete mImpl;
+}
 ecs::entity ModelLoader::loadFromFile(std::string_view path, ModelLoaderOptions options)
 {
     assert(mImpl && "Invalid loader! (make sure to not use default constructor when making an actual loader)");
@@ -774,7 +793,10 @@ ecs::entity ModelLoader::loadFromFile(std::string_view path, ModelLoaderOptions 
     mImpl->mOptions = options;
     mImpl->mModel->skeleton.globalInverseTransform = glm::inverse(toMat4(mImpl->mScene->mRootNode->mTransformation));
 
-    return mImpl->load();
+    auto eModel = mImpl->load();
+
+    mImpl->mScene = nullptr;
+    return eModel;
 }
 ecs::entity ModelLoader::loadFromMemory(void const *data, size_t size, ModelLoaderOptions options)
 {
@@ -809,5 +831,8 @@ ecs::entity ModelLoader::loadFromMemory(void const *data, size_t size, ModelLoad
     mImpl->mOptions = options;
     mImpl->mModel->skeleton.globalInverseTransform = glm::inverse(toMat4(mImpl->mScene->mRootNode->mTransformation));
 
-    return mImpl->load();
+    auto eModel = mImpl->load();
+
+    mImpl->mScene = nullptr;
+    return eModel;
 }

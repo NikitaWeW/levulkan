@@ -18,9 +18,17 @@ struct Bitmap
 struct Texture
 {
     Bitmap<uint8_t> bitmap;
-    bool srgb = false;
-    unsigned numMipLevels = 1;
     std::string path;
+    bool srgb = false;
+    bool linearSampling = false;
+    unsigned numMipLevels = 1;
+    enum class AddressMode {
+        Repeat,
+        MirroredRepeat,
+        ClampToEdge,
+        ClampToBorder,
+        MirrorClampToEdge,
+    } addressMode = AddressMode::Repeat;
 };
 struct Cubemap
 {
@@ -49,6 +57,7 @@ struct Material
 
         float shininess;
         float metallic;
+        float roughness;
         float ior;
     } properties;
 };
@@ -93,7 +102,6 @@ struct Mesh
         std::vector<unsigned> indices;
 
         // optional
-        // hope 4 bones per vertex would be enough
         std::vector<glm::vec4> boneIDs;
         std::vector<glm::vec4> weights;
     } geometry;

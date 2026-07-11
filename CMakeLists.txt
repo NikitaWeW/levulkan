@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 project(levulkan C CXX)
@@ -31,13 +31,15 @@ CPMAddPackage(
     GIT_TAG 3.4
     GITHUB_REPOSITORY "glfw/glfw"
 )
-CPMAddPackage("gh:nikitawew/nicecs#c78f357")
+CPMAddPackage("gh:nikitawew/nicecs#fd857895")
 CPMAddPackage("gh:zeux/meshoptimizer@1.0")
 CPMAddPackage(URI "gh:gabime/spdlog@1.17.0" FORCE ON)
 CPMAddPackage("gh:g-truc/glm#1.0.2")
 CPMAddPackage("gh:GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator@3.3.0")
 CPMAddPackage("gh:zeux/volk@1.4.304")
 CPMAddPackage("gh:KhronosGroup/Spirv-Reflect#vulkan-sdk-1.4.341.0")
+CPMAddPackage("gh:jeremy-rifkin/cpptrace#v1.0.4")
+CPMAddPackage("gh:nlohmann/json#v3.12.0")
 
 find_package(glslang)
 if(NOT glslang_FOUND)
@@ -63,10 +65,11 @@ set(LEVULKAN_SOURCE
     "src/vk/RingBuffer.cpp"
     "src/vk/Shader.cpp"
     "src/vk/Swapchain.cpp"
+    "src/vk/RenderGraph.cpp"
 )
 
 add_executable(levulkan ${LEVULKAN_SOURCE})
-target_link_libraries(levulkan PRIVATE spdlog nicecs::ecs glm assimp meshoptimizer)
+target_link_libraries(levulkan PRIVATE spdlog nicecs::ecs glm assimp meshoptimizer cpptrace::cpptrace nlohmann_json::nlohmann_json)
 target_link_libraries(levulkan PRIVATE glfw volk GPUOpen::VulkanMemoryAllocator glslang::glslang glslang::glslang-default-resource-limits spirv-reflect-static)
 target_include_directories(levulkan PRIVATE "src")
 target_compile_definitions(levulkan PRIVATE GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_ENABLE_EXPERIMENTAL)

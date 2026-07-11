@@ -1,17 +1,12 @@
-/*
-$$\    $$\ $$\   $$\   My vulkan abstraction.
-$$ |   $$ |$$ | $$  |  Copyright (c) 2026 Nikita Martynau 
-$$ |   $$ |$$ |$$  /   https://opensource.org/license/mit 
-\$$\  $$  |$$$$$  /    insert git repo url here
- \$$\$$  / $$  $$<     
-  \$$$  /  $$ |\$$\    Custom GLSL preprocessor and glslang utility.
-   \$  /   $$ | \$$\   Allows to have all the stages in one file via the new #stage directive
-    \_/    \__|  \__|  and manage spirv shader binaries.
-*/
-#include "vk.hpp"
+#include "Shader.hpp"
+#include "Utility.hpp"
 #include "Logging.hpp"
 #include "glslang/Public/ShaderLang.h"
 #include "glslang/SPIRV/GlslangToSpv.h"
+
+#include <filesystem>
+#include <set>
+#include <ranges>
 
 using namespace vk;
 namespace fs = std::filesystem;
@@ -138,7 +133,8 @@ static const std::unordered_map<std::string, VkShaderStageFlagBits> gStageNameTo
     {"rayclosesthit", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR        },
     {"raymiss"      , VK_SHADER_STAGE_MISS_BIT_KHR               },
     {"raycallable"  , VK_SHADER_STAGE_CALLABLE_BIT_KHR           },
-    {"all"          , VK_SHADER_STAGE_ALL                        }, // Append to all stages in the shader
+    {"all"          , VK_SHADER_STAGE_ALL                        }, 
+    {"preamble"     , VK_SHADER_STAGE_ALL                        }, // Append to all stages in the shader
 };
 static const std::unordered_map<VkShaderStageFlagBits, EShLanguage /* glslang_stage_t */> gVulkanStageToGlslang = {
     {VK_SHADER_STAGE_VERTEX_BIT                  , EShLangVertex         /* GLSLANG_STAGE_VERTEX         */},
@@ -226,18 +222,23 @@ static void collectBinaries(Shader &program)
 
         auto binPath = directoryEntry.path().string();
 
-        auto stageName = directoryEntry.path().stem().string();
-        if(gVulkanStageStringToEnum.find(stageName) == gVulkanStageStringToEnum.end())
+        // path/to/binary/VK_SHADER_STAGE_XXX.name.spv
+        auto stage = directoryEntry.path().stem();
+        auto name = stage.extension().string();
+        stage = stage.stem();
+        if(!name.empty() && name[0] == '.')
+            name.erase(0, 1);
+        if(gVulkanStageStringToEnum.find(stage) == gVulkanStageStringToEnum.end())
         {
             LOG_WARN("Unknown file binary: \"{}\"", binPath);
             continue;
         }
-        auto stage = gVulkanStageStringToEnum.at(stageName);
 
         program.binaries.emplace_back(Shader::Binary{
-            .stage = stage,
+            .stage = gVulkanStageStringToEnum.at(stage.string()),
             .spirv = readFileBinary<uint32_t>(binPath),
             .path = binPath,
+            .name = name,
         });
     }
 }
@@ -353,25 +354,58 @@ static TBuiltInResource InitResources()
     return Resources;
 }
 
-// thanks to https://stackoverflow.com/a/217605
+
+// Thanks to https://stackoverflow.com/a/217605
 // Trim from the start (in place)
 static void ltrim(std::string &s) {
     s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
         return !std::isspace(ch);
     }));
 }
-// thanks to https://stackoverflow.com/a/217605
+// Thanks to https://stackoverflow.com/a/217605
 // Trim from the end (in place)
 static void rtrim(std::string &s) {
     s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
         return !std::isspace(ch);
     }).base(), s.end());
 }
-// Split sources
-static std::map<VkShaderStageFlagBits, std::string> preprocess(Shader &program)
+// Thanks to https://stackoverflow.com/a/14266139
+std::vector<std::string> split(std::string s, std::string const &delimiter) {
+    std::vector<std::string> tokens;
+    size_t pos = 0;
+    std::string token;
+    while((pos = s.find(delimiter)) != std::string::npos) {
+        token = s.substr(0, pos);
+        tokens.push_back(token);
+        s.erase(0, pos + delimiter.length());
+    }
+    tokens.push_back(s);
+
+    return tokens;
+}
+
+struct ShaderStage
 {
-    std::map<VkShaderStageFlagBits, std::string> stages;
-    VkShaderStageFlagBits currentStage = VK_SHADER_STAGE_ALL;
+    std::string source;
+    std::string name;
+    VkShaderStageFlagBits stage;
+};
+static void printUsage()
+{
+    std::vector<std::string> names;
+    for(auto const &[name, _] : gStageNameToVulkanEnum)
+        names.emplace_back(name);
+
+    LOG_ERROR("Usage: #stage \"<stage name>\" \"[optional stage label (identify the stage)]\" -- declare a new shader stage");
+    LOG_ERROR("Valid stage names: {}", names);
+    LOG_ERROR("#stage all will make a preamble for each shader");
+}
+
+// Split sources
+static std::vector<ShaderStage> splitSource(Shader &program)
+{
+    std::vector<ShaderStage> stages(1);
+    uint32_t currentStage = 0; // 0 - preamble
     std::istringstream stream(program.source);
 
     std::string preamble;
@@ -386,49 +420,71 @@ static std::map<VkShaderStageFlagBits, std::string> preprocess(Shader &program)
     {
         auto directive = line.find_first_not_of(" \t");
         if(directive != std::string::npos && line.compare(directive, STAGE_IDENTIFIER.size(), STAGE_IDENTIFIER) == 0) {
-            auto stageName = line.substr(directive + STAGE_IDENTIFIER.size());
-            ltrim(stageName);
-            rtrim(stageName);
-
-            if(gStageNameToVulkanEnum.find(stageName) != gStageNameToVulkanEnum.end())
+            line = line.substr(directive + STAGE_IDENTIFIER.size());
+            auto tokens = split(line, "\" \"");
+            for(auto &token : tokens)
             {
-                currentStage = gStageNameToVulkanEnum.at(stageName);
-            } else {
-                LOG_ERROR("\"{}\": unknown stage name: \"{}\":\n{}", program.createInfo.src, stageName, line);
+                ltrim(token);
+                rtrim(token);
+                std::erase(token, '\"');
+            }
+            if(tokens.empty() || tokens.size() > 2)
+            {
+                LOG_ERROR("\"{}:{}\": invalid tokens!", program.createInfo.src, lineNum);
+                printUsage();
+                continue;
             }
 
-            stages[currentStage].append("#line " + std::to_string(lineNum) + " \"" + program.createInfo.src + "\"\n\n");
+            auto stageName = tokens[0];
+
+            if(gStageNameToVulkanEnum.find(stageName) != gStageNameToVulkanEnum.end()) {
+                auto stage = gStageNameToVulkanEnum.at(stageName);
+                if(stage == VK_SHADER_STAGE_ALL) {
+                    currentStage = 0;
+                } else {
+                    stages.emplace_back(ShaderStage{.stage = stage});
+                    currentStage = stages.size() - 1;
+                }
+            } else {
+                LOG_ERROR("\"{}:{}\": unknown stage name: \"{}\"", program.createInfo.src, line, stageName);
+                printUsage();
+                continue;
+            }
+
+            stages[currentStage].source.append("#line " + std::to_string(lineNum) + " \"" + program.createInfo.src + "\"\n\n");
+            if(tokens.size() >= 2)
+                stages[currentStage].name = tokens[1];
         } else if(directive != std::string::npos && line.compare(directive, VERSION_IDENTIFIER.size(), VERSION_IDENTIFIER) == 0) {
-            stages[currentStage].insert(0, line + '\n' + preamble);
-            stages[currentStage].append("#line " + std::to_string(lineNum) + " \"" + program.createInfo.src + "\"\n\n");
+            stages[currentStage].source.insert(0, line + '\n' + preamble);
+            stages[currentStage].source.append("#line " + std::to_string(lineNum) + " \"" + program.createInfo.src + "\"\n\n");
         } else {
-            stages[currentStage].append(line + '\n');
+            stages[currentStage].source.append(line + '\n');
         }
 
         ++lineNum;
     }
 
-    auto all = stages[VK_SHADER_STAGE_ALL];
-    stages.erase(VK_SHADER_STAGE_ALL);
-    for(auto &[stage, source] : stages)
+    auto all = stages[0];
+    stages.erase(stages.begin()); // remove preamble
+    for(auto &stage : stages)
     {
-        source.insert(0, all);
+        stage.source.insert(0, all.source);
 
         // move #version to top of the source
-        size_t versionPos = source.find("#version");
+        size_t versionPos = stage.source.find("#version");
         if(versionPos != std::string::npos)
         {
-            auto lineSize = source.find('\n', versionPos) - versionPos + 1;
-            auto version = source.substr(versionPos, lineSize);
-            source.erase(versionPos, lineSize);
-            source.insert(0, version);
+            auto lineSize = stage.source.find('\n', versionPos) - versionPos + 1;
+            auto version = stage.source.substr(versionPos, lineSize);
+            stage.source.erase(versionPos, lineSize);
+            stage.source.insert(0, version);
         }
     }
 
     return stages;
 }
 // Compile the sources using glslang
-static bool compileSources(Shader &program, std::map<VkShaderStageFlagBits, std::string> const &sources)
+static bool compileSources(Shader &program, std::vector<ShaderStage> const &sources)
 {
     [[maybe_unused]] static class GlslangProcess
     {
@@ -449,20 +505,20 @@ static bool compileSources(Shader &program, std::map<VkShaderStageFlagBits, std:
     std::vector<std::unique_ptr<glslang::TShader>> glslShaders;
     static auto resources = InitResources();
 
-    for(auto &[stage, source] : sources)
+    for(auto &stage : sources)
     {
-        if(!gVulkanStageToGlslang.contains(stage))
+        if(!gVulkanStageToGlslang.contains(stage.stage))
         {
-            LOG_WARN("Unknown shader stage: {}", string_VkShaderStageFlagBits(stage));
+            LOG_WARN("Unknown shader stage: {}", string_VkShaderStageFlagBits(stage.stage));
             continue;
         }
 
-        auto glslShader = std::make_unique<glslang::TShader>(gVulkanStageToGlslang.at(stage));
-        auto cString = source.c_str();
-        int l = source.size();
+        auto glslShader = std::make_unique<glslang::TShader>(gVulkanStageToGlslang.at(stage.stage));
+        auto cString = stage.source.c_str();
+        int l = stage.source.size();
         auto name = program.createInfo.src.c_str();
 
-        glslShader->setEnvInput(glslang::EShSourceGlsl, gVulkanStageToGlslang.at(stage), glslang::EShClientVulkan, 100);
+        glslShader->setEnvInput(glslang::EShSourceGlsl, gVulkanStageToGlslang.at(stage.stage), glslang::EShClientVulkan, 100);
         glslShader->setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_3);
         glslShader->setEnvTarget(glslang::EshTargetSpv, glslang::EShTargetSpv_1_6);
         glslShader->setDebugInfo(program.createInfo.debugInfo);
@@ -486,25 +542,26 @@ static bool compileSources(Shader &program, std::map<VkShaderStageFlagBits, std:
     }
 
 
-    for(auto &[stage, data] : sources)
+    for(auto &stage : sources)
     {
-        if(!gVulkanStageToGlslang.contains(stage))
+        if(!gVulkanStageToGlslang.contains(stage.stage))
         {
-            LOG_WARN("Unknown shader stage: {}", string_VkShaderStageFlagBits(stage));
+            LOG_WARN("Unknown shader stage: {}", string_VkShaderStageFlagBits(stage.stage));
             continue;
         }
 
         auto &bin = program.binaries.emplace_back();
-        bin.stage = stage;
+        bin.stage = stage.stage;
+        bin.name = stage.name;
 
-        glslang::TIntermediate *intermediate = glslProgram.getIntermediate(gVulkanStageToGlslang.at(stage));
+        glslang::TIntermediate *intermediate = glslProgram.getIntermediate(gVulkanStageToGlslang.at(stage.stage));
         spv::SpvBuildLogger logger;
         glslang::SpvOptions options;
 
         glslang::GlslangToSpv(*intermediate, bin.spirv, &logger, &options);
 
         if(!logger.getAllMessages().empty())
-            LOG_WARN("Stage {} from \"{}\" spirv gen messages:\n{}", string_VkShaderStageFlagBits(stage), program.createInfo.src, logger.getAllMessages());
+            LOG_WARN("Stage {} \"{}\" from \"{}\" spirv gen messages:\n{}", string_VkShaderStageFlagBits(stage.stage), stage.name, program.createInfo.src, logger.getAllMessages());
     }
 
     return true;
@@ -528,12 +585,14 @@ Shader vk::makeShader(ShaderCreateInfo const &ci)
 
     bool canCompile = fs::exists(program.createInfo.src);
     bool canCollect = fs::exists(program.createInfo.bin) && fs::is_directory(program.createInfo.bin);
-
+    bool canWrite   = !program.createInfo.bin.empty();
 
     if(canCompile)
         program.source = readFileString(program.createInfo.src);
 
+    // FIXME: What about outdated includes?
     bool outdated = fs::exists(program.createInfo.src) && fs::exists(program.createInfo.bin) && (std::filesystem::last_write_time(program.createInfo.src).time_since_epoch() > std::filesystem::last_write_time(program.createInfo.bin).time_since_epoch());
+    outdated = outdated || program.createInfo.force;
     if(outdated && canCompile)
         LOG_INFO("\"{}\" shader binaries are outdated! Recompiling", program.createInfo.bin);
 
@@ -544,16 +603,21 @@ Shader vk::makeShader(ShaderCreateInfo const &ci)
     } else if(canCompile) {
         LOG_TRACE("Compiling from source \"{}\"", program.createInfo.src);
 
-        if(!compileSources(program, preprocess(program)))
+        if(!compileSources(program, splitSource(program)))
             return program;
 
-        for(auto &bin : program.binaries)
+        if(canWrite)
         {
-            bin.path = (fs::path(program.createInfo.bin)/string_VkShaderStageFlagBits(bin.stage)).string() + ".spv";
-            writeFileBinary(bin.path, reinterpret_cast<char const *>(bin.spirv.data()), bin.spirv.size() * sizeof(bin.spirv[0]));
+            fs::remove_all(program.createInfo.bin);
+            for(auto &bin : program.binaries)
+            {
+                auto name = bin.name == "" ? "" : "." + bin.name;
+                bin.path = (fs::path(program.createInfo.bin)/string_VkShaderStageFlagBits(bin.stage)).string() + name + ".spv";
+                writeFileBinary(bin.path, reinterpret_cast<char const *>(bin.spirv.data()), bin.spirv.size() * sizeof(bin.spirv[0]));
+            }
+    
+            fs::last_write_time(program.createInfo.bin, std::chrono::file_clock::now());
         }
-
-        fs::last_write_time(program.createInfo.bin, std::chrono::file_clock::now());
     } else {
         LOG_ERROR("Cannot find binaries in \"{}\" or compile from source \"{}\" shaders!", program.createInfo.bin, program.createInfo.src);
         return program;
@@ -568,7 +632,7 @@ Shader vk::makeShader(ShaderCreateInfo const &ci)
             createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
             createInfo.codeSize = bin.spirv.size() * sizeof(bin.spirv[0]);
             createInfo.pCode = bin.spirv.data();
-            VK_CHK(vkCreateShaderModule(program.createInfo.device, &createInfo, nullptr, &bin.module));
+            CHECK_VK_RES(vkCreateShaderModule(program.createInfo.device, &createInfo, nullptr, &bin.module));
         }
     } else {
         LOG_WARN("Not creating shader modules for \"{}\"/\"{}\", because device is VK_NULL_HANDLE.", program.createInfo.src, program.createInfo.bin);

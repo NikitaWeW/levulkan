@@ -7,6 +7,7 @@ struct MaterialProperties
 
     float shininess;
     float metallic;
+    float roughness;
     float ior;
 };
 struct MaterialTextures

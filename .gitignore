@@ -4,3 +4,4 @@ install
 .vscode
 .cache
 CMakeUserPresets.json
+RenderGraph.dot

@@ -3,7 +3,7 @@
 #include "GLFW/glfw3.h"
 #include "glm/glm.hpp"
 #include <queue>
-#include "nicecs/ecs.hpp"
+#include "ECS.hpp"
 
 struct Window
 {

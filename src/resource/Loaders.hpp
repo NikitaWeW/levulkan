@@ -1,5 +1,5 @@
 #pragma once
-#include "nicecs/ecs.hpp"
+#include "ECS.hpp"
 #include "Resources.hpp"
 
 struct TextureLoaderOptions
@@ -17,13 +17,18 @@ struct ModelLoaderOptions
 class ModelLoader
 {
 private:
-    struct ModelLoaderImpl *mImpl;
+    struct ModelLoaderImpl *mImpl = nullptr;
 public:
     /// @brief Construct an invalid loader.
     ModelLoader() = default;
-
     /// @brief Construct a valid loader.
     explicit ModelLoader(ecs::registry &reg);
+    ModelLoader(ModelLoader &&) = default;
+    ModelLoader &operator=(ModelLoader &&) = default;
+
+    ModelLoader(ModelLoader const &);
+    ModelLoader &operator=(ModelLoader const &);
+    ~ModelLoader();
 
     /// @brief Load a model from file.
     /// @param path The path to the file 

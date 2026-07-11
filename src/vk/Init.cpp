@@ -1,15 +1,8 @@
-/*
-$$\    $$\ $$\   $$\   My vulkan abstraction.
-$$ |   $$ |$$ | $$  |  Copyright (c) 2026 Nikita Martynau 
-$$ |   $$ |$$ |$$  /   https://opensource.org/license/mit 
-\$$\  $$  |$$$$$  /    insert git repo url here
- \$$\$$  / $$  $$<     
-  \$$$  /  $$ |\$$\    
-   \$  /   $$ | \$$\   Convenience function to init vulkan painlessly
-    \_/    \__|  \__|  using single easy-to-fill struct.
-*/
-#include "vk.hpp"
+#include "Init.hpp"
+#include "Utility.hpp"
 #include "Logging.hpp"
+#include "cpptrace/cpptrace.hpp"
+#include <set>
 using namespace vk;
 
 std::string _sChkLastFileLine;
@@ -98,7 +91,7 @@ static bool createInstance(InitInfo const &info, InitResult &result)
 }
 
 template<typename C, typename P>
-requires requires (P p) { { p() } -> std::convertible_to<bool>; } // Ah, c++ truly required such a feature...
+requires requires (P p) { { p() } -> std::convertible_to<bool>; }
 static bool containsIf(C const &cont, P const &pred)
 {
     return std::find_if(cont.begin(), cont.end(), pred) != cont.end();
@@ -145,7 +138,8 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
         break;
     }
 
-    LOG(level, "{}: vulkan {} {} message:\n{}", _sChkLastFileLine, type, severity, pCallbackData->pMessage);
+    LOG(level, "vulkan {} {} message:\n{}", type, severity, pCallbackData->pMessage);
+    LOG_TRACE(cpptrace::generate_trace().to_string(false));
 
     return VK_FALSE;
 }
@@ -178,7 +172,7 @@ static void addToFamilies(QueueFamilies &indices, uint32_t i)
         .queueCount = 1,
         .pQueuePriorities = &priorities
     };
-    indices.uniqueFamilies[i] = i;
+    indices.uniqueFamilies.insert(i);
     ++indices.count;
 }
 static bool complete(QueueFamilies const &families, std::vector<VkQueueFlagBits> const &queues, bool offscreen)
@@ -428,9 +422,9 @@ static void createAllocator(InitInfo const &info, InitResult &result)
         .vulkanApiVersion = info.version
     };
     VmaVulkanFunctions functions;
-    VK_CHK(vmaImportVulkanFunctionsFromVolk(&allocatorCI, &functions));
+    CHECK_VK_RES(vmaImportVulkanFunctionsFromVolk(&allocatorCI, &functions));
     allocatorCI.pVulkanFunctions = &functions;
-    VK_CHK(vmaCreateAllocator(&allocatorCI, &result.vma));
+    CHECK_VK_RES(vmaCreateAllocator(&allocatorCI, &result.vma));
 }
 
 InitResult vk::init(InitInfo info)
@@ -449,6 +443,7 @@ InitResult vk::init(InitInfo info)
     if(!info.offscreen) 
     {
         LOG_TRACE("Creating window surface");
+        assert(info.window);
         auto res = glfwCreateWindowSurface(result.instance, info.window, nullptr, &result.surface);
         if(res != VK_SUCCESS)
         {

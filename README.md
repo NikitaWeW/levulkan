@@ -4,7 +4,14 @@
 
 Yeah...
 
-Running on hopes and dreams.
+A lot of stuff is going to be merged into my engine.
+
+## Features
+- Device, swapchain and other stuff initialization. (src/vk/Init.hpp)
+- GLSL Shader compilation and binary management with custom #stage parser/splitter. (src/vk/Shader.hpp)
+- Pipeline and descriptor set management with shader reflection. (src/vk/Pipeline.hpp)
+- GPU ring buffer. Useful for frequently updated data. (src/vk/RingBuffer.hpp)
+- Vulkan render graph. (src/vk/RenderGraph.hpp)
 
 ## Building 
 
@@ -15,19 +22,17 @@ cmake -S . -B build
 cmake --build build
 build/levulkan # profit
 ```
-
-You can also set `CPM_USE_LOCAL_PACKAGES=ON` to speed up the process
+*You can also set `CPM_USE_LOCAL_PACKAGES=ON` to speed up the process*
 
 ### Requirements
-- Cmake
-- Build system (e.g. makefiles, visual studio, ninja, etc.)
-- C++ 20 compiler
-- Validation layers (VK_LAYER_KHRONOS_validation) installed for validation
-- All the packages are managed by cpm.cmake
+- Cmake.
+- Build system (e.g. unix makefiles, visual studio, ninja, etc.).
+- C++ 20 compiler.
+- Validation layers (VK_LAYER_KHRONOS_validation) installed for validation.
+- Everything else is managed by cpm.cmake, so no dependency setup is required.
 
-## Resources I use
+## Cool vulkan resources
 
 - [How to vulkan](https://howtovulkan.com)
 - [Vulkan docs](https://docs.vulkan.org)
-- [OGLDEV's vulkan tutorials](https://youtube.com/watch?v=EsEP9iJKBhU&list=PLA0dXqQjCx0RntJy1pqje9uHRF1Z5vZgA)
 - [Sasha Willems' vulkan samples](https://github.com/SaschaWillems/Vulkan)
