@@ -5,6 +5,7 @@
 #include "lib/Fullscreen.vert"
 
 #stage fragment
+#include "lib/Tonemap.glsl"
 
 layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 oColor;
@@ -28,4 +29,10 @@ void main()
     vec3 specular = vec3(pow(max(dot(R, V), 0.0), 16.0) * 0.75) * 0;
     vec3 color = texture(uAlbedo, uv).rgb;
     oColor = vec4(diffuse * color.rgb + specular, 1.0);
+
+
+    // Tone mapping
+    oColor.rgb = reinhard(oColor.rgb);
+    // Gamma correction
+    oColor.rgb = pow(oColor.rgb, vec3(1.0/2.2));
 }

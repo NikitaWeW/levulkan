@@ -1071,63 +1071,6 @@ int app(int argc, char **argv)
         .pipeline = lighting_pipeline
     });
 
-    ///////////////////////////////////////////////////
-
-    auto post_pass = [&](vk::RenderPass const &pass, VkCommandBuffer cb) {
-        if(resizedAttachments) {
-            vk::writeDescriptors(pass.pipeline, {
-                vk::DescriptorWrite{
-                    .dstSet = 0,
-                    .dstBinding = 0,
-                    .imageInfo = {VkDescriptorImageInfo{
-                        .sampler     = renderGraph.findResource("main_color").get<vk::Image>().sampler,
-                        .imageView   = renderGraph.findResource("main_color").get<vk::Image>().view,
-                        .imageLayout = SHADER_SAMPLED_TRAITS.imageTraits.layout,
-                    }},
-                },
-            });
-        }
-        VkRenderingAttachmentInfo colorAttachmentInfo = {
-            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView = renderGraph.findResource("main_color").get<vk::Image>().view,
-            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
-            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-            .clearValue{.color{{ 0.0f, 0.0f, 0.0f, 1.0f }}}
-        };
-        fullscreenPass(pass, cb, colorAttachmentInfo, {window.size.x, window.size.y});
-    };
-    auto post_shader = vk::makeShader({
-        .src = "shaders/deferred/post.glsl",
-        .bin = "shaders-bin/post",
-        .device = device,
-        .includeDirs = {"shaders"}
-    });
-    assert(post_shader.valid);
-    vk::Pipeline post_pipeline = vk::makePipeline(post_shader, vk::GraphicsPipelineCreateInfo{
-        .layout = {},
-        .dynamicState = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR },
-        .allocator = initRes.vma,
-        .input = {},
-        .attachments = {
-            .color = std::vector<VkFormat>(1, COLOR_ATTACHMENT_CREATE_INFO.format),
-        },
-        .depthStencil = {},
-        .blending = {
-            .attachments = { NO_BLENDING }
-        },
-    });
-    assert(post_pipeline.valid);
-
-    renderGraph.addPass({
-        .name = "Post processing",
-        .reads = {{"main_color", "Lighting", SHADER_SAMPLED_TRAITS}},
-        .writes = {{"main_color", COLOR_ATTACHMENT_TRAITS}},
-        .queue = VK_QUEUE_GRAPHICS_BIT,
-        .callback = post_pass,
-        .shader = post_shader,
-        .pipeline = post_pipeline
-    });
 
     ///////////////////////////////////////////////////
 
@@ -1167,7 +1110,7 @@ int app(int argc, char **argv)
 
     renderGraph.addPass({
         .name = "Swapchain blit",
-        .reads = {{"main_color", "Post processing", TRANSFER_SRC_TRAITS}},
+        .reads = {{"main_color", "Lighting", TRANSFER_SRC_TRAITS}},
         .writes = {{"swapchain", TRANSFER_DST_TRAITS}},
         .queue = VK_QUEUE_TRANSFER_BIT,
         .callback = swapchain_pass
@@ -1338,15 +1281,25 @@ int app(int argc, char **argv)
         renderGraph.setResource("swapchain", swapchain.images[imageIndex]);
 
         // Record command buffer
-
+        // FUUUUCK
         for(auto passIndex : renderGraph.getPassStack())
         {
             auto const &pass = renderGraph.getPasses().at(passIndex);
             auto const &barriers = renderGraph.getBarriers().at(passIndex);
 
-            std::vector<VkImageMemoryBarrier2> imageBarriers;
-            std::vector<VkBufferMemoryBarrier2> bufferBarriers;
-            for(auto const &barrier : barriers)
+            struct Barriers {
+                std::vector<VkImageMemoryBarrier2> imageBarriers;
+                std::vector<VkBufferMemoryBarrier2> bufferBarriers;
+                inline void emplace(vk::Barrier const &barrier, Entity resource) {
+                    if(resource.has<vk::Image>())
+                        imageBarriers.emplace_back(barrier.getImageBarrier(resource));
+                    if(resource.has<vk::Buffer>())
+                        bufferBarriers.emplace_back(barrier.getBufferBarrier(resource));
+                }
+            };
+            // For each queue for release/acquire operations
+            SparseSet<Barriers> queueBarriers;
+            for(auto barrier : barriers)
             {
                 if(!renderGraph.getResources().contains(barrier.resourceIndex))
                 {
@@ -1355,37 +1308,46 @@ int app(int argc, char **argv)
                 }
                 auto resource = renderGraph.getResources().at(barrier.resourceIndex);
 
-                if(resource.has<vk::Image>())
-                    imageBarriers.emplace_back(barrier.getImageBarrier(resource));
-                if(resource.has<vk::Buffer>())
-                    bufferBarriers.emplace_back(barrier.getBufferBarrier(resource));
+                if(barrier.src.queueIndex == VK_QUEUE_FAMILY_IGNORED)
+                    barrier.src.queueIndex = barrier.dst.queueIndex;
+
+                if(barrier.src.queueIndex != barrier.dst.queueIndex)
+                    queueBarriers[barrier.src.queueIndex].emplace(barrier, resource);
+                
+                queueBarriers[barrier.dst.queueIndex].emplace(barrier, resource);
             }
-            VkDependencyInfo dependencyInfo{
-                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                .bufferMemoryBarrierCount = static_cast<uint32_t>(bufferBarriers.size()),
-                .pBufferMemoryBarriers = bufferBarriers.data(),
-                .imageMemoryBarrierCount = static_cast<uint32_t>(imageBarriers.size()),
-                .pImageMemoryBarriers = imageBarriers.data()
-            };
 
 
             auto queue = initRes.queueFamilies.indices.at(pass.queue);
-            auto cb = commandBuffers.at(queue)[frameIndex];
             
-            if(!usedCommandBuffers.contains(queue))
+            auto queues = queueBarriers.sparse();
+            queues.emplace_back(queue);
+            for(auto queue : queues)
+                if(!usedCommandBuffers.contains(queue)) {
+                    auto cb = commandBuffers.at(queue)[frameIndex];
+
+                    usedCommandBuffers.emplace(queue);
+                    CHECK_VK_RES(vkResetCommandBuffer(cb, 0));
+                    VkCommandBufferBeginInfo cbBI{
+                        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+                        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+                    };
+                    CHECK_VK_RES(vkBeginCommandBuffer(cb, &cbBI));
+                }
+
+            for(auto [queue, barrierss] : queueBarriers)
             {
-                usedCommandBuffers.emplace(queue);
-                CHECK_VK_RES(vkResetCommandBuffer(cb, 0));
-                VkCommandBufferBeginInfo cbBI{
-                    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-                    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+                VkDependencyInfo dependencyInfo{
+                    .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                    .bufferMemoryBarrierCount = static_cast<uint32_t>(barrierss.bufferBarriers.size()),
+                    .pBufferMemoryBarriers = barrierss.bufferBarriers.data(),
+                    .imageMemoryBarrierCount = static_cast<uint32_t>(barrierss.imageBarriers.size()),
+                    .pImageMemoryBarriers = barrierss.imageBarriers.data()
                 };
-                CHECK_VK_RES(vkBeginCommandBuffer(cb, &cbBI));
+                vkCmdPipelineBarrier2(commandBuffers.at(queue)[frameIndex], &dependencyInfo);
             }
 
-            vkCmdPipelineBarrier2(cb, &dependencyInfo);
-
-            pass.callback(pass, cb);
+            pass.callback(pass, commandBuffers.at(queue)[frameIndex]);
         }
 
         // WHY?

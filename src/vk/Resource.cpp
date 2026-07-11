@@ -40,7 +40,8 @@ static void writeImage(Image &image, ImageCreateInfo const &ci)
             .baseArrayLayer = 0,
             .layerCount = image.createInfo.dimensions.arrayLayers,
         },
-        .imageExtent = {image.createInfo.dimensions.width, image.createInfo.dimensions.height}
+        .imageOffset = {0, 0, 0},
+        .imageExtent = {image.createInfo.dimensions.width, image.createInfo.dimensions.height, 1}
     };
     VkCopyBufferToImageInfo2 copyInfo{
         .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2,
