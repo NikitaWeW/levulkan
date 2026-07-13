@@ -180,9 +180,12 @@ template <> struct fmt::formatter<SpvReflectDescriptorBinding> {
 
 // WARNING: nested spaghetti code incoming (works on hopes and dreams, or not)
 // TODO: Add more error checking
-static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Reflection &reflection, VmaAllocator allocator)
+static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Shader const &shader, VmaAllocator allocator)
 {
     Pipeline::Layout layout;
+    layout._reflection = new Reflection(reflect(shader));
+    auto &reflection = *static_cast<Reflection *>(layout._reflection);
+
     std::map<uint32_t, SparseSet<VkDescriptorBindingFlags>> descFlags;
  
     // Descriptor flags
@@ -299,8 +302,6 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
     };
     CHECK_VK_RES(vkCreatePipelineLayout(dev, &pipelineLayoutCI, nullptr, &layout.layout));
 
-    // HACK
-    layout._reflection = new Reflection(reflection);
     return layout;
 }
 Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const &ci)
@@ -312,8 +313,8 @@ Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const
         .device = shader.createInfo.device
     };
 
-    Reflection reflection = reflect(shader);
-    pipeline.layout = makePipelineLayout(dev, ci.layout, reflection, ci.allocator);
+    pipeline.layout = makePipelineLayout(dev, ci.layout, shader, ci.allocator);
+    auto const &reflection = *static_cast<Reflection const *>(pipeline.layout._reflection);
 
     VkPipelineVertexInputStateCreateInfo vertexInputState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -424,8 +425,8 @@ Pipeline vk::makePipeline(Shader const &shader, ComputePipelineCreateInfo const 
         .device = shader.createInfo.device
     };
 
-    Reflection reflection = reflect(shader);
-    pipeline.layout = makePipelineLayout(dev, ci.layout, reflection, ci.allocator);
+    pipeline.layout = makePipelineLayout(dev, ci.layout, shader, ci.allocator);
+    auto const &reflection = *static_cast<Reflection const *>(pipeline.layout._reflection);
 
     VkComputePipelineCreateInfo pipelineCI{
         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
@@ -442,12 +443,13 @@ Pipeline vk::makePipeline(Shader const &shader, RaytracingPipelineCreateInfo con
 {
     auto const &dev = shader.createInfo.device;
     
-    Reflection reflection = reflect(shader);
     Pipeline pipeline{
         .type = Pipeline::Type::GRAPHICS,
-        .layout = makePipelineLayout(dev, ci.layout, reflection, ci.allocator),
         .device = shader.createInfo.device,
     };
+
+    pipeline.layout = makePipelineLayout(dev, ci.layout, shader, ci.allocator);
+    [[maybe_unused]] auto const &reflection = *static_cast<Reflection const *>(pipeline.layout._reflection);
 
     assert(false && "not implemented!");
 

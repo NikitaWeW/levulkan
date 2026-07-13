@@ -39,9 +39,13 @@
 namespace vk
 {
 
+enum class ShaderBackend {
+    GLSL, HLSL, SLANG
+};
 struct ShaderCreateInfo
 {
-    std::string src; ///< The path to the source file. Can be empty to disable shader compilation.
+    ShaderBackend backend = ShaderBackend::GLSL; ///< The source language.
+    std::string src; ///< The path to the source. Can be empty to disable shader compilation. If src is a directory, the files inside the directory are collected as stages. The source can be split using #stage directives otherwise.
     std::string bin; ///< The path to the binary root directory. Can be empty to disable writing and collecting shader binaries.
     VkDevice device = VK_NULL_HANDLE; ///< The logical device. Leave null to not create shader modules.
     std::vector<std::string> includeDirs; ///< Local ("") include directories. First most relevant. Source directory added implicitly.
@@ -65,7 +69,6 @@ struct Shader
 
     bool valid = false;
     std::vector<Binary> binaries;
-    std::string source;
     ShaderCreateInfo createInfo;
 };
 

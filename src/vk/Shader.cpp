@@ -1,6 +1,8 @@
 #include "Shader.hpp"
 #include "Utility.hpp"
 #include "Logging.hpp"
+#include "nlohmann/json.hpp"
+
 #include "glslang/Public/ShaderLang.h"
 #include "glslang/SPIRV/GlslangToSpv.h"
 
@@ -10,6 +12,7 @@
 
 using namespace vk;
 namespace fs = std::filesystem;
+using namespace nlohmann;
 
 /// @brief Default include class for normal include convention
 /// of search backward through the stack of active include paths (for nested includes).
@@ -76,7 +79,7 @@ protected:
     int externalSystemDirectoryCount = 0;
     std::set<std::string> includedFiles;
 
-    // Search for a valid "local" path based on combining the stack of include
+    // Search for a valid path based on combining the stack of include
     // directories and the nominal name of the header.
     virtual IncludeResult* readPath(const char* headerName, const char* includerName, int externalDirectoryCount, int depth, std::vector<std::string> &stack)
     {
@@ -119,6 +122,10 @@ protected:
     }
 };
 
+static constexpr std::string_view STAGE_IDENTIFIER = "#stage";
+static constexpr std::string_view VERSION_IDENTIFIER = "#version";
+static constexpr std::string_view METADATA_FILENAME = "metadata.json";
+
 static const std::unordered_map<std::string, VkShaderStageFlagBits> gStageNameToVulkanEnum = {
     {"vertex"       , VK_SHADER_STAGE_VERTEX_BIT                 },
     {"geometry"     , VK_SHADER_STAGE_GEOMETRY_BIT               },
@@ -151,9 +158,6 @@ static const std::unordered_map<VkShaderStageFlagBits, EShLanguage /* glslang_st
     {VK_SHADER_STAGE_CALLABLE_BIT_KHR            , EShLangCallable       /* GLSLANG_STAGE_CALLABLE       */},
     {VK_SHADER_STAGE_MESH_BIT_EXT                , EShLangMesh           /* GLSLANG_STAGE_MESH           */},
 };
-static constexpr std::string_view STAGE_IDENTIFIER = "#stage";
-static constexpr std::string_view VERSION_IDENTIFIER = "#version";
-
 static const std::unordered_map<std::string, VkShaderStageFlagBits> gVulkanStageStringToEnum = {
     {"VK_SHADER_STAGE_VERTEX_BIT"                  , VK_SHADER_STAGE_VERTEX_BIT                 },
     {"VK_SHADER_STAGE_GEOMETRY_BIT"                , VK_SHADER_STAGE_GEOMETRY_BIT               },
@@ -169,6 +173,17 @@ static const std::unordered_map<std::string, VkShaderStageFlagBits> gVulkanStage
     {"VK_SHADER_STAGE_MISS_BIT_KHR"                , VK_SHADER_STAGE_MISS_BIT_KHR               },
     {"VK_SHADER_STAGE_CALLABLE_BIT_KHR"            , VK_SHADER_STAGE_CALLABLE_BIT_KHR           },
 };
+static const std::unordered_map<ShaderBackend, std::string> gShaderBackendToString = {
+    { ShaderBackend::GLSL  , "glsl"  },
+    { ShaderBackend::HLSL  , "hlsl"  },
+    { ShaderBackend::SLANG , "slang" },
+};
+static const std::unordered_map<std::string, ShaderBackend> gStringToShaderBackend = {
+    { "glsl"  , ShaderBackend::GLSL  },
+    { "hlsl"  , ShaderBackend::HLSL  },
+    { "slang" , ShaderBackend::SLANG },
+};
+
 
 template<typename T = char>
 static std::vector<T> readFileBinary(std::string_view filename) 
@@ -212,35 +227,74 @@ static void writeFileBinary(std::string_view filename, char const *data, size_t 
 
     file.write(data, size);
 }
-static void collectBinaries(Shader &program)
+static void writeFileString(std::string_view filename, std::string_view str)
 {
-    // Parse the metadata and add binaries.
-    for(auto const &directoryEntry : std::filesystem::recursive_directory_iterator{program.createInfo.bin})
+    auto dir = fs::path(filename).parent_path().string();
+    std::filesystem::create_directories(dir);
+    std::ofstream file(std::string{filename}, std::ios::out | std::ios::trunc);
+    assert(file);
+
+    file << str;
+}
+static void collectBinaries(Shader &program, json const &metadata)
+{
+    for(auto const &entry : metadata["binaries"])
     {
-        if(!directoryEntry.is_regular_file())
-            continue;
+        auto stage   = entry["stage"].get<std::string>();
+        auto binPath = entry["bin"].get<std::string>();
+        auto name    = entry["name"].get<std::string>();
 
-        auto binPath = directoryEntry.path().string();
-
-        // path/to/binary/VK_SHADER_STAGE_XXX.name.spv
-        auto stage = directoryEntry.path().stem();
-        auto name = stage.extension().string();
-        stage = stage.stem();
-        if(!name.empty() && name[0] == '.')
-            name.erase(0, 1);
-        if(gVulkanStageStringToEnum.find(stage) == gVulkanStageStringToEnum.end())
-        {
-            LOG_WARN("Unknown file binary: \"{}\"", binPath);
-            continue;
-        }
+        assert(fs::exists(binPath));
+        assert(gVulkanStageStringToEnum.contains(stage));
 
         program.binaries.emplace_back(Shader::Binary{
-            .stage = gVulkanStageStringToEnum.at(stage.string()),
+            .stage = gVulkanStageStringToEnum.at(stage),
             .spirv = readFileBinary<uint32_t>(binPath),
             .path = binPath,
             .name = name,
         });
     }
+}
+static void writeBinaries(Shader &program, std::vector<std::string> const &includes)
+{
+    json metadata;
+    metadata["src"] = program.createInfo.src;
+    metadata["includes"] = includes;
+    fs::remove_all(program.createInfo.bin);
+    uint32_t i = 0;
+    for(auto &bin : program.binaries)
+    {
+        bin.path = (fs::path(program.createInfo.bin)/string_VkShaderStageFlagBits(bin.stage)).string() + std::to_string(i++) + ".spv";
+        writeFileBinary(bin.path, reinterpret_cast<char const *>(bin.spirv.data()), bin.spirv.size() * sizeof(bin.spirv[0]));
+
+        auto &entry = metadata["binaries"].emplace_back();
+        entry["bin"]     = bin.path;
+        entry["name"]    = bin.name;
+        entry["stage"]   = string_VkShaderStageFlagBits(bin.stage);
+    }
+
+    writeFileString((fs::path(program.createInfo.bin)/METADATA_FILENAME).string(), metadata.dump(4));
+    fs::last_write_time(program.createInfo.bin, std::chrono::file_clock::now());
+}
+static bool isOutdated(Shader &program, json const &metadata)
+{
+    if(!fs::exists(program.createInfo.bin))
+        return false;
+    bool outdated = false; 
+    auto binWriteTime = std::filesystem::last_write_time(program.createInfo.bin).time_since_epoch();
+    if(fs::exists(program.createInfo.src) && fs::exists(program.createInfo.bin))
+    {
+        outdated = (std::filesystem::last_write_time(program.createInfo.src).time_since_epoch() > binWriteTime);
+        for(auto include : metadata["includes"])
+        {
+            if(outdated)
+                break;
+            outdated = (std::filesystem::last_write_time(include.get<std::string>()).time_since_epoch() > binWriteTime);
+        }
+    }
+    outdated = outdated || program.createInfo.force;
+
+    return outdated;
 }
 
 // Thanks to https://github.com/KhronosGroup/glslang/issues/2207#issuecomment-632927839
@@ -406,7 +460,8 @@ static std::vector<ShaderStage> splitSource(Shader &program)
 {
     std::vector<ShaderStage> stages(1);
     uint32_t currentStage = 0; // 0 - preamble
-    std::istringstream stream(program.source);
+    auto source = readFileString(program.createInfo.src);
+    std::istringstream stream(source);
 
     std::string preamble;
     preamble.append("#extension GL_GOOGLE_cpp_style_line_directive : enable\n");
@@ -483,8 +538,9 @@ static std::vector<ShaderStage> splitSource(Shader &program)
 
     return stages;
 }
+ 
 // Compile the sources using glslang
-static bool compileSources(Shader &program, std::vector<ShaderStage> const &sources)
+static bool compileSources(Shader &program, std::vector<ShaderStage> const &sources, std::vector<std::string> &outIncludes)
 {
     [[maybe_unused]] static class GlslangProcess
     {
@@ -564,6 +620,10 @@ static bool compileSources(Shader &program, std::vector<ShaderStage> const &sour
             LOG_WARN("Stage {} \"{}\" from \"{}\" spirv gen messages:\n{}", string_VkShaderStageFlagBits(stage.stage), stage.name, program.createInfo.src, logger.getAllMessages());
     }
 
+    outIncludes.reserve(includer.getIncludedFiles().size());
+    for(auto const &include : includer.getIncludedFiles())
+        outIncludes.emplace_back(include);
+
     return true;
 }
 
@@ -577,47 +637,43 @@ Shader vk::makeShader(ShaderCreateInfo const &ci)
         LOG_ERROR("Invalid src path: \"{}\"", program.createInfo.src);
         return program;
     }
-    if(fs::exists(program.createInfo.bin) && !fs::is_directory(program.createInfo.bin))
+
+    auto metadataPath = fs::path(program.createInfo.bin)/METADATA_FILENAME;
+    if(fs::exists(program.createInfo.bin) && !fs::exists(metadataPath))
     {
-        LOG_ERROR("Invalid bin path: \"{}\"", program.createInfo.bin);
+        LOG_ERROR("Missing {} in {}!", metadataPath.filename().string(), program.createInfo.bin);
         return program;
     }
 
+    json metadata;
+    if(fs::exists(metadataPath))
+    {
+        metadata = json::parse(readFileString(metadataPath.string()));
+        assert(!metadata.empty());
+        assert(metadata["src"].get<std::string>() == program.createInfo.src);
+    }
+
     bool canCompile = fs::exists(program.createInfo.src);
-    bool canCollect = fs::exists(program.createInfo.bin) && fs::is_directory(program.createInfo.bin);
+    bool canCollect = fs::exists(program.createInfo.bin);
     bool canWrite   = !program.createInfo.bin.empty();
+    bool outdated   = isOutdated(program, metadata);
 
-    if(canCompile)
-        program.source = readFileString(program.createInfo.src);
-
-    // FIXME: What about outdated includes?
-    bool outdated = fs::exists(program.createInfo.src) && fs::exists(program.createInfo.bin) && (std::filesystem::last_write_time(program.createInfo.src).time_since_epoch() > std::filesystem::last_write_time(program.createInfo.bin).time_since_epoch());
-    outdated = outdated || program.createInfo.force;
     if(outdated && canCompile)
-        LOG_INFO("\"{}\" shader binaries are outdated! Recompiling", program.createInfo.bin);
+        LOG_TRACE("\"{}\" shader binaries are outdated! Recompiling", program.createInfo.bin);
 
     if(canCollect && !outdated) 
     {
         LOG_TRACE("Collecting binaries from \"{}\"", program.createInfo.bin);
-        collectBinaries(program);
-    } else if(canCompile) {
+        collectBinaries(program, metadata);
+    }  else if(canCompile) {
         LOG_TRACE("Compiling from source \"{}\"", program.createInfo.src);
 
-        if(!compileSources(program, splitSource(program)))
+        std::vector<std::string> includes;
+        if(!compileSources(program, splitSource(program), includes))
             return program;
 
         if(canWrite)
-        {
-            fs::remove_all(program.createInfo.bin);
-            for(auto &bin : program.binaries)
-            {
-                auto name = bin.name == "" ? "" : "." + bin.name;
-                bin.path = (fs::path(program.createInfo.bin)/string_VkShaderStageFlagBits(bin.stage)).string() + name + ".spv";
-                writeFileBinary(bin.path, reinterpret_cast<char const *>(bin.spirv.data()), bin.spirv.size() * sizeof(bin.spirv[0]));
-            }
-    
-            fs::last_write_time(program.createInfo.bin, std::chrono::file_clock::now());
-        }
+            writeBinaries(program, includes);
     } else {
         LOG_ERROR("Cannot find binaries in \"{}\" or compile from source \"{}\" shaders!", program.createInfo.bin, program.createInfo.src);
         return program;
