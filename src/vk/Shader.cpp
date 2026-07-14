@@ -121,11 +121,46 @@ protected:
         return last == std::string::npos ? "." : path.substr(0, last);
     }
 };
+struct ShaderStage
+{
+    std::string source;
+    std::string name;
+    std::string sourceFile;
+    VkShaderStageFlagBits stage;
+};
 
 static constexpr std::string_view STAGE_IDENTIFIER = "#stage";
-static constexpr std::string_view VERSION_IDENTIFIER = "#version";
 static constexpr std::string_view METADATA_FILENAME = "metadata.json";
 
+static const std::unordered_map<std::string, VkShaderStageFlagBits> gExtensionToVulkanEnum = {
+    {"vert",  VK_SHADER_STAGE_VERTEX_BIT},
+    {"vs",    VK_SHADER_STAGE_VERTEX_BIT},
+    {"vsh",   VK_SHADER_STAGE_VERTEX_BIT},
+    {"frag",  VK_SHADER_STAGE_FRAGMENT_BIT},
+    {"fs",    VK_SHADER_STAGE_FRAGMENT_BIT},
+    {"fsh",   VK_SHADER_STAGE_FRAGMENT_BIT},
+    {"ps",    VK_SHADER_STAGE_FRAGMENT_BIT},
+    {"comp",  VK_SHADER_STAGE_COMPUTE_BIT},
+    {"csh",   VK_SHADER_STAGE_COMPUTE_BIT},
+    {"cs",    VK_SHADER_STAGE_COMPUTE_BIT},
+    {"geom",  VK_SHADER_STAGE_GEOMETRY_BIT},
+    {"gsh",   VK_SHADER_STAGE_GEOMETRY_BIT},
+    {"gs",    VK_SHADER_STAGE_GEOMETRY_BIT},
+    {"tesc",  VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT},
+    {"tcs",   VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT},
+    {"tese",  VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT},
+    {"tes",   VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT},
+    {"rgen",  VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+    {"rint",  VK_SHADER_STAGE_INTERSECTION_BIT_KHR},
+    {"rahit", VK_SHADER_STAGE_ANY_HIT_BIT_KHR},
+    {"rchit", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
+    {"rmiss", VK_SHADER_STAGE_MISS_BIT_KHR},
+    {"rcall", VK_SHADER_STAGE_CALLABLE_BIT_KHR},
+    {"task",  VK_SHADER_STAGE_TASK_BIT_EXT},
+    {"mesh",  VK_SHADER_STAGE_MESH_BIT_EXT},
+    {"ms",    VK_SHADER_STAGE_MESH_BIT_EXT},
+    {"msh",   VK_SHADER_STAGE_MESH_BIT_EXT},
+};
 static const std::unordered_map<std::string, VkShaderStageFlagBits> gStageNameToVulkanEnum = {
     {"vertex"       , VK_SHADER_STAGE_VERTEX_BIT                 },
     {"geometry"     , VK_SHADER_STAGE_GEOMETRY_BIT               },
@@ -280,6 +315,9 @@ static bool isOutdated(Shader &program, json const &metadata)
 {
     if(!fs::exists(program.createInfo.bin))
         return false;
+    if(program.createInfo.force)
+        return true;
+
     bool outdated = false; 
     auto binWriteTime = std::filesystem::last_write_time(program.createInfo.bin).time_since_epoch();
     if(fs::exists(program.createInfo.src) && fs::exists(program.createInfo.bin))
@@ -288,13 +326,49 @@ static bool isOutdated(Shader &program, json const &metadata)
         for(auto include : metadata["includes"])
         {
             if(outdated)
-                break;
+                goto finish; // Programming war crimes
             outdated = (std::filesystem::last_write_time(include.get<std::string>()).time_since_epoch() > binWriteTime);
         }
-    }
-    outdated = outdated || program.createInfo.force;
 
+        if(fs::is_directory(program.createInfo.src)) {
+            for(auto dirEntry : fs::recursive_directory_iterator(program.createInfo.src)) {
+                if(outdated)
+                    goto finish;
+                outdated = dirEntry.last_write_time().time_since_epoch() > binWriteTime;
+            }
+        }
+    }
+
+    finish:
     return outdated;
+}
+static std::vector<ShaderStage> collectSources(Shader &program)
+{
+    std::vector<ShaderStage> stages;
+    assert(fs::exists(program.createInfo.src) && fs::is_directory(program.createInfo.src));
+
+    for(auto dirEntry : fs::recursive_directory_iterator(program.createInfo.src)) {
+        if(fs::is_directory(dirEntry))
+            continue;
+
+        auto extension = dirEntry.path().extension().string();
+        if(!extension.empty())
+            extension.erase(0, 1);
+        
+        if(!gExtensionToVulkanEnum.contains(extension)) {
+            LOG_WARN("Unknown file in source tree \"{}\": \"{}\"", program.createInfo.src, dirEntry.path().string());
+            continue;
+        }
+
+        stages.emplace_back(ShaderStage{
+            .source = readFileString(dirEntry.path().string()),
+            .name   = dirEntry.path().stem().string(),
+            .sourceFile   = dirEntry.path().string(),
+            .stage  = gExtensionToVulkanEnum.at(extension),
+        });
+    }
+
+    return stages;
 }
 
 // Thanks to https://github.com/KhronosGroup/glslang/issues/2207#issuecomment-632927839
@@ -438,12 +512,6 @@ std::vector<std::string> split(std::string s, std::string const &delimiter) {
     return tokens;
 }
 
-struct ShaderStage
-{
-    std::string source;
-    std::string name;
-    VkShaderStageFlagBits stage;
-};
 static void printUsage()
 {
     std::vector<std::string> names;
@@ -455,19 +523,12 @@ static void printUsage()
     LOG_ERROR("#stage all will make a preamble for each shader");
 }
 
-// Split sources
-static std::vector<ShaderStage> splitSource(Shader &program)
+static std::vector<ShaderStage> splitGlslSources(Shader &program)
 {
     std::vector<ShaderStage> stages(1);
     uint32_t currentStage = 0; // 0 - preamble
     auto source = readFileString(program.createInfo.src);
     std::istringstream stream(source);
-
-    std::string preamble;
-    preamble.append("#extension GL_GOOGLE_cpp_style_line_directive : enable\n");
-    preamble.append("#extension GL_GOOGLE_include_directive : enable\n"); // Parser refuses to process the includer without the extension enabled
-    for(auto const &[name, value] : program.createInfo.definitions)
-        preamble.append("#define " + name + ' ' + value + '\n');
 
     size_t lineNum = 1;
     std::string line;
@@ -497,7 +558,10 @@ static std::vector<ShaderStage> splitSource(Shader &program)
                 if(stage == VK_SHADER_STAGE_ALL) {
                     currentStage = 0;
                 } else {
-                    stages.emplace_back(ShaderStage{.stage = stage});
+                    stages.emplace_back(ShaderStage{
+                        .sourceFile = program.createInfo.src,
+                        .stage = stage, 
+                    });
                     currentStage = stages.size() - 1;
                 }
             } else {
@@ -509,9 +573,9 @@ static std::vector<ShaderStage> splitSource(Shader &program)
             stages[currentStage].source.append("#line " + std::to_string(lineNum) + " \"" + program.createInfo.src + "\"\n\n");
             if(tokens.size() >= 2)
                 stages[currentStage].name = tokens[1];
-        } else if(directive != std::string::npos && line.compare(directive, VERSION_IDENTIFIER.size(), VERSION_IDENTIFIER) == 0) {
-            stages[currentStage].source.insert(0, line + '\n' + preamble);
-            stages[currentStage].source.append("#line " + std::to_string(lineNum) + " \"" + program.createInfo.src + "\"\n\n");
+        // } else if(directive != std::string::npos && line.compare(directive, #version.size(), #version) == 0) {
+        //     stages[currentStage].source.insert(0, line + '\n' + preamble);
+        //     stages[currentStage].source.append("#line " + std::to_string(lineNum) + " \"" + program.createInfo.src + "\"\n\n");
         } else {
             stages[currentStage].source.append(line + '\n');
         }
@@ -538,9 +602,7 @@ static std::vector<ShaderStage> splitSource(Shader &program)
 
     return stages;
 }
- 
-// Compile the sources using glslang
-static bool compileSources(Shader &program, std::vector<ShaderStage> const &sources, std::vector<std::string> &outIncludes)
+static bool compileGlsl(Shader &program, std::vector<std::string> &outIncludes)
 {
     [[maybe_unused]] static class GlslangProcess
     {
@@ -561,6 +623,21 @@ static bool compileSources(Shader &program, std::vector<ShaderStage> const &sour
     std::vector<std::unique_ptr<glslang::TShader>> glslShaders;
     static auto resources = InitResources();
 
+    std::vector<ShaderStage> sources;
+    assert(fs::exists(program.createInfo.src));
+    if(fs::is_directory(program.createInfo.src)) {
+        sources = collectSources(program);
+    } else {
+        sources = splitGlslSources(program);
+    }
+
+
+    std::string preamble;
+    preamble.append("#extension GL_GOOGLE_cpp_style_line_directive : enable\n");
+    preamble.append("#extension GL_GOOGLE_include_directive : enable\n"); // Parser refuses to process the includer without the extension enabled
+    for(auto const &[name, value] : program.createInfo.definitions)
+        preamble.append("#define " + name + ' ' + value + '\n');
+
     for(auto &stage : sources)
     {
         if(!gVulkanStageToGlslang.contains(stage.stage))
@@ -572,19 +649,19 @@ static bool compileSources(Shader &program, std::vector<ShaderStage> const &sour
         auto glslShader = std::make_unique<glslang::TShader>(gVulkanStageToGlslang.at(stage.stage));
         auto cString = stage.source.c_str();
         int l = stage.source.size();
-        auto name = program.createInfo.src.c_str();
+        auto name = stage.sourceFile.c_str();
 
         glslShader->setEnvInput(glslang::EShSourceGlsl, gVulkanStageToGlslang.at(stage.stage), glslang::EShClientVulkan, 100);
         glslShader->setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_3);
         glslShader->setEnvTarget(glslang::EshTargetSpv, glslang::EShTargetSpv_1_6);
         glslShader->setDebugInfo(program.createInfo.debugInfo);
-        glslShader->setSourceFile(program.createInfo.src.c_str());
-        // glslShader->setPreamble(preamble.c_str());
+        glslShader->setSourceFile(stage.sourceFile.c_str());
+        glslShader->setPreamble(preamble.c_str());
         glslShader->setStringsWithLengthsAndNames(&cString, &l, &name, 1);
 
         if(!glslShader->parse(&resources, 130, false, messages, includer))
         {
-            LOG_ERROR("GLSL parsing of \"{}\" failed: \n{}\n{}", program.createInfo.src, glslShader->getInfoLog(), glslShader->getInfoDebugLog());
+            LOG_ERROR("GLSL parsing of \"{}\" failed: \n{}\n{}", stage.sourceFile, glslShader->getInfoLog(), glslShader->getInfoDebugLog());
             return false;
         }
 
@@ -608,7 +685,7 @@ static bool compileSources(Shader &program, std::vector<ShaderStage> const &sour
 
         auto &bin = program.binaries.emplace_back();
         bin.stage = stage.stage;
-        bin.name = stage.name;
+        bin.name  = stage.name;
 
         glslang::TIntermediate *intermediate = glslProgram.getIntermediate(gVulkanStageToGlslang.at(stage.stage));
         spv::SpvBuildLogger logger;
@@ -632,11 +709,6 @@ Shader vk::makeShader(ShaderCreateInfo const &ci)
 {
     Shader program;
     program.createInfo = ci;
-    if(!fs::exists(program.createInfo.src) || !fs::is_regular_file(program.createInfo.src))
-    {
-        LOG_ERROR("Invalid src path: \"{}\"", program.createInfo.src);
-        return program;
-    }
 
     auto metadataPath = fs::path(program.createInfo.bin)/METADATA_FILENAME;
     if(fs::exists(program.createInfo.bin) && !fs::exists(metadataPath))
@@ -669,7 +741,7 @@ Shader vk::makeShader(ShaderCreateInfo const &ci)
         LOG_TRACE("Compiling from source \"{}\"", program.createInfo.src);
 
         std::vector<std::string> includes;
-        if(!compileSources(program, splitSource(program), includes))
+        if(!compileGlsl(program, includes))
             return program;
 
         if(canWrite)

@@ -449,7 +449,7 @@ Pipeline vk::makePipeline(Shader const &shader, RaytracingPipelineCreateInfo con
     };
 
     pipeline.layout = makePipelineLayout(dev, ci.layout, shader, ci.allocator);
-    [[maybe_unused]] auto const &reflection = *static_cast<Reflection const *>(pipeline.layout._reflection);
+    // auto const &reflection = *static_cast<Reflection const *>(pipeline.layout._reflection);
 
     assert(false && "not implemented!");
 
