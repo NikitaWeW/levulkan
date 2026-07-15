@@ -4,7 +4,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 project(levulkan C CXX)
 
-include(cpm.cmake)
+include(cmake/cpm.cmake)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 foreach(LOADER GLTF)
     set(ASSIMP_BUILD_${LOADER}_IMPORTER ON)
@@ -40,15 +41,24 @@ CPMAddPackage("gh:zeux/volk@1.4.304")
 CPMAddPackage("gh:KhronosGroup/Spirv-Reflect#vulkan-sdk-1.4.341.0")
 CPMAddPackage("gh:jeremy-rifkin/cpptrace#v1.0.4")
 CPMAddPackage("gh:nlohmann/json#v3.12.0")
+CPMAddPackage("gh:KhronosGroup/Spirv-Headers#vulkan-sdk-1.4.341.0")
+
+find_package(SPIRV-Tools)
+if(NOT SPIRV-Tools_FOUND)
+CPMAddPackage("gh:KhronosGroup/Spirv-Tools@2026.1")
+else()
+    message(STATUS "Found spirv tools: \"${SPIRV-Tools_DIR}\"")
+endif()
 
 find_package(glslang)
 if(NOT glslang_FOUND)
-    CPMAddPackage("gh:KhronosGroup/Spirv-Headers#vulkan-sdk-1.4.341.0")
-    CPMAddPackage("gh:KhronosGroup/Spirv-Tools@2026.1")
     CPMAddPackage("gh:KhronosGroup/glslang#16.2.0")
 else()
     message(STATUS "Found glslang: \"${glslang_DIR}\"")
 endif()
+
+find_package(slang)
+message(STATUS "Found slang: \"${slang_DIR}\"")
 
 set(LEVULKAN_SOURCE
     "src/main.cpp"
@@ -70,6 +80,14 @@ set(LEVULKAN_SOURCE
 
 add_executable(levulkan ${LEVULKAN_SOURCE})
 target_link_libraries(levulkan PRIVATE spdlog nicecs::ecs glm assimp meshoptimizer cpptrace::cpptrace nlohmann_json::nlohmann_json)
-target_link_libraries(levulkan PRIVATE glfw volk GPUOpen::VulkanMemoryAllocator glslang::glslang glslang::glslang-default-resource-limits spirv-reflect-static)
+target_link_libraries(levulkan PRIVATE glfw volk GPUOpen::VulkanMemoryAllocator)
+target_link_libraries(levulkan PRIVATE glslang::glslang glslang::glslang-default-resource-limits spirv-reflect-static SPIRV-Headers SPIRV-Tools slang::slang)
 target_include_directories(levulkan PRIVATE "src")
 target_compile_definitions(levulkan PRIVATE GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_ENABLE_EXPERIMENTAL)
+
+if(glslang_FOUND)
+target_compile_definitions(levulkan PRIVATE SHADER_ENABLE_GLSL)
+endif()
+if(slang_FOUND)
+target_compile_definitions(levulkan PRIVATE SHADER_ENABLE_SLANG)
+endif()

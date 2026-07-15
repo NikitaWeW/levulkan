@@ -913,7 +913,7 @@ int app(int argc, char **argv)
         vkCmdEndRendering(cb);
     };
     auto gbuffer_shader = vk::makeShader({
-        .src = "shaders/deferred/gbuffer",
+        .src = "shaders/deferred/gbuffer.glsl",
         .bin = "shaders-bin/deferred/gbuffer",
         .device = device,
         .includeDirs = {"shaders"}

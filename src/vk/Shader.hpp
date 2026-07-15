@@ -42,32 +42,52 @@ namespace vk
 enum class ShaderBackend {
     GLSL, HLSL, SLANG
 };
+enum class SpirvVersion {
+    SpirvVersion_1_0 = (1 << 16),            
+    SpirvVersion_1_1 = (1 << 16) | (1 << 8), 
+    SpirvVersion_1_2 = (1 << 16) | (2 << 8), 
+    SpirvVersion_1_3 = (1 << 16) | (3 << 8), 
+    SpirvVersion_1_4 = (1 << 16) | (4 << 8), 
+    SpirvVersion_1_5 = (1 << 16) | (5 << 8), 
+    SpirvVersion_1_6 = (1 << 16) | (6 << 8), 
+};
 struct ShaderCreateInfo
 {
     ShaderBackend backend = ShaderBackend::GLSL; ///< The source language.
     std::string src; ///< The path to the source. Can be empty to disable shader compilation. If src is a directory, the files inside the directory are collected as stages. The source can be split using #stage directives otherwise.
     std::string bin; ///< The path to the binary root directory. Can be empty to disable writing and collecting shader binaries.
     VkDevice device = VK_NULL_HANDLE; ///< The logical device. Leave null to not create shader modules.
+    bool force = false; ///< Forcefully outdate the cached shader binaries and try to recompile.
+    
+    uint32_t targetVersion = VK_API_VERSION_1_3;
+    SpirvVersion spirvVersion = SpirvVersion::SpirvVersion_1_6;
     std::vector<std::string> includeDirs; ///< Local ("") include directories. First most relevant. Source directory added implicitly.
     std::vector<std::string> systemIncludeDirs; ///< System (<>) include directories. First most relevant.
     std::vector<std::pair<std::string, std::string>> definitions; ///< Preprocessor definitions.
     bool debugInfo = true; ///< Compile with debug info.
-    bool force = false; ///< Forcefully outdate the cached shader binaries and try to recompile.
+    enum class Optimization { None, Default, Aggressive } optimization = Optimization::Default;
+    bool obfuscate = false;
 };
 
 /// @brief The compiled spirv program.
 struct Shader
 {
-    struct Binary
+    struct BinDescriptor
     {
         VkShaderStageFlagBits stage;
+        std::string name = ""; ///< The name of the stage.
+        std::string entry = "main";
+        uint32_t binary = 0;
+    };
+    struct Binary
+    {
+        std::string path = "";
         std::vector<uint32_t> spirv;
         VkShaderModule module = VK_NULL_HANDLE;
-        std::string path = ""; ///< Path to the .spv binary
-        std::string name = ""; ///< The name of the stage. Helps to identify the stage.
     };
 
     bool valid = false;
+    std::vector<BinDescriptor> binDescriptors;
     std::vector<Binary> binaries;
     ShaderCreateInfo createInfo;
 };

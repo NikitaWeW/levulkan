@@ -111,13 +111,14 @@ struct Reflection
 static Reflection reflect(Shader const &shader)
 {
     Reflection reflection;
-    for(auto const &bin : shader.binaries)
+    for(auto const &binDesc : shader.binDescriptors)
     {
+        auto const &bin = shader.binaries[binDesc.binary];
         reflection.stages.emplace_back(VkPipelineShaderStageCreateInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-            .stage = bin.stage,
+            .stage = binDesc.stage,
             .module = bin.module,
-            .pName = "main"
+            .pName = binDesc.entry.c_str()
         });
 
         SpvReflectShaderModule module;
@@ -136,7 +137,7 @@ static Reflection reflect(Shader const &shader)
             binding.binding = descBinding->binding;
             binding.descriptorType = toVulkanDescriptorType(descBinding->descriptor_type);
             binding.descriptorCount = std::max(descBinding->count, binding.descriptorCount);
-            binding.stageFlags |= bin.stage;
+            binding.stageFlags |= binDesc.stage;
         }
 
         // Push constants
@@ -148,7 +149,7 @@ static Reflection reflect(Shader const &shader)
             auto &constant = reflection.pushConstants[{pushConstant->offset, pushConstant->size}];
             constant.offset = pushConstant->offset;
             constant.size = pushConstant->size;
-            constant.stageFlags |= bin.stage;
+            constant.stageFlags |= binDesc.stage;
         }
 
         // Input

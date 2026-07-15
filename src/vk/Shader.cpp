@@ -3,8 +3,15 @@
 #include "Logging.hpp"
 #include "nlohmann/json.hpp"
 
+#ifdef SHADER_ENABLE_GLSL
 #include "glslang/Public/ShaderLang.h"
 #include "glslang/SPIRV/GlslangToSpv.h"
+#endif
+
+#ifdef SHADER_ENABLE_SLANG
+#include "slang.h"
+#include "slang-com-ptr.h"
+#endif
 
 #include <filesystem>
 #include <set>
@@ -18,107 +25,62 @@ using namespace nlohmann;
 /// of search backward through the stack of active include paths (for nested includes).
 /// Source: https://github.com/KhronosGroup/glslang StandAlone/DirStackFileIncluder.h
 /// Modified to support system includes.
-class DirStackFileIncluder : public glslang::TShader::Includer {
-public:
-    DirStackFileIncluder() = default;
-
-    virtual IncludeResult* includeLocal(const char* headerName, const char* includerName, size_t inclusionDepth) override
+class DirStackFileIncluder
+{
+private:
+    // If no path markers, return current working directory.
+    // Otherwise, strip file name and return path leading up to it.
+    virtual std::string getDirectory(std::string_view path) const
     {
-        return readPath(headerName, includerName, externalLocalDirectoryCount, (int)inclusionDepth, localDirectoryStack);
+        size_t last = path.find_last_of("/\\");
+        return last == std::string::npos ? "." : std::string(path.substr(0, last));
     }
-
-    virtual IncludeResult* includeSystem(const char* headerName, const char* includerName, size_t inclusionDepth) override
-    {
-        return readPath(headerName, includerName, externalSystemDirectoryCount, (int)inclusionDepth, systemDirectoryStack);
-    }
-
-    // Externally set directories. E.g., from a command-line -I<dir>.
-    //  - Most-recently pushed are checked first.
-    //  - All these are checked after the parse-time stack of local directories
-    //    is checked.
-    //  - This only applies to the "local" form of #include.
-    //  - Makes its own copy of the path.
-    virtual void pushExternalLocalDirectory(const std::string& dir)
-    {
-        localDirectoryStack.push_back(dir);
-        externalLocalDirectoryCount = (int)localDirectoryStack.size();
-    }
-
-    // Externally set directories. E.g., from a command-line -I<dir>.
-    //  - Most-recently pushed are checked first.
-    //  - All these are checked after the parse-time stack of local directories
-    //    is checked.
-    //  - This only applies to the <system> form of #include.
-    //  - Makes its own copy of the path.
-    virtual void pushExternalSystemDirectory(std::string const &dir)
-    {
-        systemDirectoryStack.push_back(dir);
-        externalLocalDirectoryCount = (int)systemDirectoryStack.size();
-    }
-
-    virtual void releaseInclude(IncludeResult* result) override
-    {
-        if (result != nullptr) {
-            delete [] static_cast<tUserDataElement*>(result->userData);
-            delete result;
-        }
-    }
-
-    virtual std::set<std::string> getIncludedFiles()
-    {
-        return includedFiles;
-    }
-
-    virtual ~DirStackFileIncluder() override { }
-
 protected:
-    typedef char tUserDataElement;
-    std::vector<std::string> localDirectoryStack;
-    int externalLocalDirectoryCount = 0;
-    std::vector<std::string> systemDirectoryStack;
-    int externalSystemDirectoryCount = 0;
-    std::set<std::string> includedFiles;
+    std::vector<std::string> mLocalDirectoryStack;
+    int mLocalDirectoryCount = 0;
+    std::vector<std::string> mSystemDirectoryStack;
+    int mSystemDirectoryCount = 0;
+    std::set<std::string> mIncludedFiles;
+public:
+    void pushLocal(std::string_view dir) {
+        mLocalDirectoryStack.emplace_back(dir);
+        mLocalDirectoryCount = (int) mLocalDirectoryStack.size();
+    }
+    void pushSystem(std::string_view dir) {
+        mSystemDirectoryStack.emplace_back(dir);
+        mSystemDirectoryCount = (int) mSystemDirectoryStack.size();
+    }
 
-    // Search for a valid path based on combining the stack of include
-    // directories and the nominal name of the header.
-    virtual IncludeResult* readPath(const char* headerName, const char* includerName, int externalDirectoryCount, int depth, std::vector<std::string> &stack)
+    std::string resolveLocal(std::string_view headerName, std::string_view includerName, size_t inclusionDepth) {
+        return resolveInclude(headerName, includerName, mLocalDirectoryCount, inclusionDepth, mLocalDirectoryStack);
+    }
+    std::string resolveSystem(std::string_view headerName, std::string_view includerName, size_t inclusionDepth) {
+        return resolveInclude(headerName, includerName, mSystemDirectoryCount, inclusionDepth, mSystemDirectoryStack);
+    }
+
+    std::set<std::string> const &getIncludedFiles() const { return mIncludedFiles; }
+
+    
+    std::string resolveInclude(std::string_view headerName, std::string_view includerName, int externalDirectoryCount, int depth, std::vector<std::string> &stack)
     {
         // Discard popped include directories, and
         // initialize when at parse-time first level.
         stack.resize(depth + externalDirectoryCount);
-        if (depth == 1)
+        if(depth == 1)
             stack.back() = getDirectory(includerName);
 
         // Find a directory that works, using a reverse search of the include stack.
-        for (auto it = stack.rbegin(); it != stack.rend(); ++it) {
-            std::string path = *it + '/' + headerName;
+        for(auto it = stack.rbegin(); it != stack.rend(); ++it) {
+            std::string path = *it + '/' + headerName.data();
             std::replace(path.begin(), path.end(), '\\', '/');
-            std::ifstream file(path, std::ios_base::binary | std::ios_base::ate);
-            if (file) {
+            if(fs::exists(path)) {
                 stack.push_back(getDirectory(path));
-                includedFiles.insert(path);
-                return newIncludeResult(path, file, (int)file.tellg());
+                mIncludedFiles.insert(path);
+                return path;
             }
         }
 
-        return nullptr;
-    }
-
-    // Do actual reading of the file, filling in a new include result.
-    virtual IncludeResult* newIncludeResult(const std::string& path, std::ifstream& file, int length) const
-    {
-        char* content = new tUserDataElement [length];
-        file.seekg(0, file.beg);
-        file.read(content, length);
-        return new IncludeResult(path, content, length, content);
-    }
-
-    // If no path markers, return current working directory.
-    // Otherwise, strip file name and return path leading up to it.
-    virtual std::string getDirectory(const std::string path) const
-    {
-        size_t last = path.find_last_of("/\\");
-        return last == std::string::npos ? "." : path.substr(0, last);
+        return "";
     }
 };
 struct ShaderStage
@@ -178,21 +140,6 @@ static const std::unordered_map<std::string, VkShaderStageFlagBits> gStageNameTo
     {"all"          , VK_SHADER_STAGE_ALL                        }, 
     {"preamble"     , VK_SHADER_STAGE_ALL                        }, // Append to all stages in the shader
 };
-static const std::unordered_map<VkShaderStageFlagBits, EShLanguage /* glslang_stage_t */> gVulkanStageToGlslang = {
-    {VK_SHADER_STAGE_VERTEX_BIT                  , EShLangVertex         /* GLSLANG_STAGE_VERTEX         */},
-    {VK_SHADER_STAGE_GEOMETRY_BIT                , EShLangGeometry       /* GLSLANG_STAGE_GEOMETRY       */},
-    {VK_SHADER_STAGE_FRAGMENT_BIT                , EShLangFragment       /* GLSLANG_STAGE_FRAGMENT       */},
-    {VK_SHADER_STAGE_COMPUTE_BIT                 , EShLangCompute        /* GLSLANG_STAGE_COMPUTE        */},
-    {VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT , EShLangTessEvaluation /* GLSLANG_STAGE_TESSEVALUATION */},
-    {VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT    , EShLangTessControl    /* GLSLANG_STAGE_TESSCONTROL    */},
-    {VK_SHADER_STAGE_RAYGEN_BIT_KHR              , EShLangRayGen         /* GLSLANG_STAGE_RAYGEN         */},
-    {VK_SHADER_STAGE_INTERSECTION_BIT_KHR        , EShLangIntersect      /* GLSLANG_STAGE_INTERSECT      */},
-    {VK_SHADER_STAGE_ANY_HIT_BIT_KHR             , EShLangAnyHit         /* GLSLANG_STAGE_ANYHIT         */},
-    {VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR         , EShLangClosestHit     /* GLSLANG_STAGE_CLOSESTHIT     */},
-    {VK_SHADER_STAGE_MISS_BIT_KHR                , EShLangMiss           /* GLSLANG_STAGE_MISS           */},
-    {VK_SHADER_STAGE_CALLABLE_BIT_KHR            , EShLangCallable       /* GLSLANG_STAGE_CALLABLE       */},
-    {VK_SHADER_STAGE_MESH_BIT_EXT                , EShLangMesh           /* GLSLANG_STAGE_MESH           */},
-};
 static const std::unordered_map<std::string, VkShaderStageFlagBits> gVulkanStageStringToEnum = {
     {"VK_SHADER_STAGE_VERTEX_BIT"                  , VK_SHADER_STAGE_VERTEX_BIT                 },
     {"VK_SHADER_STAGE_GEOMETRY_BIT"                , VK_SHADER_STAGE_GEOMETRY_BIT               },
@@ -208,17 +155,6 @@ static const std::unordered_map<std::string, VkShaderStageFlagBits> gVulkanStage
     {"VK_SHADER_STAGE_MISS_BIT_KHR"                , VK_SHADER_STAGE_MISS_BIT_KHR               },
     {"VK_SHADER_STAGE_CALLABLE_BIT_KHR"            , VK_SHADER_STAGE_CALLABLE_BIT_KHR           },
 };
-static const std::unordered_map<ShaderBackend, std::string> gShaderBackendToString = {
-    { ShaderBackend::GLSL  , "glsl"  },
-    { ShaderBackend::HLSL  , "hlsl"  },
-    { ShaderBackend::SLANG , "slang" },
-};
-static const std::unordered_map<std::string, ShaderBackend> gStringToShaderBackend = {
-    { "glsl"  , ShaderBackend::GLSL  },
-    { "hlsl"  , ShaderBackend::HLSL  },
-    { "slang" , ShaderBackend::SLANG },
-};
-
 
 template<typename T = char>
 static std::vector<T> readFileBinary(std::string_view filename) 
@@ -256,7 +192,8 @@ static std::string readFileString(std::string_view filename)
 static void writeFileBinary(std::string_view filename, char const *data, size_t size)
 {
     auto dir = fs::path(filename).parent_path().string();
-    std::filesystem::create_directories(dir);
+    if(!dir.empty())
+        std::filesystem::create_directories(dir);
     std::ofstream file(std::string{filename}, std::ios::out | std::ios::binary | std::ios::trunc);
     assert(file);
 
@@ -265,7 +202,8 @@ static void writeFileBinary(std::string_view filename, char const *data, size_t 
 static void writeFileString(std::string_view filename, std::string_view str)
 {
     auto dir = fs::path(filename).parent_path().string();
-    std::filesystem::create_directories(dir);
+    if(!dir.empty())
+        std::filesystem::create_directories(dir);
     std::ofstream file(std::string{filename}, std::ios::out | std::ios::trunc);
     assert(file);
 
@@ -275,18 +213,32 @@ static void collectBinaries(Shader &program, json const &metadata)
 {
     for(auto const &entry : metadata["binaries"])
     {
-        auto stage   = entry["stage"].get<std::string>();
-        auto binPath = entry["bin"].get<std::string>();
-        auto name    = entry["name"].get<std::string>();
+        auto stage      = entry["stage"].get<std::string>();
+        auto binPath    = entry["bin"].get<std::string>();
+        auto name       = entry["name"].get<std::string>();
+        auto entryPoint = entry["entry"].get<std::string>();
 
         assert(fs::exists(binPath));
         assert(gVulkanStageStringToEnum.contains(stage));
 
-        program.binaries.emplace_back(Shader::Binary{
+        uint32_t binIndex = 0;
+        for(; binIndex < program.binaries.size(); ++binIndex)
+        {
+            if(program.binaries[binIndex].path == binPath)
+                break;
+        }
+        if(binIndex >= program.binaries.size())
+            program.binaries.emplace_back(Shader::Binary{
+                .path = binPath,
+                .spirv = readFileBinary<uint32_t>(binPath),
+            });
+
+        
+        program.binDescriptors.emplace_back(Shader::BinDescriptor{
             .stage = gVulkanStageStringToEnum.at(stage),
-            .spirv = readFileBinary<uint32_t>(binPath),
-            .path = binPath,
             .name = name,
+            .entry = entryPoint,
+            .binary = binIndex
         });
     }
 }
@@ -296,16 +248,22 @@ static void writeBinaries(Shader &program, std::vector<std::string> const &inclu
     metadata["src"] = program.createInfo.src;
     metadata["includes"] = includes;
     fs::remove_all(program.createInfo.bin);
-    uint32_t i = 0;
-    for(auto &bin : program.binaries)
+    for(uint i = 0; i < program.binaries.size(); ++i)
     {
-        bin.path = (fs::path(program.createInfo.bin)/string_VkShaderStageFlagBits(bin.stage)).string() + std::to_string(i++) + ".spv";
+        auto &bin = program.binaries[i];
+        bin.path = fs::path(program.createInfo.bin)/(std::to_string(i) + ".spv");
         writeFileBinary(bin.path, reinterpret_cast<char const *>(bin.spirv.data()), bin.spirv.size() * sizeof(bin.spirv[0]));
+    }
+
+    for(auto const &desc : program.binDescriptors)
+    {
+        auto const &bin = program.binaries[desc.binary];
 
         auto &entry = metadata["binaries"].emplace_back();
         entry["bin"]     = bin.path;
-        entry["name"]    = bin.name;
-        entry["stage"]   = string_VkShaderStageFlagBits(bin.stage);
+        entry["name"]    = desc.name;
+        entry["entry"]   = desc.entry;
+        entry["stage"]   = string_VkShaderStageFlagBits(desc.stage);
     }
 
     writeFileString((fs::path(program.createInfo.bin)/METADATA_FILENAME).string(), metadata.dump(4));
@@ -322,24 +280,26 @@ static bool isOutdated(Shader &program, json const &metadata)
     auto binWriteTime = std::filesystem::last_write_time(program.createInfo.bin).time_since_epoch();
     if(fs::exists(program.createInfo.src) && fs::exists(program.createInfo.bin))
     {
+        if(metadata["src"].get<std::string>() != program.createInfo.src)
+            return true;
+
         outdated = (std::filesystem::last_write_time(program.createInfo.src).time_since_epoch() > binWriteTime);
         for(auto include : metadata["includes"])
         {
             if(outdated)
-                goto finish; // Programming war crimes
+                return true;
             outdated = (std::filesystem::last_write_time(include.get<std::string>()).time_since_epoch() > binWriteTime);
         }
 
         if(fs::is_directory(program.createInfo.src)) {
             for(auto dirEntry : fs::recursive_directory_iterator(program.createInfo.src)) {
                 if(outdated)
-                    goto finish;
+                    return true;
                 outdated = dirEntry.last_write_time().time_since_epoch() > binWriteTime;
             }
         }
     }
 
-    finish:
     return outdated;
 }
 static std::vector<ShaderStage> collectSources(Shader &program)
@@ -370,6 +330,142 @@ static std::vector<ShaderStage> collectSources(Shader &program)
 
     return stages;
 }
+
+static void optimizeSpirv(Shader &program) {
+    // TODO
+}
+static void obfuscateSpirv(Shader &program) {
+    // TODO
+}
+
+#ifdef SHADER_ENABLE_GLSL
+// Thanks to https://stackoverflow.com/a/217605
+// Trim from the start (in place)
+static void ltrim(std::string &s) {
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }));
+}
+// Thanks to https://stackoverflow.com/a/217605
+// Trim from the end (in place)
+static void rtrim(std::string &s) {
+    s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }).base(), s.end());
+}
+// Thanks to https://stackoverflow.com/a/14266139
+std::vector<std::string> split(std::string s, std::string const &delimiter) {
+    std::vector<std::string> tokens;
+    size_t pos = 0;
+    std::string token;
+    while((pos = s.find(delimiter)) != std::string::npos) {
+        token = s.substr(0, pos);
+        tokens.push_back(token);
+        s.erase(0, pos + delimiter.length());
+    }
+    tokens.push_back(s);
+
+    return tokens;
+}
+static void printUsage()
+{
+    std::vector<std::string> names;
+    for(auto const &[name, _] : gStageNameToVulkanEnum)
+        names.emplace_back(name);
+
+    LOG_ERROR("Usage: #stage \"<stage name>\" \"[optional stage label (identify the stage)]\" -- declare a new shader stage");
+    LOG_ERROR("Valid stage names: {}", names);
+    LOG_ERROR("#stage all will make a preamble for each shader");
+}
+class GlslIncluder : protected DirStackFileIncluder, public glslang::TShader::Includer {
+public:
+    GlslIncluder() = default;
+
+    virtual IncludeResult* includeLocal(const char* headerName, const char* includerName, size_t inclusionDepth) override {
+        return newIncludeResult(resolveLocal(headerName, includerName, inclusionDepth));
+    }
+
+    virtual IncludeResult* includeSystem(const char* headerName, const char* includerName, size_t inclusionDepth) override {
+        return newIncludeResult(resolveSystem(headerName, includerName, inclusionDepth));
+    }
+
+    // Externally set directories. E.g., from a command-line -I<dir>.
+    //  - Most-recently pushed are checked first.
+    //  - All these are checked after the parse-time stack of local directories
+    //    is checked.
+    //  - This only applies to the "local" form of #include.
+    //  - Makes its own copy of the path.
+    virtual void pushExternalLocalDirectory(std::string const &dir)
+    {
+        DirStackFileIncluder::pushLocal(dir);
+    }
+
+    virtual void pushExternalSystemDirectory(std::string const &dir)
+    {
+        DirStackFileIncluder::pushSystem(dir);
+    }
+
+    virtual void releaseInclude(IncludeResult* result) override
+    {
+        if (result != nullptr) {
+            delete [] static_cast<char*>(result->userData);
+            delete result;
+        }
+    }
+
+    virtual std::set<std::string> getIncludedFiles()
+    {
+        return DirStackFileIncluder::getIncludedFiles();
+    }
+
+    virtual ~GlslIncluder() override { }
+
+protected:
+    // Do actual reading of the file, filling in a new include result.
+    virtual IncludeResult* newIncludeResult(std::string const &path) const
+    {
+        std::ifstream file(path, std::ios::ate);
+        if(!file)
+            return nullptr;
+        
+        int length = file.tellg();
+        char* content = new char [length];
+        file.seekg(0, file.beg);
+        file.read(content, length);
+        return new IncludeResult(path, content, length, content);
+    }
+};
+static const std::unordered_map<VkShaderStageFlagBits, EShLanguage> gVulkanStageToGlslang = {
+    {VK_SHADER_STAGE_VERTEX_BIT                  , EShLangVertex         },
+    {VK_SHADER_STAGE_GEOMETRY_BIT                , EShLangGeometry       },
+    {VK_SHADER_STAGE_FRAGMENT_BIT                , EShLangFragment       },
+    {VK_SHADER_STAGE_COMPUTE_BIT                 , EShLangCompute        },
+    {VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT , EShLangTessEvaluation },
+    {VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT    , EShLangTessControl    },
+    {VK_SHADER_STAGE_RAYGEN_BIT_KHR              , EShLangRayGen         },
+    {VK_SHADER_STAGE_INTERSECTION_BIT_KHR        , EShLangIntersect      },
+    {VK_SHADER_STAGE_ANY_HIT_BIT_KHR             , EShLangAnyHit         },
+    {VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR         , EShLangClosestHit     },
+    {VK_SHADER_STAGE_MISS_BIT_KHR                , EShLangMiss           },
+    {VK_SHADER_STAGE_CALLABLE_BIT_KHR            , EShLangCallable       },
+    {VK_SHADER_STAGE_MESH_BIT_EXT                , EShLangMesh           },
+};
+static const std::unordered_map<uint32_t, glslang::EshTargetClientVersion> gVulkanVersionToGlslang = {
+    {VK_API_VERSION_1_0, glslang::EShTargetVulkan_1_0},
+    {VK_API_VERSION_1_1, glslang::EShTargetVulkan_1_1},
+    {VK_API_VERSION_1_2, glslang::EShTargetVulkan_1_2},
+    {VK_API_VERSION_1_3, glslang::EShTargetVulkan_1_3},
+    {VK_API_VERSION_1_4, glslang::EShTargetVulkan_1_4},
+};
+static const std::unordered_map<SpirvVersion, glslang::EShTargetLanguageVersion> gSpirvVersionToGlslang = {
+    { SpirvVersion::SpirvVersion_1_0, glslang::EShTargetLanguageVersion::EShTargetSpv_1_0 },
+    { SpirvVersion::SpirvVersion_1_1, glslang::EShTargetLanguageVersion::EShTargetSpv_1_1 },
+    { SpirvVersion::SpirvVersion_1_2, glslang::EShTargetLanguageVersion::EShTargetSpv_1_2 },
+    { SpirvVersion::SpirvVersion_1_3, glslang::EShTargetLanguageVersion::EShTargetSpv_1_3 },
+    { SpirvVersion::SpirvVersion_1_4, glslang::EShTargetLanguageVersion::EShTargetSpv_1_4 },
+    { SpirvVersion::SpirvVersion_1_5, glslang::EShTargetLanguageVersion::EShTargetSpv_1_5 },
+    { SpirvVersion::SpirvVersion_1_6, glslang::EShTargetLanguageVersion::EShTargetSpv_1_6 },
+};
 
 // Thanks to https://github.com/KhronosGroup/glslang/issues/2207#issuecomment-632927839
 static TBuiltInResource InitResources()
@@ -481,48 +577,6 @@ static TBuiltInResource InitResources()
 
     return Resources;
 }
-
-
-// Thanks to https://stackoverflow.com/a/217605
-// Trim from the start (in place)
-static void ltrim(std::string &s) {
-    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
-        return !std::isspace(ch);
-    }));
-}
-// Thanks to https://stackoverflow.com/a/217605
-// Trim from the end (in place)
-static void rtrim(std::string &s) {
-    s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
-        return !std::isspace(ch);
-    }).base(), s.end());
-}
-// Thanks to https://stackoverflow.com/a/14266139
-std::vector<std::string> split(std::string s, std::string const &delimiter) {
-    std::vector<std::string> tokens;
-    size_t pos = 0;
-    std::string token;
-    while((pos = s.find(delimiter)) != std::string::npos) {
-        token = s.substr(0, pos);
-        tokens.push_back(token);
-        s.erase(0, pos + delimiter.length());
-    }
-    tokens.push_back(s);
-
-    return tokens;
-}
-
-static void printUsage()
-{
-    std::vector<std::string> names;
-    for(auto const &[name, _] : gStageNameToVulkanEnum)
-        names.emplace_back(name);
-
-    LOG_ERROR("Usage: #stage \"<stage name>\" \"[optional stage label (identify the stage)]\" -- declare a new shader stage");
-    LOG_ERROR("Valid stage names: {}", names);
-    LOG_ERROR("#stage all will make a preamble for each shader");
-}
-
 static std::vector<ShaderStage> splitGlslSources(Shader &program)
 {
     std::vector<ShaderStage> stages(1);
@@ -611,7 +665,7 @@ static bool compileGlsl(Shader &program, std::vector<std::string> &outIncludes)
         ~GlslangProcess() { glslang::FinalizeProcess(); }
     } process;
 
-    DirStackFileIncluder includer;
+    GlslIncluder includer;
     for(auto const &dir : program.createInfo.includeDirs | std::views::reverse)
         includer.pushExternalLocalDirectory(dir);
     for(auto const &dir : program.createInfo.systemIncludeDirs | std::views::reverse)
@@ -631,12 +685,30 @@ static bool compileGlsl(Shader &program, std::vector<std::string> &outIncludes)
         sources = splitGlslSources(program);
     }
 
-
     std::string preamble;
     preamble.append("#extension GL_GOOGLE_cpp_style_line_directive : enable\n");
     preamble.append("#extension GL_GOOGLE_include_directive : enable\n"); // Parser refuses to process the includer without the extension enabled
     for(auto const &[name, value] : program.createInfo.definitions)
         preamble.append("#define " + name + ' ' + value + '\n');
+
+    // for(auto &stage : sources)
+    // {
+    //     size_t pos = 0;
+    //     size_t lineNum = 1;
+    //     while(pos < stage.source.size()) 
+    //     {
+    //         auto newLine = stage.source.find_first_of('\n', pos + 1);
+    //         auto directive = stage.source.find_first_not_of(" \t", pos);
+
+    //         if(directive < newLine && stage.source.compare(directive, std::string_view("#version").size(), "#version") == 0)
+    //             stage.source.insert(newLine , fmt::format("\n{}\n#line {} \"{}\"\n", preamble, lineNum, stage.sourceFile));
+
+    //         pos = newLine;
+    //         ++lineNum;
+    //     }
+
+    //     LOG_VAR(stage.source);
+    // }
 
     for(auto &stage : sources)
     {
@@ -652,8 +724,8 @@ static bool compileGlsl(Shader &program, std::vector<std::string> &outIncludes)
         auto name = stage.sourceFile.c_str();
 
         glslShader->setEnvInput(glslang::EShSourceGlsl, gVulkanStageToGlslang.at(stage.stage), glslang::EShClientVulkan, 100);
-        glslShader->setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_3);
-        glslShader->setEnvTarget(glslang::EshTargetSpv, glslang::EShTargetSpv_1_6);
+        glslShader->setEnvClient(glslang::EShClientVulkan, gVulkanVersionToGlslang.at(program.createInfo.targetVersion));
+        glslShader->setEnvTarget(glslang::EshTargetSpv, gSpirvVersionToGlslang.at(program.createInfo.spirvVersion));
         glslShader->setDebugInfo(program.createInfo.debugInfo);
         glslShader->setSourceFile(stage.sourceFile.c_str());
         glslShader->setPreamble(preamble.c_str());
@@ -683,9 +755,12 @@ static bool compileGlsl(Shader &program, std::vector<std::string> &outIncludes)
             continue;
         }
 
+        auto &desc = program.binDescriptors.emplace_back();
+        desc.stage = stage.stage;
+        desc.name  = stage.name;
+        desc.entry = "main";
+        desc.binary = program.binaries.size();
         auto &bin = program.binaries.emplace_back();
-        bin.stage = stage.stage;
-        bin.name  = stage.name;
 
         glslang::TIntermediate *intermediate = glslProgram.getIntermediate(gVulkanStageToGlslang.at(stage.stage));
         spv::SpvBuildLogger logger;
@@ -703,7 +778,315 @@ static bool compileGlsl(Shader &program, std::vector<std::string> &outIncludes)
 
     return true;
 }
+#endif
 
+#ifdef SHADER_ENABLE_SLANG
+static std::unordered_map<ShaderCreateInfo::Optimization, SlangOptimizationLevel> gOptimizationToSlang{
+    {ShaderCreateInfo::Optimization::None,       SlangOptimizationLevel::SLANG_OPTIMIZATION_LEVEL_NONE   },
+    {ShaderCreateInfo::Optimization::Default,    SlangOptimizationLevel::SLANG_OPTIMIZATION_LEVEL_HIGH   },
+    {ShaderCreateInfo::Optimization::Aggressive, SlangOptimizationLevel::SLANG_OPTIMIZATION_LEVEL_MAXIMAL},
+};
+static std::unordered_map<SlangStage, VkShaderStageFlagBits> gSlangToVulkanStage{
+    { SLANG_STAGE_VERTEX,          VK_SHADER_STAGE_VERTEX_BIT                  },      
+    { SLANG_STAGE_HULL,            VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT    },
+    { SLANG_STAGE_DOMAIN,          VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT },
+    { SLANG_STAGE_GEOMETRY,        VK_SHADER_STAGE_GEOMETRY_BIT                },    
+    { SLANG_STAGE_FRAGMENT,        VK_SHADER_STAGE_FRAGMENT_BIT                },    
+    { SLANG_STAGE_COMPUTE,         VK_SHADER_STAGE_COMPUTE_BIT                 },     
+    { SLANG_STAGE_RAY_GENERATION,  VK_SHADER_STAGE_RAYGEN_BIT_KHR              },  
+    { SLANG_STAGE_INTERSECTION,    VK_SHADER_STAGE_INTERSECTION_BIT_KHR        },
+    { SLANG_STAGE_ANY_HIT,         VK_SHADER_STAGE_ANY_HIT_BIT_KHR             }, 
+    { SLANG_STAGE_CLOSEST_HIT,     VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR         },
+    { SLANG_STAGE_MISS,            VK_SHADER_STAGE_MISS_BIT_KHR                },    
+    { SLANG_STAGE_CALLABLE,        VK_SHADER_STAGE_CALLABLE_BIT_KHR            },
+    { SLANG_STAGE_MESH,            VK_SHADER_STAGE_MESH_BIT_EXT                },    
+    { SLANG_STAGE_AMPLIFICATION,   VK_SHADER_STAGE_TASK_BIT_EXT                },
+};
+
+class VectorBlob : public ISlangBlob
+{
+private:
+    std::vector<std::byte> mData;
+    uint mRefCount = 1;
+public:
+    VectorBlob(std::vector<std::byte> &&data) : mData(std::move(data)) {}
+    virtual ~VectorBlob() {}
+
+    virtual SLANG_NO_THROW void const* SLANG_MCALL getBufferPointer() override {
+        return mData.data();
+    }
+    virtual SLANG_NO_THROW size_t SLANG_MCALL getBufferSize() override {
+        return mData.size();
+    }
+
+    virtual SLANG_NO_THROW SlangResult SLANG_MCALL
+    queryInterface(SlangUUID const& uuid, void** outObject) override {
+        if (uuid == ISlangBlob::getTypeGuid())
+        {
+            *outObject = static_cast<ISlangBlob*>(this);
+            return SLANG_OK;
+        }
+        return SLANG_E_NO_INTERFACE;
+    }
+    virtual SLANG_NO_THROW uint32_t SLANG_MCALL addRef() override {
+        return ++mRefCount;
+    }
+    virtual SLANG_NO_THROW uint32_t SLANG_MCALL release() override {
+        --mRefCount;
+        if(mRefCount == 1)
+            delete this;
+
+        return mRefCount;
+    }
+};
+class FileSystemSlang : public ISlangFileSystem
+{
+private:
+    std::vector<std::string> *mIncludes;
+    uint mRefCount = 1;
+public:
+    FileSystemSlang(std::vector<std::string> &includes) : mIncludes(&includes) {}
+    virtual ~FileSystemSlang() {}
+
+    virtual SLANG_NO_THROW SlangResult SLANG_MCALL
+    loadFile(char const* path, ISlangBlob** outBlob) override {
+        if(!fs::exists(path))
+            return -1;
+
+        *outBlob = new VectorBlob(readFileBinary<std::byte>(path));
+        mIncludes->emplace_back(path);
+
+        return 0;
+    }
+
+    virtual SLANG_NO_THROW SlangResult SLANG_MCALL
+    queryInterface(SlangUUID const& uuid, void** outObject) override {
+        if (uuid == ISlangFileSystem::getTypeGuid())
+        {
+            *outObject = static_cast<ISlangFileSystem*>(this);
+            return SLANG_OK;
+        }
+        return SLANG_E_NO_INTERFACE;
+    }
+    virtual SLANG_NO_THROW uint32_t SLANG_MCALL addRef() override {
+        return ++mRefCount;
+    }
+    virtual SLANG_NO_THROW uint32_t SLANG_MCALL release() override {
+        --mRefCount;
+        if(mRefCount == 1)
+            delete this;
+
+        return mRefCount;
+    }
+    
+    // I want to vomit
+    void *getInterface(const SlangUUID& guid) {
+        if (guid == ISlangUnknown::getTypeGuid() || guid == ISlangCastable::getTypeGuid() || guid == ISlangFileSystem::getTypeGuid())
+            return static_cast<FileSystemSlang*>(this);
+        return nullptr;
+    }
+    virtual SLANG_NO_THROW void* SLANG_MCALL castAs(const SlangUUID& guid) override {
+        if (auto intf = getInterface(guid))
+            return intf;
+        return nullptr;
+    }
+};
+
+static bool compileSlang(Shader &program, std::vector<std::string> &outInclides)
+{
+    [[maybe_unused]] static class SlangSession
+    {
+    public:
+        SlangSession() {
+            if(SLANG_FAILED(slang::createGlobalSession(session.writeRef()))) {
+                LOG_ERROR("Failed to create slang session!");
+            }
+        }
+        ~SlangSession() {  }
+        Slang::ComPtr<slang::IGlobalSession> session;
+
+        slang::IGlobalSession *operator->() { return session.get(); }
+    } thread_local globalSession;
+    
+    if(!globalSession.session)
+        return false;
+
+    
+    slang::TargetDesc targetDesc{
+        .format = SLANG_SPIRV,
+        .profile = globalSession->findProfile("spirv_1_6"),
+    };
+
+    std::vector<slang::PreprocessorMacroDesc> definitions;
+    for(auto const &[name, value] : program.createInfo.definitions)
+        definitions.emplace_back(name.c_str(), value.c_str());
+
+    std::vector<slang::CompilerOptionEntry> options{
+        slang::CompilerOptionEntry{slang::CompilerOptionName::EmitSpirvDirectly, {slang::CompilerOptionValueKind::Int, 1}},
+        slang::CompilerOptionEntry{slang::CompilerOptionName::Optimization, {slang::CompilerOptionValueKind::Int, static_cast<int32_t>(gOptimizationToSlang.at(program.createInfo.optimization))}},
+        slang::CompilerOptionEntry{slang::CompilerOptionName::DebugInformation, {slang::CompilerOptionValueKind::Int, static_cast<int32_t>(program.createInfo.debugInfo ? SlangDebugInfoLevel::SLANG_DEBUG_INFO_LEVEL_MAXIMAL : SlangDebugInfoLevel::SLANG_DEBUG_INFO_LEVEL_NONE)}}
+    };
+    if(program.createInfo.obfuscate)
+        options.emplace_back(slang::CompilerOptionEntry{slang::CompilerOptionName::Obfuscate, {slang::CompilerOptionValueKind::Int, 1}});
+
+    Slang::ComPtr<ISlangFileSystem> filesystem(new FileSystemSlang(outInclides));
+    slang::SessionDesc sessionDesc{
+        .targets = &targetDesc,
+        .targetCount = 1,
+        .preprocessorMacros = definitions.data(),
+        .preprocessorMacroCount = static_cast<SlangInt>(definitions.size()),
+        .fileSystem = filesystem.get(),
+        .compilerOptionEntries = options.data(),
+        .compilerOptionEntryCount = static_cast<uint32_t>(options.size()),
+    };
+
+    Slang::ComPtr<slang::ISession> session;
+    globalSession->createSession(sessionDesc, session.writeRef());
+
+    std::vector<ShaderStage> sources;
+    assert(fs::exists(program.createInfo.src));
+    if(fs::is_directory(program.createInfo.src)) {
+        sources = collectSources(program);
+    } else {
+        sources.emplace_back(ShaderStage{
+            .source = readFileString(program.createInfo.src),
+            .name = fs::path(program.createInfo.src).stem().string(),
+            .sourceFile = program.createInfo.src,
+            .stage = VK_SHADER_STAGE_ALL,
+        });
+    }   
+
+    struct EntryPoint {
+        uint index;
+        Slang::ComPtr<slang::IEntryPoint> entry;
+    };
+    struct Module {
+        Slang::ComPtr<slang::IModule> module;
+        std::vector<EntryPoint> entryPoints;
+        uint sourceIndex;
+    };
+    std::vector<Module> modules;
+    for(uint i = 0; i < sources.size(); ++i)
+    {
+        auto const &source = sources[i];
+        Slang::ComPtr<slang::IBlob> diagnosticsBlob;
+        auto &module = modules.emplace_back(Module{
+            .module = Slang::ComPtr(session->loadModuleFromSourceString(
+                source.name.c_str(),
+                source.sourceFile.c_str(),
+                source.source.c_str(),
+                diagnosticsBlob.writeRef())),
+            .sourceIndex = i
+        });
+
+        if(diagnosticsBlob)
+            LOG_ERROR("Slang diagnostics: {}", static_cast<char const *>(diagnosticsBlob->getBufferPointer()));
+
+        if(!module.module)
+        {
+            LOG_ERROR("Failed to load module \"{}\"", source.sourceFile);
+            return false;
+        }
+    }
+
+    uint entryPointIndex = 0;
+    std::vector<slang::IComponentType *> componentTypes;
+    for(auto &module : modules)
+    {
+        auto entryPointCount = module.module->getDefinedEntryPointCount();
+
+        for(uint i = 0; i < entryPointCount; ++i)
+        {
+            module.module->getDefinedEntryPoint(i, module.entryPoints.emplace_back(entryPointIndex++).entry.writeRef());
+        }
+
+        componentTypes.emplace_back(module.module);
+        for(auto const &entryPoint : module.entryPoints)
+            componentTypes.emplace_back(entryPoint.entry);
+    }
+
+
+    Slang::ComPtr<slang::IComponentType> composedProgram;
+    {
+        Slang::ComPtr<slang::IBlob> diagnosticsBlob;
+        SlangResult result = session->createCompositeComponentType(
+            componentTypes.data(),
+            componentTypes.size(),
+            composedProgram.writeRef(),
+            diagnosticsBlob.writeRef());
+            
+        if(diagnosticsBlob)
+            LOG_ERROR("Slang diagnostics: {}", static_cast<char const *>(diagnosticsBlob->getBufferPointer()));
+
+        if(SLANG_FAILED(result)) {
+            LOG_ERROR("Failed to compose the program \"{}\"!", program.createInfo.src);
+            return false;
+        }
+    }
+
+    Slang::ComPtr<slang::IComponentType> linkedProgram;
+    {
+        Slang::ComPtr<slang::IBlob> diagnosticsBlob;
+        SlangResult result = composedProgram->link(
+            linkedProgram.writeRef(),
+            diagnosticsBlob.writeRef());
+            
+        if(diagnosticsBlob)
+            LOG_ERROR("Slang diagnostics: {}", static_cast<char const *>(diagnosticsBlob->getBufferPointer()));
+
+        if(SLANG_FAILED(result)) {
+            LOG_ERROR("Failed to link the program \"{}\"!", program.createInfo.src);
+            return false;
+        }
+    }
+
+    Slang::ComPtr<slang::IBlob> spirvCode;
+    {
+        Slang::ComPtr<slang::IBlob> diagnosticsBlob;
+        SlangResult result = linkedProgram->getTargetCode(
+            0, // targetIndex
+            spirvCode.writeRef(),
+            diagnosticsBlob.writeRef());
+               
+        if(diagnosticsBlob)
+            LOG_ERROR("Slang diagnostics: {}", static_cast<char const *>(diagnosticsBlob->getBufferPointer()));
+
+        if(SLANG_FAILED(result)) {
+            LOG_ERROR("Failed to link the program \"{}\"!", program.createInfo.src);
+            return false;
+        }
+    }
+
+    auto &binary = program.binaries.emplace_back();
+    binary.spirv.resize(spirvCode->getBufferSize());
+    std::memcpy(binary.spirv.data(), spirvCode->getBufferPointer(), spirvCode->getBufferSize());
+
+    for(auto const &module : modules)
+    {
+        auto const &source = sources[module.sourceIndex];
+        for(auto const &entry : module.entryPoints)
+        {
+            program.binDescriptors.emplace_back(Shader::BinDescriptor{
+                .stage = gSlangToVulkanStage.at(linkedProgram->getLayout()->getEntryPointByIndex(entry.index)->getStage()),
+                .name = source.name,
+                .entry = entry.entry->getFunctionReflection()->getName(),
+                .binary = static_cast<uint32_t>(program.binaries.size() - 1),
+            });
+        }
+    }
+
+    return true;
+}
+#endif
+
+static const std::unordered_map<ShaderBackend, std::function<bool (Shader &, std::vector<std::string> &)>> gShaderBackends{
+#ifdef SHADER_ENABLE_GLSL
+    {ShaderBackend::GLSL, compileGlsl},
+#endif
+#ifdef SHADER_ENABLE_SLANG
+    {ShaderBackend::SLANG, compileSlang},
+#endif
+};
 
 Shader vk::makeShader(ShaderCreateInfo const &ci)
 {
@@ -722,7 +1105,6 @@ Shader vk::makeShader(ShaderCreateInfo const &ci)
     {
         metadata = json::parse(readFileString(metadataPath.string()));
         assert(!metadata.empty());
-        assert(metadata["src"].get<std::string>() == program.createInfo.src);
     }
 
     bool canCompile = fs::exists(program.createInfo.src);
@@ -733,16 +1115,25 @@ Shader vk::makeShader(ShaderCreateInfo const &ci)
     if(outdated && canCompile)
         LOG_TRACE("\"{}\" shader binaries are outdated! Recompiling", program.createInfo.bin);
 
-    if(canCollect && !outdated) 
-    {
+    if(canCollect && !outdated) {
         LOG_TRACE("Collecting binaries from \"{}\"", program.createInfo.bin);
         collectBinaries(program, metadata);
     }  else if(canCompile) {
         LOG_TRACE("Compiling from source \"{}\"", program.createInfo.src);
 
-        std::vector<std::string> includes;
-        if(!compileGlsl(program, includes))
+        if(!gShaderBackends.contains(program.createInfo.backend)) {
+            LOG_ERROR("Backend not supported!");
             return program;
+        }
+
+        std::vector<std::string> includes;
+        if(!gShaderBackends.at(program.createInfo.backend)(program, includes))
+            return program;
+
+        if(program.createInfo.optimization == ShaderCreateInfo::Optimization::Aggressive)
+            optimizeSpirv(program);
+        if(program.createInfo.obfuscate)
+            obfuscateSpirv(program);
 
         if(canWrite)
             writeBinaries(program, includes);
