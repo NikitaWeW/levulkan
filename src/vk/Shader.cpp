@@ -804,6 +804,10 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
     if(!globalSession.session)
         return false;
 
+    if(fs::is_directory(program.createInfo.src)) {
+        LOG_ERROR("Slang shader src path \"{}\" can not be a directory!", program.createInfo.src);
+        return false;
+    }
     
     slang::TargetDesc targetDesc{
         .format = SLANG_SPIRV,
