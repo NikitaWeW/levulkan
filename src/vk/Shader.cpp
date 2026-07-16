@@ -692,25 +692,6 @@ static bool compileGlsl(Shader &program, std::vector<std::string> &outIncludes)
     for(auto const &[name, value] : program.createInfo.definitions)
         preamble.append("#define " + name + ' ' + value + '\n');
 
-    // for(auto &stage : sources)
-    // {
-    //     size_t pos = 0;
-    //     size_t lineNum = 1;
-    //     while(pos < stage.source.size()) 
-    //     {
-    //         auto newLine = stage.source.find_first_of('\n', pos + 1);
-    //         auto directive = stage.source.find_first_not_of(" \t", pos);
-
-    //         if(directive < newLine && stage.source.compare(directive, std::string_view("#version").size(), "#version") == 0)
-    //             stage.source.insert(newLine , fmt::format("\n{}\n#line {} \"{}\"\n", preamble, lineNum, stage.sourceFile));
-
-    //         pos = newLine;
-    //         ++lineNum;
-    //     }
-
-    //     LOG_VAR(stage.source);
-    // }
-
     for(auto &stage : sources)
     {
         if(!gVulkanStageToGlslang.contains(stage.stage))
@@ -804,95 +785,6 @@ static std::unordered_map<SlangStage, VkShaderStageFlagBits> gSlangToVulkanStage
     { SLANG_STAGE_AMPLIFICATION,   VK_SHADER_STAGE_TASK_BIT_EXT                },
 };
 
-class VectorBlob : public ISlangBlob
-{
-private:
-    std::vector<std::byte> mData;
-    uint mRefCount = 1;
-public:
-    VectorBlob(std::vector<std::byte> &&data) : mData(std::move(data)) {}
-    virtual ~VectorBlob() {}
-
-    virtual SLANG_NO_THROW void const* SLANG_MCALL getBufferPointer() override {
-        return mData.data();
-    }
-    virtual SLANG_NO_THROW size_t SLANG_MCALL getBufferSize() override {
-        return mData.size();
-    }
-
-    virtual SLANG_NO_THROW SlangResult SLANG_MCALL
-    queryInterface(SlangUUID const& uuid, void** outObject) override {
-        if (uuid == ISlangBlob::getTypeGuid())
-        {
-            *outObject = static_cast<ISlangBlob*>(this);
-            return SLANG_OK;
-        }
-        return SLANG_E_NO_INTERFACE;
-    }
-    virtual SLANG_NO_THROW uint32_t SLANG_MCALL addRef() override {
-        return ++mRefCount;
-    }
-    virtual SLANG_NO_THROW uint32_t SLANG_MCALL release() override {
-        --mRefCount;
-        if(mRefCount == 1)
-            delete this;
-
-        return mRefCount;
-    }
-};
-class FileSystemSlang : public ISlangFileSystem
-{
-private:
-    std::vector<std::string> *mIncludes;
-    uint mRefCount = 1;
-public:
-    FileSystemSlang(std::vector<std::string> &includes) : mIncludes(&includes) {}
-    virtual ~FileSystemSlang() {}
-
-    virtual SLANG_NO_THROW SlangResult SLANG_MCALL
-    loadFile(char const* path, ISlangBlob** outBlob) override {
-        if(!fs::exists(path))
-            return -1;
-
-        *outBlob = new VectorBlob(readFileBinary<std::byte>(path));
-        mIncludes->emplace_back(path);
-
-        return 0;
-    }
-
-    virtual SLANG_NO_THROW SlangResult SLANG_MCALL
-    queryInterface(SlangUUID const& uuid, void** outObject) override {
-        if (uuid == ISlangFileSystem::getTypeGuid())
-        {
-            *outObject = static_cast<ISlangFileSystem*>(this);
-            return SLANG_OK;
-        }
-        return SLANG_E_NO_INTERFACE;
-    }
-    virtual SLANG_NO_THROW uint32_t SLANG_MCALL addRef() override {
-        return ++mRefCount;
-    }
-    virtual SLANG_NO_THROW uint32_t SLANG_MCALL release() override {
-        --mRefCount;
-        if(mRefCount == 1)
-            delete this;
-
-        return mRefCount;
-    }
-    
-    // I want to vomit
-    void *getInterface(const SlangUUID& guid) {
-        if (guid == ISlangUnknown::getTypeGuid() || guid == ISlangCastable::getTypeGuid() || guid == ISlangFileSystem::getTypeGuid())
-            return static_cast<FileSystemSlang*>(this);
-        return nullptr;
-    }
-    virtual SLANG_NO_THROW void* SLANG_MCALL castAs(const SlangUUID& guid) override {
-        if (auto intf = getInterface(guid))
-            return intf;
-        return nullptr;
-    }
-};
-
 static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
 {
     [[maybe_unused]] static class SlangSession
@@ -943,7 +835,6 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
         .searchPathCount = static_cast<SlangInt>(includeDirs.size()),
         .preprocessorMacros = definitions.data(),
         .preprocessorMacroCount = static_cast<SlangInt>(definitions.size()),
-        .fileSystem = new FileSystemSlang(outIncludes),
         .compilerOptionEntries = options.data(),
         .compilerOptionEntryCount = static_cast<uint32_t>(options.size()),
     };
@@ -962,7 +853,44 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
             .sourceFile = program.createInfo.src,
             .stage = VK_SHADER_STAGE_ALL,
         });
-    }   
+    }
+
+    std::unordered_set<std::string> includes;
+    DirStackFileIncluder includerToParseIncludePathsBecauseSlangsIFilesystemIsUndocumentedPieceOfFuckingUnbelievableDumpsterFireAndSegfaultsForNoReasonAndWhyDontTheyJustAddAWayToAddACustomIncluderWithoutThisMessMaybeIDontWantToLoadShadersFromFileMaybeTheyAreInMemoryAlreadyAnywayItsNotTheCompilersResponsibility;
+    auto &includer = includerToParseIncludePathsBecauseSlangsIFilesystemIsUndocumentedPieceOfFuckingUnbelievableDumpsterFireAndSegfaultsForNoReasonAndWhyDontTheyJustAddAWayToAddACustomIncluderWithoutThisMessMaybeIDontWantToLoadShadersFromFileMaybeTheyAreInMemoryAlreadyAnywayItsNotTheCompilersResponsibility;
+
+    for(auto const &dir : program.createInfo.includeDirs)
+        includer.pushLocal(dir);
+    for(auto const &dir : program.createInfo.systemIncludeDirs)
+        includer.pushSystem(dir);
+
+    for(auto const &source : sources)
+    {
+        size_t pos = 0; 
+        while(pos < source.source.size()) 
+        {
+            auto newLine = source.source.find_first_of('\n', pos + 1);
+            auto directive = source.source.find_first_not_of(" \t", pos);
+            if(directive < newLine && source.source.compare(directive, std::string_view("#include").size(), "#include") == 0)
+            {
+                auto begin = source.source.find_first_of("\"<", directive) + 1;
+                auto end   = source.source.find_first_of("\">", begin);
+                if(begin > newLine || end > newLine) {
+                    LOG_WARN("incorrect include directive! {}", source.source.substr(directive, newLine - directive));
+                } else {
+                    bool local = source.source[begin-1] == '\"';
+                    auto path = local ? includer.resolveLocal(source.source.substr(begin, end - begin), source.sourceFile, 1) : includer.resolveSystem(source.source.substr(begin, end - begin), source.sourceFile, 1);
+
+                    if(path.empty())
+                        LOG_WARN("Failed to include {}", source.source.substr(directive, newLine - directive));
+                    else
+                        includes.emplace(path);
+                }
+            }
+            pos = newLine;
+        }
+    }
+    outIncludes = std::vector<std::string>(includes.begin(), includes.end());
 
     struct EntryPoint {
         uint index;
@@ -1066,7 +994,7 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
     }
 
     auto &binary = program.binaries.emplace_back();
-    binary.spirv.resize(spirvCode->getBufferSize());
+    binary.spirv.resize(spirvCode->getBufferSize() / sizeof(binary.spirv[0]));
     std::memcpy(binary.spirv.data(), spirvCode->getBufferPointer(), spirvCode->getBufferSize());
 
     for(auto const &module : modules)

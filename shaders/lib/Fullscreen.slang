@@ -17,4 +17,5 @@ VsOut vsMain(uint index : SV_VertexID)
     out.position = float4(positions[index], 1);
     out.uv = out.position.xy * 0.5 + 0.5;
     out.uv.y *= -1;
+    return out;
 }

@@ -465,15 +465,21 @@ void vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite>
 
     std::vector<VkWriteDescriptorSet> descWrites;
     descWrites.reserve(writes.size());
-    for(auto const &write : writes)
-    {
-        descWrites.emplace_back(VkWriteDescriptorSet{
+    for(auto const &write : writes) {
+        // Might be optimized away
+        if(!reflection.descSets.contains(write.dstSet))
+            continue;
+        auto const &set = reflection.descSets.at(write.dstSet);
+        if(!set.contains(write.dstBinding))
+            continue;
+
+        descWrites.emplace_back(VkWriteDescriptorSet{   
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = pipeline.layout.descSets.get(write.dstSet),
+            .dstSet = pipeline.layout.descSets.at(write.dstSet),
             .dstBinding = write.dstBinding,
             .dstArrayElement = write.dstArrayElement,
             .descriptorCount = write.size(),
-            .descriptorType = reflection.descSets.at(write.dstSet).get(write.dstBinding).descriptorType,
+            .descriptorType = set.at(write.dstBinding).descriptorType,
             .pImageInfo = write.imageInfo.data(),
             .pBufferInfo = write.bufferInfo.data(),
             .pTexelBufferView = write.texelBufferView.data(),

@@ -1,9 +1,9 @@
 #include "lib/Fullscreen.slang"
 
 [[vk::binding(0, 0)]] uniform Sampler2D uAlbedo;
-[[vk::binding(0, 1)]] uniform Sampler2D uPosition;
-[[vk::binding(0, 2)]] uniform Sampler2D uNormal;
-[[vk::binding(0, 3)]] uniform Sampler2D uPBR;
+[[vk::binding(1, 0)]] uniform Sampler2D uPosition;
+[[vk::binding(2, 0)]] uniform Sampler2D uNormal;
+[[vk::binding(3, 0)]] uniform Sampler2D uPBR;
 
 [shader("fragment")]
 float4 fsMain(VsOut input)
