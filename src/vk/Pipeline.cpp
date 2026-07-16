@@ -111,13 +111,14 @@ struct Reflection
 static Reflection reflect(Shader const &shader)
 {
     Reflection reflection;
-    for(auto const &bin : shader.binaries)
+    for(auto const &binDesc : shader.binDescriptors)
     {
+        auto const &bin = shader.binaries[binDesc.binary];
         reflection.stages.emplace_back(VkPipelineShaderStageCreateInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-            .stage = bin.stage,
+            .stage = binDesc.stage,
             .module = bin.module,
-            .pName = "main"
+            .pName = binDesc.entry.c_str()
         });
 
         SpvReflectShaderModule module;
@@ -136,7 +137,7 @@ static Reflection reflect(Shader const &shader)
             binding.binding = descBinding->binding;
             binding.descriptorType = toVulkanDescriptorType(descBinding->descriptor_type);
             binding.descriptorCount = std::max(descBinding->count, binding.descriptorCount);
-            binding.stageFlags |= bin.stage;
+            binding.stageFlags |= binDesc.stage;
         }
 
         // Push constants
@@ -148,7 +149,7 @@ static Reflection reflect(Shader const &shader)
             auto &constant = reflection.pushConstants[{pushConstant->offset, pushConstant->size}];
             constant.offset = pushConstant->offset;
             constant.size = pushConstant->size;
-            constant.stageFlags |= bin.stage;
+            constant.stageFlags |= binDesc.stage;
         }
 
         // Input
@@ -180,9 +181,12 @@ template <> struct fmt::formatter<SpvReflectDescriptorBinding> {
 
 // WARNING: nested spaghetti code incoming (works on hopes and dreams, or not)
 // TODO: Add more error checking
-static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Reflection &reflection, VmaAllocator allocator)
+static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Shader const &shader, VmaAllocator allocator)
 {
     Pipeline::Layout layout;
+    layout._reflection = new Reflection(reflect(shader));
+    auto &reflection = *static_cast<Reflection *>(layout._reflection);
+
     std::map<uint32_t, SparseSet<VkDescriptorBindingFlags>> descFlags;
  
     // Descriptor flags
@@ -299,8 +303,6 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
     };
     CHECK_VK_RES(vkCreatePipelineLayout(dev, &pipelineLayoutCI, nullptr, &layout.layout));
 
-    // HACK
-    layout._reflection = new Reflection(reflection);
     return layout;
 }
 Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const &ci)
@@ -312,8 +314,8 @@ Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const
         .device = shader.createInfo.device
     };
 
-    Reflection reflection = reflect(shader);
-    pipeline.layout = makePipelineLayout(dev, ci.layout, reflection, ci.allocator);
+    pipeline.layout = makePipelineLayout(dev, ci.layout, shader, ci.allocator);
+    auto const &reflection = *static_cast<Reflection const *>(pipeline.layout._reflection);
 
     VkPipelineVertexInputStateCreateInfo vertexInputState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -424,8 +426,8 @@ Pipeline vk::makePipeline(Shader const &shader, ComputePipelineCreateInfo const 
         .device = shader.createInfo.device
     };
 
-    Reflection reflection = reflect(shader);
-    pipeline.layout = makePipelineLayout(dev, ci.layout, reflection, ci.allocator);
+    pipeline.layout = makePipelineLayout(dev, ci.layout, shader, ci.allocator);
+    auto const &reflection = *static_cast<Reflection const *>(pipeline.layout._reflection);
 
     VkComputePipelineCreateInfo pipelineCI{
         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
@@ -442,12 +444,13 @@ Pipeline vk::makePipeline(Shader const &shader, RaytracingPipelineCreateInfo con
 {
     auto const &dev = shader.createInfo.device;
     
-    Reflection reflection = reflect(shader);
     Pipeline pipeline{
         .type = Pipeline::Type::GRAPHICS,
-        .layout = makePipelineLayout(dev, ci.layout, reflection, ci.allocator),
         .device = shader.createInfo.device,
     };
+
+    pipeline.layout = makePipelineLayout(dev, ci.layout, shader, ci.allocator);
+    // auto const &reflection = *static_cast<Reflection const *>(pipeline.layout._reflection);
 
     assert(false && "not implemented!");
 
@@ -462,15 +465,21 @@ void vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite>
 
     std::vector<VkWriteDescriptorSet> descWrites;
     descWrites.reserve(writes.size());
-    for(auto const &write : writes)
-    {
-        descWrites.emplace_back(VkWriteDescriptorSet{
+    for(auto const &write : writes) {
+        // Might be optimized away
+        if(!reflection.descSets.contains(write.dstSet))
+            continue;
+        auto const &set = reflection.descSets.at(write.dstSet);
+        if(!set.contains(write.dstBinding))
+            continue;
+
+        descWrites.emplace_back(VkWriteDescriptorSet{   
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = pipeline.layout.descSets.get(write.dstSet),
+            .dstSet = pipeline.layout.descSets.at(write.dstSet),
             .dstBinding = write.dstBinding,
             .dstArrayElement = write.dstArrayElement,
             .descriptorCount = write.size(),
-            .descriptorType = reflection.descSets.at(write.dstSet).get(write.dstBinding).descriptorType,
+            .descriptorType = set.at(write.dstBinding).descriptorType,
             .pImageInfo = write.imageInfo.data(),
             .pBufferInfo = write.bufferInfo.data(),
             .pTexelBufferView = write.texelBufferView.data(),
