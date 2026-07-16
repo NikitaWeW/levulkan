@@ -1035,7 +1035,8 @@ int app(int argc, char **argv)
         fullscreenPass(pass, cb, colorAttachmentInfo, {window.size.x, window.size.y});
     };
     auto lighting_shader = vk::makeShader({
-        .src = "shaders/deferred/lighting.glsl",
+        .backend = vk::ShaderBackend::SLANG,
+        .src = "shaders/deferred/lighting.slang",
         .bin = "shaders-bin/deferred/lighting",
         .device = device,
         .includeDirs = {"shaders"}

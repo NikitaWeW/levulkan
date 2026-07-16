@@ -2,6 +2,7 @@
 #include "Utility.hpp"
 #include "Logging.hpp"
 #include "nlohmann/json.hpp"
+#include "spirv-tools/optimizer.hpp"
 
 #ifdef SHADER_ENABLE_GLSL
 #include "glslang/Public/ShaderLang.h"
@@ -892,7 +893,7 @@ public:
     }
 };
 
-static bool compileSlang(Shader &program, std::vector<std::string> &outInclides)
+static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
 {
     [[maybe_unused]] static class SlangSession
     {
@@ -929,13 +930,20 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outInclides)
     if(program.createInfo.obfuscate)
         options.emplace_back(slang::CompilerOptionEntry{slang::CompilerOptionName::Obfuscate, {slang::CompilerOptionValueKind::Int, 1}});
 
-    Slang::ComPtr<ISlangFileSystem> filesystem(new FileSystemSlang(outInclides));
+    std::vector<char const *> includeDirs;
+    for(auto const &dir : program.createInfo.includeDirs)
+        includeDirs.emplace_back(dir.c_str());
+    for(auto const &dir : program.createInfo.systemIncludeDirs)
+        includeDirs.emplace_back(dir.c_str());
+
     slang::SessionDesc sessionDesc{
         .targets = &targetDesc,
         .targetCount = 1,
+        .searchPaths = includeDirs.data(),
+        .searchPathCount = static_cast<SlangInt>(includeDirs.size()),
         .preprocessorMacros = definitions.data(),
         .preprocessorMacroCount = static_cast<SlangInt>(definitions.size()),
-        .fileSystem = filesystem.get(),
+        .fileSystem = new FileSystemSlang(outIncludes),
         .compilerOptionEntries = options.data(),
         .compilerOptionEntryCount = static_cast<uint32_t>(options.size()),
     };

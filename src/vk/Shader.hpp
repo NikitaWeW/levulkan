@@ -40,7 +40,7 @@ namespace vk
 {
 
 enum class ShaderBackend {
-    GLSL, HLSL, SLANG
+    GLSL, SLANG
 };
 enum class SpirvVersion {
     SpirvVersion_1_0 = (1 << 16),            
