@@ -311,7 +311,8 @@ Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const
 
     Pipeline pipeline{
         .type = Pipeline::Type::GRAPHICS,
-        .device = shader.createInfo.device
+        .createInfo = {.graphics = ci},
+        .device = shader.createInfo.device,
     };
 
     pipeline.layout = makePipelineLayout(dev, ci.layout, shader, ci.allocator);
@@ -422,7 +423,8 @@ Pipeline vk::makePipeline(Shader const &shader, ComputePipelineCreateInfo const 
     auto const &dev = shader.createInfo.device;
 
     Pipeline pipeline{
-        .type = Pipeline::Type::GRAPHICS,
+        .type = Pipeline::Type::COMPUTE,
+        .createInfo = {.compute = ci},
         .device = shader.createInfo.device
     };
 
@@ -445,7 +447,8 @@ Pipeline vk::makePipeline(Shader const &shader, RaytracingPipelineCreateInfo con
     auto const &dev = shader.createInfo.device;
     
     Pipeline pipeline{
-        .type = Pipeline::Type::GRAPHICS,
+        .type = Pipeline::Type::RAYTRACING,
+        .createInfo = {.raytracing = ci},
         .device = shader.createInfo.device,
     };
 

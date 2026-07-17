@@ -359,7 +359,7 @@ std::vector<std::string> split(std::string s, std::string const &delimiter) {
     std::vector<std::string> tokens;
     size_t pos = 0;
     std::string token;
-    while((pos = s.find(delimiter)) != std::string::npos) {
+    while((pos = s.find_first_of(delimiter)) != std::string::npos) {
         token = s.substr(0, pos);
         tokens.push_back(token);
         s.erase(0, pos + delimiter.length());
@@ -784,7 +784,22 @@ static std::unordered_map<SlangStage, VkShaderStageFlagBits> gSlangToVulkanStage
     { SLANG_STAGE_MESH,            VK_SHADER_STAGE_MESH_BIT_EXT                },    
     { SLANG_STAGE_AMPLIFICATION,   VK_SHADER_STAGE_TASK_BIT_EXT                },
 };
+static void diagnoseSlang(Slang::ComPtr<slang::IBlob> const &diagnosticsBlob)
+{
+    if(!diagnosticsBlob)
+        return;
 
+    spdlog::level::level_enum level;
+
+    std::string_view str(static_cast<char const *>(diagnosticsBlob->getBufferPointer()));
+
+    if(str.find(" warning ") < str.find(" error "))
+        level = spdlog::level::warn;
+    else 
+        level = spdlog::level::err;
+
+    LOG(level, "Slang diagnostics: {}", str);
+}
 static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
 {
     [[maybe_unused]] static class SlangSession
@@ -873,7 +888,7 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
         size_t pos = 0; 
         while(pos < source.source.size()) 
         {
-            auto newLine = source.source.find_first_of('\n', pos + 1);
+            auto newLine = source.source.find('\n', pos + 1);
             auto directive = source.source.find_first_not_of(" \t", pos);
             if(directive < newLine && source.source.compare(directive, std::string_view("#include").size(), "#include") == 0)
             {
@@ -919,8 +934,7 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
             .sourceIndex = i
         });
 
-        if(diagnosticsBlob)
-            LOG_ERROR("Slang diagnostics: {}", static_cast<char const *>(diagnosticsBlob->getBufferPointer()));
+        diagnoseSlang(diagnosticsBlob);
 
         if(!module.module)
         {
@@ -955,8 +969,7 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
             composedProgram.writeRef(),
             diagnosticsBlob.writeRef());
             
-        if(diagnosticsBlob)
-            LOG_ERROR("Slang diagnostics: {}", static_cast<char const *>(diagnosticsBlob->getBufferPointer()));
+            diagnoseSlang(diagnosticsBlob);
 
         if(SLANG_FAILED(result)) {
             LOG_ERROR("Failed to compose the program \"{}\"!", program.createInfo.src);
@@ -971,8 +984,7 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
             linkedProgram.writeRef(),
             diagnosticsBlob.writeRef());
             
-        if(diagnosticsBlob)
-            LOG_ERROR("Slang diagnostics: {}", static_cast<char const *>(diagnosticsBlob->getBufferPointer()));
+            diagnoseSlang(diagnosticsBlob);
 
         if(SLANG_FAILED(result)) {
             LOG_ERROR("Failed to link the program \"{}\"!", program.createInfo.src);
@@ -988,8 +1000,7 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
             spirvCode.writeRef(),
             diagnosticsBlob.writeRef());
                
-        if(diagnosticsBlob)
-            LOG_ERROR("Slang diagnostics: {}", static_cast<char const *>(diagnosticsBlob->getBufferPointer()));
+            diagnoseSlang(diagnosticsBlob);
 
         if(SLANG_FAILED(result)) {
             LOG_ERROR("Failed to link the program \"{}\"!", program.createInfo.src);

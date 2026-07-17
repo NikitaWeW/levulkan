@@ -858,7 +858,7 @@ int app(int argc, char **argv)
             .x = 0,
             .y = static_cast<float>(window.size.y),
             .width = static_cast<float>(window.size.x),
-            .height = -static_cast<float>(window.size.y),
+            .height = static_cast<float>(window.size.y),
             .minDepth = 0.0f,
             .maxDepth = 1.0f
         };
@@ -913,7 +913,8 @@ int app(int argc, char **argv)
         vkCmdEndRendering(cb);
     };
     auto gbuffer_shader = vk::makeShader({
-        .src = "shaders/deferred/gbuffer.glsl",
+        .backend = vk::ShaderBackend::SLANG,
+        .src = "shaders/deferred/gbuffer.slang",
         .bin = "shaders-bin/deferred/gbuffer",
         .device = device,
         .includeDirs = {"shaders"}
@@ -1140,6 +1141,19 @@ int app(int argc, char **argv)
         };
     
         CHECK_VK_RES(vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, commandBuffers[queue].data()));
+
+        for(uint i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+        {
+            auto cb = commandBuffers[queue][i];
+            auto name = fmt::format("cb #{} {}", i, string_VkQueueFlags(queue));
+            VkDebugUtilsObjectNameInfoEXT name_info{
+                .sType        = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+                .objectType   = VK_OBJECT_TYPE_COMMAND_BUFFER,
+                .objectHandle = (uint64_t) cb,
+                .pObjectName  = name.c_str(),
+            };
+            vkSetDebugUtilsObjectNameEXT(device, &name_info);
+        }
     }
 
     for(uint i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) 
@@ -1178,6 +1192,7 @@ int app(int argc, char **argv)
     while(!glfwWindowShouldClose(window.handle))
     {
         auto start = std::chrono::high_resolution_clock::now();
+        // LOG_TRACE(frameIndex);
         
         // Poll events
         glfwPollEvents();
@@ -1215,36 +1230,41 @@ int app(int argc, char **argv)
 
             if(event.key == GLFW_KEY_R && event.action == GLFW_PRESS)
             {
+                CHECK_VK_RES(vkDeviceWaitIdle(device));
                 for(auto &pass : renderGraph.getPassesRange())
                 {
+                    if(!pass.shader.valid || !pass.pipeline.valid)
+                        continue;
+
                     LOG_INFO("Recompiling \"{}\" from pass \"{}\"", pass.shader.createInfo.src, pass.name);
                     auto newShader = vk::makeShader(pass.shader.createInfo);
-                    if(newShader.valid)
+                    if(!newShader.valid)
+                        continue;
+
+                    vk::destroy(pass.shader);
+                    pass.shader = newShader;
+                    vk::destroy(pass.pipeline);
+                    switch(pass.pipeline.type)
                     {
-                        CHECK_VK_RES(vkDeviceWaitIdle(device));
-                        vk::destroy(pass.shader);
-                        vk::destroy(pass.pipeline);
-                        pass.shader = newShader;
-                        // FIXME: thats horrible
-                        switch(pass.pipeline.type)
-                        {
-                        case vk::Pipeline::Type::GRAPHICS:
-                        pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.graphics);
-                        break;
+                    case vk::Pipeline::Type::GRAPHICS:
+                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.graphics);
+                    break;
 
-                        case vk::Pipeline::Type::COMPUTE:
-                        pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.compute);
-                        break;
+                    case vk::Pipeline::Type::COMPUTE:
+                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.compute);
+                    break;
 
-                        case vk::Pipeline::Type::RAYTRACING:
-                        pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.raytracing);
-                        break;
+                    case vk::Pipeline::Type::RAYTRACING:
+                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.raytracing);
+                    break;
 
-                        default:
-                        assert(false && "unknown pipeline");
-                        }
+                    default:
+                    assert(false && "unknown pipeline");
                     }
                 }
+                // Update descriptors
+                uniformBufferRealloc = true;
+                resizedAttachments = true;
             }
         }
 
@@ -1257,7 +1277,7 @@ int app(int argc, char **argv)
         CHECK_VK_RES(vkResetFences(device, 1, &fences[frameIndex]));
         
         uniformBuffer.free(frameIndex);
-        uniformBufferRealloc = uniformBuffer.realloc();
+        uniformBufferRealloc = uniformBufferRealloc || uniformBuffer.realloc();
 
         // Acquire next image
         auto imageAcquireRes = vkAcquireNextImageKHR(device, swapchain.swapchain, UINT64_MAX, presentSemaphores[frameIndex], nullptr, &imageIndex);
