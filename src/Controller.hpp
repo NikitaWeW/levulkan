@@ -4,8 +4,7 @@
 #include "glm/gtc/quaternion.hpp"
 #include "ECS.hpp"
 
-class Controller
-{
+class Controller {
 public:
     struct Camera
     {

@@ -5,8 +5,7 @@
 
 using namespace vk;
 
-static constexpr std::string string_SpvReflectResult(SpvReflectResult res)
-{
+static constexpr std::string string_SpvReflectResult(SpvReflectResult res) {
     switch(res) {
         case SPV_REFLECT_RESULT_SUCCESS                                    : return "SPV_REFLECT_RESULT_SUCCESS";                                   
         case SPV_REFLECT_RESULT_NOT_READY                                  : return "SPV_REFLECT_RESULT_NOT_READY";                                 
@@ -35,8 +34,7 @@ static constexpr std::string string_SpvReflectResult(SpvReflectResult res)
 }
 
 #define SPV_CHK(x, name, action) { SpvReflectResult _result = x; if(_result != SPV_REFLECT_RESULT_SUCCESS) { LOG_ERROR("{}:{}: Failed to {}: {} for binary \"{}\".", __FILE__, __LINE__, #x, string_SpvReflectResult(_result), name); action; } }
-static constexpr VkDescriptorType toVulkanDescriptorType(SpvReflectDescriptorType const &type)
-{
+static constexpr VkDescriptorType toVulkanDescriptorType(SpvReflectDescriptorType const &type) {
     switch(type)
     {
         case SPV_REFLECT_DESCRIPTOR_TYPE_SAMPLER:                    return VK_DESCRIPTOR_TYPE_SAMPLER;
@@ -54,8 +52,7 @@ static constexpr VkDescriptorType toVulkanDescriptorType(SpvReflectDescriptorTyp
         default: return(VkDescriptorType) 0;
     }
 }
-static constexpr VkFormat toVulkanFormat(SpvReflectFormat const &format)
-{
+static constexpr VkFormat toVulkanFormat(SpvReflectFormat const &format) {
     switch(format)
     {
         case SPV_REFLECT_FORMAT_UNDEFINED:           return VK_FORMAT_UNDEFINED;          
@@ -99,8 +96,7 @@ static constexpr VkFormat toVulkanFormat(SpvReflectFormat const &format)
     }
 }
 
-struct Reflection 
-{
+struct Reflection  {
     std::vector<VkPipelineShaderStageCreateInfo> stages;
     std::map<uint32_t, SparseSet<VkDescriptorSetLayoutBinding>> descSets;
     std::map<DescriptorBinding, SpvReflectDescriptorBinding> descBindings;
@@ -108,8 +104,7 @@ struct Reflection
     std::unordered_map<uint32_t, VkFormat> input;
     std::unordered_map<uint32_t, VkFormat> output;
 };
-static Reflection reflect(Shader const &shader)
-{
+static Reflection reflect(Shader const &shader) {
     Reflection reflection;
     for(auto const &binDesc : shader.binDescriptors)
     {
@@ -181,8 +176,7 @@ template <> struct fmt::formatter<SpvReflectDescriptorBinding> {
 
 // WARNING: nested spaghetti code incoming (works on hopes and dreams, or not)
 // TODO: Add more error checking
-static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Shader const &shader, VmaAllocator allocator)
-{
+static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Shader const &shader, VmaAllocator allocator) {
     Pipeline::Layout layout;
     layout._reflection = new Reflection(reflect(shader));
     auto &reflection = *static_cast<Reflection *>(layout._reflection);
@@ -305,13 +299,13 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
 
     return layout;
 }
-Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const &ci)
-{
+Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const &ci) {
     auto const &dev = shader.createInfo.device;
 
     Pipeline pipeline{
         .type = Pipeline::Type::GRAPHICS,
-        .device = shader.createInfo.device
+        .createInfo = {.graphics = ci},
+        .device = shader.createInfo.device,
     };
 
     pipeline.layout = makePipelineLayout(dev, ci.layout, shader, ci.allocator);
@@ -417,12 +411,12 @@ Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const
     pipeline.valid = true;
     return pipeline;
 }
-Pipeline vk::makePipeline(Shader const &shader, ComputePipelineCreateInfo const &ci)
-{
+Pipeline vk::makePipeline(Shader const &shader, ComputePipelineCreateInfo const &ci) {
     auto const &dev = shader.createInfo.device;
 
     Pipeline pipeline{
-        .type = Pipeline::Type::GRAPHICS,
+        .type = Pipeline::Type::COMPUTE,
+        .createInfo = {.compute = ci},
         .device = shader.createInfo.device
     };
 
@@ -440,12 +434,12 @@ Pipeline vk::makePipeline(Shader const &shader, ComputePipelineCreateInfo const 
     pipeline.valid = true;
     return pipeline;
 }
-Pipeline vk::makePipeline(Shader const &shader, RaytracingPipelineCreateInfo const &ci)
-{
+Pipeline vk::makePipeline(Shader const &shader, RaytracingPipelineCreateInfo const &ci) {
     auto const &dev = shader.createInfo.device;
     
     Pipeline pipeline{
-        .type = Pipeline::Type::GRAPHICS,
+        .type = Pipeline::Type::RAYTRACING,
+        .createInfo = {.raytracing = ci},
         .device = shader.createInfo.device,
     };
 
@@ -458,8 +452,7 @@ Pipeline vk::makePipeline(Shader const &shader, RaytracingPipelineCreateInfo con
     return pipeline;
 }
 
-void vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite> const &writes)
-{
+void vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite> const &writes) {
     assert(pipeline.layout._reflection);
     auto const &reflection = *static_cast<Reflection *>(pipeline.layout._reflection);
 
@@ -489,8 +482,7 @@ void vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite>
     vkUpdateDescriptorSets(pipeline.device, descWrites.size(), descWrites.data(), 0, nullptr);
 }
 
-void vk::destroy(Pipeline &pipeline)
-{
+void vk::destroy(Pipeline &pipeline) {
     if(!pipeline.device)
         return;
     if(pipeline.layout.descPool != VK_NULL_HANDLE)

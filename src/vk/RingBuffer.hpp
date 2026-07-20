@@ -15,8 +15,7 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 namespace vk {
 
 /// @brief Vulkan ring buffer
-class RingBuffer
-{
+class RingBuffer {
 private:
     struct Allocation
     {

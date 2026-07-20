@@ -20,8 +20,7 @@ layout(location = 0) out VS_OUT {
     mat3 tbn;
 } vs_out;
 
-void main()
-{
+void main() {
     // Separated for future skinning support
     vec3 position = aPosition;
     vec3 normal = aNormal;
@@ -54,13 +53,11 @@ layout(location = 0) out vec4 oColor;
 
 const vec3 uSunDir = vec3(0.5, -1, 1);
 
-vec4 sampleTexture(uint index)
-{
+vec4 sampleTexture(uint index) {
     return texture(textures[index], fs_in.uv);
 }
 
-void main()
-{
+void main() {
     // Phong lighting
     vec3 N = normalize(fs_in.tbn * (sampleTexture(uMaterial.textures.normal).rgb * 2.0 - 1.0));
     N = normalize(fs_in.tbn[2]);

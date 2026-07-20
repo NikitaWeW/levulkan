@@ -26,8 +26,7 @@ using namespace nlohmann;
 /// of search backward through the stack of active include paths (for nested includes).
 /// Source: https://github.com/KhronosGroup/glslang StandAlone/DirStackFileIncluder.h
 /// Modified to support system includes.
-class DirStackFileIncluder
-{
+class DirStackFileIncluder {
 private:
     // If no path markers, return current working directory.
     // Otherwise, strip file name and return path leading up to it.
@@ -84,8 +83,7 @@ public:
         return "";
     }
 };
-struct ShaderStage
-{
+struct ShaderStage {
     std::string source;
     std::string name;
     std::string sourceFile;
@@ -158,8 +156,7 @@ static const std::unordered_map<std::string, VkShaderStageFlagBits> gVulkanStage
 };
 
 template<typename T = char>
-static std::vector<T> readFileBinary(std::string_view filename) 
-{
+static std::vector<T> readFileBinary(std::string_view filename)  {
     std::ifstream file(std::string{filename}, std::ios::ate | std::ios::binary);
 
     if(!file.is_open()) 
@@ -176,8 +173,7 @@ static std::vector<T> readFileBinary(std::string_view filename)
 
     return buffer;
 }
-static std::string readFileString(std::string_view filename) 
-{
+static std::string readFileString(std::string_view filename)  {
     std::ifstream file(std::string{filename});
 
     if(!file.is_open()) 
@@ -190,8 +186,7 @@ static std::string readFileString(std::string_view filename)
     buffer << file.rdbuf();
     return buffer.str();
 }
-static void writeFileBinary(std::string_view filename, char const *data, size_t size)
-{
+static void writeFileBinary(std::string_view filename, char const *data, size_t size) {
     auto dir = fs::path(filename).parent_path().string();
     if(!dir.empty())
         std::filesystem::create_directories(dir);
@@ -200,8 +195,7 @@ static void writeFileBinary(std::string_view filename, char const *data, size_t 
 
     file.write(data, size);
 }
-static void writeFileString(std::string_view filename, std::string_view str)
-{
+static void writeFileString(std::string_view filename, std::string_view str) {
     auto dir = fs::path(filename).parent_path().string();
     if(!dir.empty())
         std::filesystem::create_directories(dir);
@@ -210,8 +204,7 @@ static void writeFileString(std::string_view filename, std::string_view str)
 
     file << str;
 }
-static void collectBinaries(Shader &program, json const &metadata)
-{
+static void collectBinaries(Shader &program, json const &metadata) {
     for(auto const &entry : metadata["binaries"])
     {
         auto stage      = entry["stage"].get<std::string>();
@@ -243,8 +236,7 @@ static void collectBinaries(Shader &program, json const &metadata)
         });
     }
 }
-static void writeBinaries(Shader &program, std::vector<std::string> const &includes)
-{
+static void writeBinaries(Shader &program, std::vector<std::string> const &includes) {
     json metadata;
     metadata["src"] = program.createInfo.src;
     metadata["includes"] = includes;
@@ -270,8 +262,7 @@ static void writeBinaries(Shader &program, std::vector<std::string> const &inclu
     writeFileString((fs::path(program.createInfo.bin)/METADATA_FILENAME).string(), metadata.dump(4));
     fs::last_write_time(program.createInfo.bin, std::chrono::file_clock::now());
 }
-static bool isOutdated(Shader &program, json const &metadata)
-{
+static bool isOutdated(Shader &program, json const &metadata) {
     if(!fs::exists(program.createInfo.bin))
         return false;
     if(program.createInfo.force)
@@ -303,8 +294,7 @@ static bool isOutdated(Shader &program, json const &metadata)
 
     return outdated;
 }
-static std::vector<ShaderStage> collectSources(Shader &program)
-{
+static std::vector<ShaderStage> collectSources(Shader &program) {
     std::vector<ShaderStage> stages;
     assert(fs::exists(program.createInfo.src) && fs::is_directory(program.createInfo.src));
 
@@ -368,8 +358,7 @@ std::vector<std::string> split(std::string s, std::string const &delimiter) {
 
     return tokens;
 }
-static void printUsage()
-{
+static void printUsage() {
     std::vector<std::string> names;
     for(auto const &[name, _] : gStageNameToVulkanEnum)
         names.emplace_back(name);
@@ -469,8 +458,7 @@ static const std::unordered_map<SpirvVersion, glslang::EShTargetLanguageVersion>
 };
 
 // Thanks to https://github.com/KhronosGroup/glslang/issues/2207#issuecomment-632927839
-static TBuiltInResource InitResources()
-{
+static TBuiltInResource InitResources() {
     TBuiltInResource Resources;
 
     Resources.maxLights                                 = 32;
@@ -578,8 +566,7 @@ static TBuiltInResource InitResources()
 
     return Resources;
 }
-static std::vector<ShaderStage> splitGlslSources(Shader &program)
-{
+static std::vector<ShaderStage> splitGlslSources(Shader &program) {
     std::vector<ShaderStage> stages(1);
     uint32_t currentStage = 0; // 0 - preamble
     auto source = readFileString(program.createInfo.src);
@@ -657,8 +644,7 @@ static std::vector<ShaderStage> splitGlslSources(Shader &program)
 
     return stages;
 }
-static bool compileGlsl(Shader &program, std::vector<std::string> &outIncludes)
-{
+static bool compileGlsl(Shader &program, std::vector<std::string> &outIncludes) {
     [[maybe_unused]] static class GlslangProcess
     {
     public:
@@ -784,9 +770,22 @@ static std::unordered_map<SlangStage, VkShaderStageFlagBits> gSlangToVulkanStage
     { SLANG_STAGE_MESH,            VK_SHADER_STAGE_MESH_BIT_EXT                },    
     { SLANG_STAGE_AMPLIFICATION,   VK_SHADER_STAGE_TASK_BIT_EXT                },
 };
+static void diagnoseSlang(Slang::ComPtr<slang::IBlob> const &diagnosticsBlob) {
+    if(!diagnosticsBlob)
+        return;
 
-static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
-{
+    spdlog::level::level_enum level;
+
+    std::string_view str(static_cast<char const *>(diagnosticsBlob->getBufferPointer()));
+
+    if(str.find(" warning ") < str.find(" error "))
+        level = spdlog::level::warn;
+    else 
+        level = spdlog::level::err;
+
+    LOG(level, "Slang diagnostics: {}", str);
+}
+static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes) {
     [[maybe_unused]] static class SlangSession
     {
     public:
@@ -835,6 +834,7 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
     slang::SessionDesc sessionDesc{
         .targets = &targetDesc,
         .targetCount = 1,
+        // .defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR,
         .searchPaths = includeDirs.data(),
         .searchPathCount = static_cast<SlangInt>(includeDirs.size()),
         .preprocessorMacros = definitions.data(),
@@ -873,7 +873,7 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
         size_t pos = 0; 
         while(pos < source.source.size()) 
         {
-            auto newLine = source.source.find_first_of('\n', pos + 1);
+            auto newLine = source.source.find('\n', pos + 1);
             auto directive = source.source.find_first_not_of(" \t", pos);
             if(directive < newLine && source.source.compare(directive, std::string_view("#include").size(), "#include") == 0)
             {
@@ -919,8 +919,7 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
             .sourceIndex = i
         });
 
-        if(diagnosticsBlob)
-            LOG_ERROR("Slang diagnostics: {}", static_cast<char const *>(diagnosticsBlob->getBufferPointer()));
+        diagnoseSlang(diagnosticsBlob);
 
         if(!module.module)
         {
@@ -933,12 +932,10 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
     std::vector<slang::IComponentType *> componentTypes;
     for(auto &module : modules)
     {
-        auto entryPointCount = module.module->getDefinedEntryPointCount();
+        int32_t entryPointCount = module.module->getDefinedEntryPointCount();
 
-        for(uint i = 0; i < entryPointCount; ++i)
-        {
+        for(int32_t i = 0; i < entryPointCount; ++i)
             module.module->getDefinedEntryPoint(i, module.entryPoints.emplace_back(entryPointIndex++).entry.writeRef());
-        }
 
         componentTypes.emplace_back(module.module);
         for(auto const &entryPoint : module.entryPoints)
@@ -955,8 +952,7 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
             composedProgram.writeRef(),
             diagnosticsBlob.writeRef());
             
-        if(diagnosticsBlob)
-            LOG_ERROR("Slang diagnostics: {}", static_cast<char const *>(diagnosticsBlob->getBufferPointer()));
+            diagnoseSlang(diagnosticsBlob);
 
         if(SLANG_FAILED(result)) {
             LOG_ERROR("Failed to compose the program \"{}\"!", program.createInfo.src);
@@ -971,8 +967,7 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
             linkedProgram.writeRef(),
             diagnosticsBlob.writeRef());
             
-        if(diagnosticsBlob)
-            LOG_ERROR("Slang diagnostics: {}", static_cast<char const *>(diagnosticsBlob->getBufferPointer()));
+            diagnoseSlang(diagnosticsBlob);
 
         if(SLANG_FAILED(result)) {
             LOG_ERROR("Failed to link the program \"{}\"!", program.createInfo.src);
@@ -988,8 +983,7 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
             spirvCode.writeRef(),
             diagnosticsBlob.writeRef());
                
-        if(diagnosticsBlob)
-            LOG_ERROR("Slang diagnostics: {}", static_cast<char const *>(diagnosticsBlob->getBufferPointer()));
+            diagnoseSlang(diagnosticsBlob);
 
         if(SLANG_FAILED(result)) {
             LOG_ERROR("Failed to link the program \"{}\"!", program.createInfo.src);
@@ -1028,8 +1022,7 @@ static const std::unordered_map<ShaderBackend, std::function<bool (Shader &, std
 #endif
 };
 
-Shader vk::makeShader(ShaderCreateInfo const &ci)
-{
+Shader vk::makeShader(ShaderCreateInfo const &ci) {
     Shader program;
     program.createInfo = ci;
 
@@ -1091,7 +1084,12 @@ Shader vk::makeShader(ShaderCreateInfo const &ci)
             createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
             createInfo.codeSize = bin.spirv.size() * sizeof(bin.spirv[0]);
             createInfo.pCode = bin.spirv.data();
-            CHECK_VK_RES(vkCreateShaderModule(program.createInfo.device, &createInfo, nullptr, &bin.module));
+            auto res = vkCreateShaderModule(program.createInfo.device, &createInfo, nullptr, &bin.module);
+
+            if(res != VK_SUCCESS) {
+                LOG_ERROR("Failed to create shader module for program \"{}\"/\"{}\"", program.createInfo.src, program.createInfo.bin);
+                return program;
+            }
         }
     } else {
         LOG_WARN("Not creating shader modules for \"{}\"/\"{}\", because device is VK_NULL_HANDLE.", program.createInfo.src, program.createInfo.bin);
@@ -1101,8 +1099,7 @@ Shader vk::makeShader(ShaderCreateInfo const &ci)
     return program;
 }
 
-void vk::destroy(Shader &shader)
-{
+void vk::destroy(Shader &shader) {
     for(auto &bin : shader.binaries)
     {
         if(bin.module && shader.createInfo.device)

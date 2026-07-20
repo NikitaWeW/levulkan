@@ -36,8 +36,7 @@
 #include <vector>
 #include <string>
 
-namespace vk
-{
+namespace vk {
 
 enum class ShaderBackend {
     GLSL, SLANG
@@ -51,8 +50,7 @@ enum class SpirvVersion {
     SpirvVersion_1_5 = (1 << 16) | (5 << 8), 
     SpirvVersion_1_6 = (1 << 16) | (6 << 8), 
 };
-struct ShaderCreateInfo
-{
+struct ShaderCreateInfo {
     ShaderBackend backend = ShaderBackend::GLSL; ///< The source language.
     std::string src; ///< The path to the source. Can be empty to disable shader compilation. If src is a directory, the files inside the directory are collected as stages. The source can be split using #stage directives otherwise.
     std::string bin; ///< The path to the binary root directory. Can be empty to disable writing and collecting shader binaries.
@@ -70,8 +68,7 @@ struct ShaderCreateInfo
 };
 
 /// @brief The compiled spirv program.
-struct Shader
-{
+struct Shader {
     struct BinDescriptor
     {
         VkShaderStageFlagBits stage;

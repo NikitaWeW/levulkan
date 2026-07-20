@@ -18,8 +18,7 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 
 namespace vk {
 
-struct ResourceTraits
-{
+struct ResourceTraits {
     struct {
         VkBufferUsageFlags2 usage = 0;
         VkDeviceSize offset = 0;
@@ -46,8 +45,7 @@ struct ResourceTraits
         return access != VK_ACCESS_NONE && stages != VK_PIPELINE_STAGE_NONE && (bufferTraits.valid() || imageTraits.valid());
     }
 };
-struct RenderPass
-{
+struct RenderPass {
     struct ResourceDependency
     {
         /// The physical resource name.
@@ -81,8 +79,7 @@ struct RenderPass
     vk::Shader                      shader;
     vk::Pipeline                    pipeline;
 };
-struct Barrier
-{
+struct Barrier {
     struct Scope
     {
         VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -137,8 +134,7 @@ struct Barrier
     }
 };
 
-struct GraphvizSettings
-{
+struct GraphvizSettings {
     bool implicitDependencies = true; ///< If set to true, dashed arrows will point to implicit pass dependencies (read before next write).
     bool showHistory = true; ///< If set to true, dotted arrows will point from the last pass that wrote to the resource to the pass that reads the history.
     std::vector<std::string> graphAttributes = {"beautify=true", "nodesep=0.5", "ranksep=0.5", "rankdir=TB"};
@@ -147,8 +143,7 @@ struct GraphvizSettings
     std::vector<std::string> implicitEdgeAttributes = {"style=dotted", "constraint=false", "arrowhead=empty",  "weight=1"};
     std::vector<std::string> historyEdgeAttributes  = {"stype=dotted", "constraint=false", "arrowhead=empty",  "weight=1"};
 };
-class RenderGraph
-{
+class RenderGraph {
 public:
     struct RenderGraphCreateInfo
     {

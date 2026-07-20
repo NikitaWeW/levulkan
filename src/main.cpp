@@ -9,6 +9,7 @@
 
 #include "Logging.hpp"
 #include "IO.hpp"
+#include "Renderdoc.hpp"
 #include "Controller.hpp"   
 #include "resource/Resources.hpp"
 #include "resource/Loaders.hpp"
@@ -16,8 +17,7 @@
 static Registry sReg;
 constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
 
-struct Transform
-{
+struct Transform {
     glm::vec3 position{0};
     glm::quat orientation{1, 0, 0, 0};
     glm::vec3 scale{1};
@@ -25,15 +25,13 @@ struct Transform
         return glm::translate(glm::mat4{1.0f}, position) * glm::mat4_cast(orientation) * glm::scale(glm::mat4{1.0f}, scale);
     };
 };
-struct ModelInstance
-{
+struct ModelInstance {
     Entity eModel;
 };
 
-struct VulkanMaterial
-{
+struct VulkanMaterial {
     ::Material::Properties properties;
-    // Texture array indices
+    // Texture2D array indices
     struct Textures
     {
         uint32_t albedo;
@@ -44,8 +42,7 @@ struct VulkanMaterial
         uint32_t displacement;
     } textures;
 };
-struct VulkanModel
-{
+struct VulkanModel {
     struct Mesh 
     {
         VulkanMaterial material;
@@ -86,15 +83,13 @@ struct ResizeToSwapchain {};
 
 ////////////////////////////////////////////////////////////////
 
-static std::string printTexture(Entity e)
-{
-    if(!e.valid() || !e.has<Texture>())
+static std::string printTexture(Entity e) {
+    if(!e.valid() || !e.has<Texture2D>())
         return fmt::format("e{} -- INVALID", e.id());
-    auto const &texture = e.get<Texture>();
-    return fmt::format("e{}, \"{:<30} {}x{}, {:>3} {} mips", e.id(), texture.path + "\",", texture.bitmap.size.x, texture.bitmap.size.y,(texture.srgb ? "srgb" : "not srgb"), texture.numMipLevels);
+    auto const &texture2D = e.get<Texture2D>();
+    return fmt::format("e{}, \"{:<30} {}x{}, {:>3} {} mips", e.id(), texture2D.path + "\",", texture2D.bitmap.size.x, texture2D.bitmap.size.y,(texture2D.srgb ? "srgb" : "not srgb"), texture2D.numMipLevels);
 }
-[[maybe_unused]] static void printModelData(Entity e)
-{
+[[maybe_unused]] static void printModelData(Entity e) {
     assert(e.valid() && e.has<Model>());
     Model const &model = e.get<Model>();
     LOG_INFO("");
@@ -147,8 +142,7 @@ static std::string printTexture(Entity e)
         LOG_INFO("  IOR:           {}", mesh.material.properties.ior);
     }
 }
-static Transform lookat(glm::vec3 pos, glm::vec3 center)
-{
+static Transform lookat(glm::vec3 pos, glm::vec3 center) {
     auto dir = glm::normalize(center - pos);
     auto up = glm::abs(glm::dot(dir, {0,1,0})) > 0.999 ? glm::vec3{1,0,0} : glm::vec3{0,1,0};
     return {
@@ -156,8 +150,7 @@ static Transform lookat(glm::vec3 pos, glm::vec3 center)
         .orientation = glm::normalize(glm::quatLookAt(dir, up))
     };
 }
-static Entity makeWindow(Registry &reg, std::string_view name)
-{
+static Entity makeWindow(Registry &reg, std::string_view name) {
     auto eWindow = reg.create<Window>();
     auto &window = eWindow.get<Window>();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -169,8 +162,7 @@ static Entity makeWindow(Registry &reg, std::string_view name)
 
     return eWindow;
 }
-static VkCommandPool createCommandPool(uint32_t index, VkDevice device)
-{
+static VkCommandPool createCommandPool(uint32_t index, VkDevice device) {
     VkCommandPoolCreateInfo commandPoolCI{
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
@@ -180,8 +172,7 @@ static VkCommandPool createCommandPool(uint32_t index, VkDevice device)
     vkCreateCommandPool(device, &commandPoolCI, nullptr, &commandPool);
     return commandPool;
 }
-static VkFence createFence(VkDevice dev)
-{
+static VkFence createFence(VkDevice dev) {
     VkFence fence = nullptr;
     VkFenceCreateInfo fenceCI{
         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
@@ -189,8 +180,7 @@ static VkFence createFence(VkDevice dev)
     CHECK_VK_RES(vkCreateFence(dev, &fenceCI, nullptr, &fence));
     return fence;
 }
-static void updateUniformBufferDescriptors(vk::RingBuffer const &buffer, vk::Pipeline const &pipeline, uint32_t set = 0, uint32_t desc = 0)
-{
+static void updateUniformBufferDescriptors(vk::RingBuffer const &buffer, vk::Pipeline const &pipeline, uint32_t set = 0, uint32_t desc = 0) {
     vk::writeDescriptors(pipeline, {vk::DescriptorWrite{
         .dstSet = set,
         .dstBinding = desc,
@@ -201,8 +191,7 @@ static void updateUniformBufferDescriptors(vk::RingBuffer const &buffer, vk::Pip
         }}
     }});
 }
-static void fullscreenPass(vk::RenderPass const &pass, VkCommandBuffer cb, VkRenderingAttachmentInfo attachment, VkExtent2D extent)
-{
+static void fullscreenPass(vk::RenderPass const &pass, VkCommandBuffer cb, VkRenderingAttachmentInfo attachment, VkExtent2D extent) {
     VkRenderingInfo renderingInfo{
         .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
         .renderArea = {
@@ -230,7 +219,9 @@ static void fullscreenPass(vk::RenderPass const &pass, VkCommandBuffer cb, VkRen
     vkCmdSetScissor(cb, 0, 1, &scissor);
 
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.pipeline);
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 0, pass.pipeline.layout.descSets.size(), pass.pipeline.layout.descSets.dense().data(), 0, nullptr);
+    // Might be optimized away
+    if(!pass.pipeline.layout.descSets.empty())
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 0, pass.pipeline.layout.descSets.size(), pass.pipeline.layout.descSets.dense().data(), 0, nullptr);
     
     vkCmdDraw(cb, 3, 1, 0, 0);
 
@@ -240,8 +231,7 @@ static void fullscreenPass(vk::RenderPass const &pass, VkCommandBuffer cb, VkRen
 ////////////////////////////////////////////////////////////////
 
 
-static Entity loadModel(std::string_view path, ModelLoaderOptions options = {}, std::optional<Material> material = {})
-{
+static Entity loadModel(std::string_view path, ModelLoaderOptions options = {}, std::optional<Material> material = {}) {
     static ModelLoader loader(sReg.getReg());
     
     auto eModel = Entity{&sReg, loader.loadFromFile(path, options)};
@@ -264,8 +254,7 @@ static Entity loadModel(std::string_view path, ModelLoaderOptions options = {}, 
     return eModel;
 }
 template<typename T>
-static VkFormat getBitmapFormat(Bitmap<T> const& bmp, bool srgb)
-{
+static VkFormat getBitmapFormat(Bitmap<T> const& bmp, bool srgb) {
     if constexpr (std::is_same_v<T, uint8_t>)
     {
         switch (bmp.numComponents)
@@ -274,16 +263,6 @@ static VkFormat getBitmapFormat(Bitmap<T> const& bmp, bool srgb)
             case 2: return srgb ? VK_FORMAT_R8G8_SRGB     : VK_FORMAT_R8G8_UNORM;
             case 3: return srgb ? VK_FORMAT_R8G8B8_SRGB   : VK_FORMAT_R8G8B8_UNORM;
             case 4: return srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-        }
-    }
-    else if constexpr (std::is_same_v<T, float>)
-    {
-        switch (bmp.numComponents)
-        {
-            case 1: return VK_FORMAT_R32_SFLOAT;
-            case 2: return VK_FORMAT_R32G32_SFLOAT;
-            case 3: return VK_FORMAT_R32G32B32_SFLOAT;
-            case 4: return VK_FORMAT_R32G32B32A32_SFLOAT;
         }
     }
     else if constexpr (std::is_same_v<T, uint16_t>)
@@ -296,6 +275,36 @@ static VkFormat getBitmapFormat(Bitmap<T> const& bmp, bool srgb)
             case 4: return VK_FORMAT_R16G16B16A16_UNORM;
         }
     }
+    else if constexpr (std::is_same_v<T, uint32_t>)
+    {
+        switch (bmp.numComponents)
+        {
+            case 1: return VK_FORMAT_R32_UINT;
+            case 2: return VK_FORMAT_R32G32_UINT;
+            case 3: return VK_FORMAT_R32G32B32_UINT;
+            case 4: return VK_FORMAT_R32G32B32A32_UINT;
+        }
+    }
+    else if constexpr (std::is_same_v<T, float>)
+    {
+        switch (bmp.numComponents)
+        {
+            case 1: return VK_FORMAT_R32_SFLOAT;
+            case 2: return VK_FORMAT_R32G32_SFLOAT;
+            case 3: return VK_FORMAT_R32G32B32_SFLOAT;
+            case 4: return VK_FORMAT_R32G32B32A32_SFLOAT;
+        }
+    }
+    else if constexpr (std::is_same_v<T, double>)
+    {
+        switch (bmp.numComponents)
+        {
+            case 1: return VK_FORMAT_R64_SFLOAT;
+            case 2: return VK_FORMAT_R64G64_SFLOAT;
+            case 3: return VK_FORMAT_R64G64B64_SFLOAT;
+            case 4: return VK_FORMAT_R64G64B64A64_SFLOAT;
+        }
+    }
 
     LOG_ERROR("Unsupported Bitmap format");
     return VK_FORMAT_UNDEFINED;
@@ -303,8 +312,7 @@ static VkFormat getBitmapFormat(Bitmap<T> const& bmp, bool srgb)
 
 /// @brief Allocates resources on the gpu
 /// TODO: extend for render graph
-class ResourceAllocator
-{
+class ResourceAllocator {
 private:
     vk::AllocationCreateInfo mAllocInfo;
     VkCommandBuffer mCommandBuffer = nullptr;
@@ -337,23 +345,23 @@ public:
 
     inline uint32_t processImage(Entity eImage)
     {
-        assert(eImage.valid() && (eImage.has<Texture>()) && "Invalid model!");
+        assert(eImage.valid() && (eImage.has<Texture2D>()) && "Invalid model!");
         assert(mCommandBuffer && "ResourceAllocator uninitialized! (Make sure to not use the default constructor)");
-        if(!eImage.has<vk::Image>() && eImage.has<Texture>())
+        if(!eImage.has<vk::Image>() && eImage.has<Texture2D>())
         {
-            auto &image = eImage.get<Texture>();
+            auto &image = eImage.get<Texture2D>();
 
             if(image.bitmap.numComponents == 3)
-                LOG_WARN("Making R32G32B32 texture \"{}\". Maybe change it to 32 bits or something...", image.path);
+                LOG_WARN("Making R32G32B32 texture2D \"{}\". Maybe change it to 32 bits or something...", image.path);
 
             VkSamplerAddressMode addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
             switch(image.addressMode)
             {
-                case Texture::AddressMode::Repeat:            addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;               break;
-                case Texture::AddressMode::MirroredRepeat:    addressMode = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;      break;
-                case Texture::AddressMode::ClampToEdge:       addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;        break;
-                case Texture::AddressMode::ClampToBorder:     addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;      break;
-                case Texture::AddressMode::MirrorClampToEdge: addressMode = VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE; break;
+                case Texture2D::AddressMode::Repeat:            addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;               break;
+                case Texture2D::AddressMode::MirroredRepeat:    addressMode = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;      break;
+                case Texture2D::AddressMode::ClampToEdge:       addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;        break;
+                case Texture2D::AddressMode::ClampToBorder:     addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;      break;
+                case Texture2D::AddressMode::MirrorClampToEdge: addressMode = VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE; break;
                 default: LOG_WARN("Unknown address mode in e{}!", eImage.id()); break;
             }
             vk::ImageCreateInfo ci{
@@ -464,8 +472,7 @@ public:
 
 ////////////////////////////////////////////////////////////////
 
-static bool init()
-{
+static bool init() {
     if(!glfwInit())
     {
         LOG_ERROR("Failed to init glfw!");
@@ -486,8 +493,7 @@ static bool init()
 
     return true;
 }
-int app(int argc, char **argv)
-{
+int app(int argc, char **argv) {
     if(!init())
     {
         LOG_ERROR("Failed to init!");
@@ -579,8 +585,9 @@ int app(int argc, char **argv)
     { // Scene
         auto suzanne = loadModel("assets/suzanne.glb");
         auto cube = loadModel("assets/cube.glb");
+        auto sphere = loadModel("assets/sphere.glb");
         auto cubes = loadModel("assets/deccer_cubes/SM_Deccer_Cubes_Textured_Complex.gltf");
-        std::vector<Entity> props{suzanne, cube, suzanne};
+        std::vector<Entity> props{suzanne, cube, cube, sphere, suzanne};
         uint numProps = 20;
 
         for(uint i = 0; i < numProps; ++i)
@@ -598,7 +605,7 @@ int app(int argc, char **argv)
     ResourceAllocator alloc(ALLOCATION_INFO, commandPool, graphicsQueue);
 
     alloc.begin();
-    for(auto e : sReg.view<Texture>())
+    for(auto e : sReg.view<Texture2D>())
         alloc.processImage(e);
     for(auto e : sReg.view<Model>())
         alloc.processModel(e);
@@ -739,7 +746,8 @@ int app(int argc, char **argv)
     ///////////////////////////////////////////////////
 
     bool uniformBufferRealloc = false;
-    bool resizedAttachments = true;
+    bool resizedAttachments = false;
+    bool updateDescriptors = true;
     uint frameIndex = 0;
     uint imageIndex = 0;
     float deltatime = 1e-6;
@@ -789,8 +797,15 @@ int app(int argc, char **argv)
     ///////////////////////////////////////////////////
 
     auto gbuffer_pass = [&](vk::RenderPass const &pass, VkCommandBuffer cb) {
-        if(uniformBufferRealloc)
+        if(uniformBufferRealloc || updateDescriptors)
             updateUniformBufferDescriptors(uniformBuffer, pass.pipeline);
+        if(updateDescriptors) {
+            vk::writeDescriptors(pass.pipeline, {vk::DescriptorWrite{
+                .dstSet = 1,
+                .dstBinding = 0,
+                .imageInfo = imageInfos,
+            }});
+        }
         
         // Update matrix data
         UniformBuffer uniformBufferData;
@@ -812,7 +827,7 @@ int app(int argc, char **argv)
                 .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                 .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                .clearValue{.color{{ 0.0f, 0.0f, 0.2f, 1.0f }}}
+                .clearValue{.color{{ 0.0f, 0.0f, 0.0f, 1.0f }}}
             },
             VkRenderingAttachmentInfo{
                 .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -820,7 +835,7 @@ int app(int argc, char **argv)
                 .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                 .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                .clearValue{.color{{ 0.0f, 0.0f, 0.2f, 1.0f }}}
+                .clearValue{.color{{ 0.0f, 0.0f, 0.0f, 1.0f }}}
             },
             VkRenderingAttachmentInfo{
                 .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -828,7 +843,7 @@ int app(int argc, char **argv)
                 .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                 .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                .clearValue{.color{{ 0.0f, 0.0f, 0.2f, 1.0f }}}
+                .clearValue{.color{{ 0.0f, 0.0f, 0.0f, 1.0f }}}
             },
         };
         VkRenderingAttachmentInfo depthAttachmentInfo{
@@ -856,9 +871,9 @@ int app(int argc, char **argv)
 
         VkViewport vp{
             .x = 0,
-            .y = static_cast<float>(window.size.y),
+            .y = 0,
             .width = static_cast<float>(window.size.x),
-            .height = -static_cast<float>(window.size.y),
+            .height = static_cast<float>(window.size.y),
             .minDepth = 0.0f,
             .maxDepth = 1.0f
         };
@@ -868,7 +883,9 @@ int app(int argc, char **argv)
 
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.pipeline);
         // Cannot bind all of them because set 0 has dynamic offset
-        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 1, 1, &pass.pipeline.layout.descSets.get(1), 0, nullptr);
+        // Might be optimized away
+        if(pass.pipeline.layout.descSets.contains(1))
+            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 1, 1, &pass.pipeline.layout.descSets.get(1), 0, nullptr);
 
         for(auto eInstance : sReg.view<ModelInstance>())
         {
@@ -896,7 +913,8 @@ int app(int argc, char **argv)
                 uniformBufferData.uMaterial = mesh.material;
 
                 uint32_t offset = uniformBuffer.request(sizeof(UniformBuffer), frameIndex, properties.limits.minUniformBufferOffsetAlignment);
-                vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 0, 1, &pass.pipeline.layout.descSets.get(0), 1, &offset);
+                if(pass.pipeline.layout.descSets.contains(0))
+                    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 0, 1, &pass.pipeline.layout.descSets.get(0), 1, &offset);
                 std::memcpy(static_cast<char *>(uniformBuffer.getBuffer().mapped) + offset, &uniformBufferData, sizeof(UniformBuffer));
 
                 VkDeviceSize vOffset = 0;
@@ -913,7 +931,8 @@ int app(int argc, char **argv)
         vkCmdEndRendering(cb);
     };
     auto gbuffer_shader = vk::makeShader({
-        .src = "shaders/deferred/gbuffer.glsl",
+        .backend = vk::ShaderBackend::SLANG,
+        .src = "shaders/deferred/gbuffer.slang",
         .bin = "shaders-bin/deferred/gbuffer",
         .device = device,
         .includeDirs = {"shaders"}
@@ -971,19 +990,10 @@ int app(int argc, char **argv)
         .pipeline = gbuffer_pipeline
     });
 
-    vk::writeDescriptors(gbuffer_pipeline, {vk::DescriptorWrite{
-        .dstSet = 1,
-        .dstBinding = 0,
-        .imageInfo = imageInfos,
-    }});
-    updateUniformBufferDescriptors(uniformBuffer, gbuffer_pipeline);
-
-    // Uniform buffer written in the pass logic
-
     ///////////////////////////////////////////////////
 
     auto lighting_pass = [&](vk::RenderPass const &pass, VkCommandBuffer cb) {
-        if(resizedAttachments) {
+        if(resizedAttachments || updateDescriptors) {
             vk::writeDescriptors(pass.pipeline, {
                 vk::DescriptorWrite{
                     .dstSet = 0,
@@ -1028,7 +1038,7 @@ int app(int argc, char **argv)
             .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
             .imageView = renderGraph.findResource("main_color").get<vk::Image>().view,
             .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
             .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
             .clearValue{.color{{ 0.2f, 0.0f, 0.0f, 1.0f }}}
         };
@@ -1140,6 +1150,19 @@ int app(int argc, char **argv)
         };
     
         CHECK_VK_RES(vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, commandBuffers[queue].data()));
+
+        for(uint i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+        {
+            auto cb = commandBuffers[queue][i];
+            auto name = fmt::format("cb #{} {}", i, string_VkQueueFlags(queue));
+            VkDebugUtilsObjectNameInfoEXT name_info{
+                .sType        = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+                .objectType   = VK_OBJECT_TYPE_COMMAND_BUFFER,
+                .objectHandle = (uint64_t) cb,
+                .pObjectName  = name.c_str(),
+            };
+            vkSetDebugUtilsObjectNameEXT(device, &name_info);
+        }
     }
 
     for(uint i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) 
@@ -1174,10 +1197,13 @@ int app(int argc, char **argv)
     assert(initRes.queueFamilies.presentQueue.has_value());
     vkGetDeviceQueue(device, initRes.queueFamilies.presentQueue.value(), 0, &presentQueue);
 
+    LOG_INFO("Starting rendering.");
+
     bool shouldResize = false;
     while(!glfwWindowShouldClose(window.handle))
     {
         auto start = std::chrono::high_resolution_clock::now();
+        // LOG_TRACE(frameIndex);
         
         // Poll events
         glfwPollEvents();
@@ -1215,36 +1241,39 @@ int app(int argc, char **argv)
 
             if(event.key == GLFW_KEY_R && event.action == GLFW_PRESS)
             {
+                CHECK_VK_RES(vkDeviceWaitIdle(device));
                 for(auto &pass : renderGraph.getPassesRange())
                 {
-                    LOG_INFO("Recompiling \"{}\" from pass \"{}\"", pass.shader.createInfo.src, pass.name);
+                    if(!pass.shader.valid || !pass.pipeline.valid)
+                        continue;
+
                     auto newShader = vk::makeShader(pass.shader.createInfo);
-                    if(newShader.valid)
+                    if(!newShader.valid)
+                        continue;
+
+                    vk::destroy(pass.shader);
+                    pass.shader = newShader;
+                    vk::destroy(pass.pipeline);
+                    switch(pass.pipeline.type)
                     {
-                        CHECK_VK_RES(vkDeviceWaitIdle(device));
-                        vk::destroy(pass.shader);
-                        vk::destroy(pass.pipeline);
-                        pass.shader = newShader;
-                        // FIXME: thats horrible
-                        switch(pass.pipeline.type)
-                        {
-                        case vk::Pipeline::Type::GRAPHICS:
-                        pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.graphics);
-                        break;
+                    case vk::Pipeline::Type::GRAPHICS:
+                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.graphics);
+                    break;
 
-                        case vk::Pipeline::Type::COMPUTE:
-                        pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.compute);
-                        break;
+                    case vk::Pipeline::Type::COMPUTE:
+                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.compute);
+                    break;
 
-                        case vk::Pipeline::Type::RAYTRACING:
-                        pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.raytracing);
-                        break;
+                    case vk::Pipeline::Type::RAYTRACING:
+                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.raytracing);
+                    break;
 
-                        default:
-                        assert(false && "unknown pipeline");
-                        }
+                    default:
+                    assert(false && "unknown pipeline");
                     }
                 }
+
+                updateDescriptors = true;
             }
         }
 
@@ -1257,7 +1286,7 @@ int app(int argc, char **argv)
         CHECK_VK_RES(vkResetFences(device, 1, &fences[frameIndex]));
         
         uniformBuffer.free(frameIndex);
-        uniformBufferRealloc = uniformBuffer.realloc();
+        uniformBufferRealloc = uniformBufferRealloc || uniformBuffer.realloc();
 
         // Acquire next image
         auto imageAcquireRes = vkAcquireNextImageKHR(device, swapchain.swapchain, UINT64_MAX, presentSemaphores[frameIndex], nullptr, &imageIndex);
@@ -1266,7 +1295,7 @@ int app(int argc, char **argv)
             LOG_TRACE("VK_ERROR_OUT_OF_DATE_KHR");
             shouldResize = true;
             continue;
-        } else if(imageAcquireRes != VK_SUBOPTIMAL_KHR) {
+        } else if(imageAcquireRes == VK_SUBOPTIMAL_KHR) {
             // Ignore
             // FIXME: Infinite VK_SUBOPTIMAL_KHR (on wayland)
             // LOG_TRACE("VK_SUBOPTIMAL_KHR");
@@ -1390,9 +1419,11 @@ int app(int argc, char **argv)
             .pImageIndices = &imageIndex
         };
         CHECK_VK_RES(vkQueuePresentKHR(presentQueue, &presentInfo));
+
         deltatime = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - start).count() * 1e-9f;
         uniformBufferRealloc = false;
         resizedAttachments = false;
+        updateDescriptors = false;
         // LOG_INFO("dt {:.2f}ms fps {:.2f}", deltatime * 1e3, 1 / deltatime);
     }
 
@@ -1437,8 +1468,7 @@ int app(int argc, char **argv)
     LOG_INFO("Exiting");
     return 0;
 }
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
     initLogger();
 
     CPPTRACE_TRY {

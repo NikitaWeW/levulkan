@@ -20,8 +20,7 @@ template<typename... T>
 using exclude = ecs::exclude<T...>;
 
 /// @brief A thin layer above the ecs::registry with more oop syntax.
-class Registry
-{
+class Registry {
 private:
     mutable std::shared_mutex mMutex;
     ecs::registry mReg;
@@ -86,8 +85,7 @@ public:
 
 /// @brief A lightweight helper class to group the entity and the registry it belongs to with oop syntax.
 /// WARNING: Invalidates if the registry is moved or if the entity invalidates obviously.
-class Entity
-{
+class Entity {
 private:
     Registry *mReg = nullptr;
     ecs::entity mEntity = 0;
@@ -143,8 +141,7 @@ public:
 
 /// @brief Entity handle that requires specified components
 template<typename Op = std::logical_and<bool>, typename... Components>
-class RestrictedEntity : public Entity
-{
+class RestrictedEntity : public Entity {
 private:
     class OpWrapper {
     private:
@@ -180,37 +177,30 @@ public:
 
 inline Registry::Registry(Registry const &o) { *this = o; }
 inline Registry::Registry(Registry &&o) { *this = std::move(o); }
-inline Registry &Registry::operator=(Registry const &o)
-{
+inline Registry &Registry::operator=(Registry const &o) {
     mReg = o.mReg;
     return *this;
 }
-inline Registry &Registry::operator=(Registry &&o)
-{
+inline Registry &Registry::operator=(Registry &&o) {
     mReg = std::move(o.mReg);
     return *this;
 }
 template <typename... Components_t> 
-inline Entity Registry::create()
-{
+inline Entity Registry::create() {
     return Entity{ this, getReg().create<Components_t...>() };
 }
 template <typename... Components_t> 
-inline Entity Registry::create(Components_t&&... components)
-{
+inline Entity Registry::create(Components_t&&... components) {
     return Entity{ this, getReg().create(std::forward<Components_t>(components)...) };
 }
-inline void Registry::destroy(Entity const &entity)
-{
+inline void Registry::destroy(Entity const &entity) {
     getReg().destroy(entity.id());
 }
-inline std::size_t Registry::size() const
-{
+inline std::size_t Registry::size() const {
     return getReg().size();
 }
 template<typename... Include, typename... Exclude>
-inline std::vector<Entity> const Registry::view(exclude<Exclude...> toExclude) const
-{
+inline std::vector<Entity> const Registry::view(exclude<Exclude...> toExclude) const {
     std::vector<Entity> res;
     for(auto const &e : getReg().view<Include...>(toExclude))
         res.emplace_back(const_cast<Registry *>(this), e); // Should be fine because the entity is const
@@ -218,8 +208,7 @@ inline std::vector<Entity> const Registry::view(exclude<Exclude...> toExclude) c
     return res;
 }
 template<typename... Include, typename... Exclude>
-inline std::vector<Entity> Registry::view(exclude<Exclude...> toExclude)
-{
+inline std::vector<Entity> Registry::view(exclude<Exclude...> toExclude) {
     std::vector<Entity> res;
     for(auto const &e : getReg().view<Include...>(toExclude))
         res.emplace_back(this, e);
@@ -227,8 +216,7 @@ inline std::vector<Entity> Registry::view(exclude<Exclude...> toExclude)
     return res;
 }
 template<typename... Include, typename... Exclude>
-inline std::vector<Entity> const Registry::viewAny(exclude<Exclude...> toExclude) const
-{
+inline std::vector<Entity> const Registry::viewAny(exclude<Exclude...> toExclude) const {
     std::vector<Entity> res;
     for(auto const &e : getReg().viewAny<Include...>(toExclude))
         res.emplace_back(const_cast<Registry *>(this), e);
@@ -236,28 +224,24 @@ inline std::vector<Entity> const Registry::viewAny(exclude<Exclude...> toExclude
     return res;
 }
 template<typename... Include, typename... Exclude>
-inline std::vector<Entity> Registry::viewAny(exclude<Exclude...> toExclude)
-{
+inline std::vector<Entity> Registry::viewAny(exclude<Exclude...> toExclude) {
     std::vector<Entity> res;
     for(auto const &e : getReg().viewAny<Include...>(toExclude))
         res.emplace_back(const_cast<Registry *>(this), e);
 
     return res;
 }
-inline void Registry::merge(Registry const &other)
-{
+inline void Registry::merge(Registry const &other) {
     for(auto e : other.view())
         copy(e);
 }
-inline Registry Registry::merged(Registry const &other) const
-{
+inline Registry Registry::merged(Registry const &other) const {
     Registry reg;
     reg.merge(*this);
     reg.merge(other);
     return reg;
 }
-inline Entity Registry::copy(Entity const &other)
-{
+inline Entity Registry::copy(Entity const &other) {
     return Entity(this, getReg().copy(other.id(), other.reg().getReg()));
 }
 
@@ -275,8 +259,7 @@ namespace std {
 }
 
 template <typename T>
-class SparseSet : public ecs::sparse_set<T>
-{
+class SparseSet : public ecs::sparse_set<T> {
 public:
     inline SparseSet(std::size_t capacity = 10, std::uint32_t pageSize = 10) : ecs::sparse_set<T>(capacity, pageSize) {}
 

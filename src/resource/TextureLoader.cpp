@@ -3,14 +3,12 @@
 #include "libraries/stb_image.h"
 #include "glm/gtc/integer.hpp"
 
-TextureLoader::TextureLoader(ecs::registry &reg)
-{ 
+TextureLoader::TextureLoader(ecs::registry &reg) { 
     mReg = &reg; 
 }
-ecs::entity TextureLoader::loadFromFile(std::string_view path, TextureLoaderOptions options)
-{
-    for(auto e_texture : mReg->view<Texture>())
-        if(mReg->get<Texture>(e_texture).path == path)
+ecs::entity TextureLoader::loadFromFile(std::string_view path, TextureLoaderOptions options) {
+    for(auto e_texture : mReg->view<Texture2D>())
+        if(mReg->get<Texture2D>(e_texture).path == path)
             return e_texture;
 
     int width = 0, height = 0, numChannels = 0;
@@ -37,8 +35,7 @@ ecs::entity TextureLoader::loadFromFile(std::string_view path, TextureLoaderOpti
 
     return mReg->create(std::move(texture));
 }
-ecs::entity TextureLoader::loadFromMemory(void const *data, size_t size, TextureLoaderOptions options)
-{
+ecs::entity TextureLoader::loadFromMemory(void const *data, size_t size, TextureLoaderOptions options) {
     int width = 0, height = 0, numChannels = 0;
     stbi_set_flip_vertically_on_load(options.flip);
     unsigned char *buff = stbi_load_from_memory(static_cast<unsigned char const *>(data), size, &width, &height, &numChannels, options.desiredChannels);
