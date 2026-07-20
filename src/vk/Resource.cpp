@@ -4,8 +4,7 @@
 #include "libraries/vk_format_utils.h"
 using namespace vk;
 
-static VmaAllocationCreateInfo makeAllocInfo(AllocationCreateInfo const &ci)
-{
+static VmaAllocationCreateInfo makeAllocInfo(AllocationCreateInfo const &ci) {
     return {
         .flags = ci.allocFlags,
         .usage = VMA_MEMORY_USAGE_AUTO,
@@ -14,8 +13,7 @@ static VmaAllocationCreateInfo makeAllocInfo(AllocationCreateInfo const &ci)
         .pool = ci.pool
     };
 }
-static void writeImage(Image &image, ImageCreateInfo const &ci)
-{
+static void writeImage(Image &image, ImageCreateInfo const &ci) {
     image.srcBuffer = vk::makeBuffer(BufferCreateInfo{
         .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         .allocInfo = {
@@ -121,8 +119,7 @@ static void writeImage(Image &image, ImageCreateInfo const &ci)
         );
     }
 }
-Image vk::makeImage(ImageCreateInfo const &ci)
-{
+Image vk::makeImage(ImageCreateInfo const &ci) {
     if(ci.allocInfo.allocator == nullptr)
     {
         LOG_ERROR("ImageCreateInfo::allocator is null!");
@@ -209,8 +206,7 @@ Image vk::makeImage(ImageCreateInfo const &ci)
 
     return image;
 }
-Buffer vk::makeBuffer(BufferCreateInfo const &ci)
-{
+Buffer vk::makeBuffer(BufferCreateInfo const &ci) {
     if(ci.allocInfo.allocator == nullptr)
     {
         LOG_ERROR("BufferCreateInfo::allocInfo::allocator is null!");
@@ -267,21 +263,18 @@ Buffer vk::makeBuffer(BufferCreateInfo const &ci)
     return buffer;
 }
 
-bool vk::Image::valid() const
-{
+bool vk::Image::valid() const {
     bool sampled = createInfo.usage & VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER || createInfo.usage & VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     if(sampled && !sampler)
         return false;
 
     return image != VK_NULL_HANDLE && allocation != VK_NULL_HANDLE;
 }
-bool vk::Buffer::valid() const
-{
+bool vk::Buffer::valid() const {
     return buffer != VK_NULL_HANDLE && allocation != VK_NULL_HANDLE;
 }
 
-void vk::destroy(Image &image)
-{
+void vk::destroy(Image &image) {
     if(!image.owns)
         return;
     destroy(image.srcBuffer);
@@ -297,8 +290,7 @@ void vk::destroy(Image &image)
     image.allocation = VK_NULL_HANDLE;
     image.view = VK_NULL_HANDLE;
 }
-void vk::destroy(Buffer &buffer)
-{
+void vk::destroy(Buffer &buffer) {
     if(!buffer.owns)
         return;
     if(!buffer.valid())

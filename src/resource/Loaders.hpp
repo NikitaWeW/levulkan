@@ -2,20 +2,17 @@
 #include "ECS.hpp"
 #include "Resources.hpp"
 
-struct TextureLoaderOptions
-{
+struct TextureLoaderOptions {
     bool flip = true; /// Flip the image vertically, so the first pixel in the output array is the bottom left.
     uint8_t desiredChannels = 4; // if non-zero, # of image components requested in result
 };
-struct ModelLoaderOptions
-{
+struct ModelLoaderOptions {
     bool flipWindingOrder = false; /// Flip the winding model of the triangles.
     bool flipUVs = false; /// Flip the texture coordinates vertically.
     TextureLoaderOptions textureOptions; /// Options for texture loading.
 };
 
-class ModelLoader
-{
+class ModelLoader {
 private:
     struct ModelLoaderImpl *mImpl = nullptr;
 public:
@@ -47,8 +44,7 @@ public:
     Material getDefaultMaterial() const;
 };
 
-class TextureLoader
-{
+class TextureLoader {
 private:
     ecs::registry *mReg;
 public:

@@ -4,8 +4,7 @@
 #include "vk/Resource.hpp"
 using namespace vk;
 
-static VkExtent2D chooseExtent(VkSurfaceCapabilitiesKHR capabilities, VkExtent2D size)
-{
+static VkExtent2D chooseExtent(VkSurfaceCapabilitiesKHR capabilities, VkExtent2D size) {
     if(capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
         return capabilities.currentExtent;
     } else {
@@ -17,8 +16,7 @@ static VkExtent2D chooseExtent(VkSurfaceCapabilitiesKHR capabilities, VkExtent2D
         return actualExtent;
     }
 }
-static VkSurfaceFormatKHR chooseSwapSurfaceFormat(SwapchainCreateInfo const ci)
-{
+static VkSurfaceFormatKHR chooseSwapSurfaceFormat(SwapchainCreateInfo const ci) {
     uint32_t formatCount;
     vkGetPhysicalDeviceSurfaceFormatsKHR(ci.alloc.physicalDevice, ci.alloc.surface, &formatCount, nullptr);
     std::vector<VkSurfaceFormatKHR> formats(formatCount);
@@ -35,8 +33,7 @@ static VkSurfaceFormatKHR chooseSwapSurfaceFormat(SwapchainCreateInfo const ci)
     LOG_ERROR("Failed to find swap surface format!");
     return formats.size() > 0 ? formats[0] : VkSurfaceFormatKHR{};
 }
-static VkPresentModeKHR chooseSwapPresentMode(SwapchainCreateInfo const ci)
-{
+static VkPresentModeKHR chooseSwapPresentMode(SwapchainCreateInfo const ci) {
     uint32_t presentModeCount;
     vkGetPhysicalDeviceSurfacePresentModesKHR(ci.alloc.physicalDevice, ci.alloc.surface, &presentModeCount, nullptr);
     std::vector<VkPresentModeKHR> presentModes(presentModeCount);
@@ -49,8 +46,7 @@ static VkPresentModeKHR chooseSwapPresentMode(SwapchainCreateInfo const ci)
 
     return VK_PRESENT_MODE_FIFO_KHR;
 }
-static void getImages(Swapchain &swapchain, Registry &reg)
-{
+static void getImages(Swapchain &swapchain, Registry &reg) {
     // FIXME: what the hell is this
     for(auto &view : swapchain.images)
     {
@@ -127,8 +123,7 @@ static void getImages(Swapchain &swapchain, Registry &reg)
     }
 }
 
-Swapchain vk::makeSwapchain(SwapchainCreateInfo const &ci)
-{
+Swapchain vk::makeSwapchain(SwapchainCreateInfo const &ci) {
     if(!ci.alloc.surface)
     {
         LOG_ERROR("No surface provided for swapchain creation!");
@@ -166,8 +161,7 @@ Swapchain vk::makeSwapchain(SwapchainCreateInfo const &ci)
 
     return swapchain;
 }
-void vk::resizeSwapchain(Swapchain &swapchain, VkExtent2D size)
-{
+void vk::resizeSwapchain(Swapchain &swapchain, VkExtent2D size) {
     swapchain.createInfo.oldSwapchain = swapchain.swapchain;
     swapchain.createInfo.imageExtent = size;
 
@@ -178,8 +172,7 @@ void vk::resizeSwapchain(Swapchain &swapchain, VkExtent2D size)
 }
 
 
-void vk::destroy(Swapchain &swapchain)
-{
+void vk::destroy(Swapchain &swapchain) {
     for(auto &image : swapchain.images)
     {
         vkDestroyImageView(swapchain.alloc.device, image.get<vk::Image>().view, nullptr);

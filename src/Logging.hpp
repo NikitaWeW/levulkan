@@ -19,8 +19,7 @@ inline std::shared_ptr<spdlog::logger> sLogger;
 
 #define LOG_VAR(x) LOG_TRACE("{} = {}", #x, fmt::streamed(x))
 
-inline void initLogger()
-{
+inline void initLogger() {
     #if LOG_FILENAME
     spdlog::set_pattern("%@ %^%v%$");
     #else

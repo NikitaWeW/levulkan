@@ -9,8 +9,7 @@ std::string _sChkLastFileLine;
 
 #define nullptr nullptr
 
-static bool createInstance(InitInfo const &info, InitResult &result)
-{
+static bool createInstance(InitInfo const &info, InitResult &result) {
     VkApplicationInfo appInfo{
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .pApplicationName = info.appName.c_str(),
@@ -92,13 +91,11 @@ static bool createInstance(InitInfo const &info, InitResult &result)
 
 template<typename C, typename P>
 requires requires (P p) { { p() } -> std::convertible_to<bool>; }
-static bool containsIf(C const &cont, P const &pred)
-{
+static bool containsIf(C const &cont, P const &pred) {
     return std::find_if(cont.begin(), cont.end(), pred) != cont.end();
 }
 template<typename E, typename C>
-static bool contains(C const &cont, E const &elem)
-{
+static bool contains(C const &cont, E const &elem) {
     return std::find(cont.begin(), cont.end(), elem) != cont.end();
 }
 
@@ -163,8 +160,7 @@ static bool checkDeviceExtensionSupport(VkPhysicalDevice device, std::vector<cha
 }
 
 // A bit janky but works
-static void addToFamilies(QueueFamilies &indices, uint32_t i)
-{
+static void addToFamilies(QueueFamilies &indices, uint32_t i) {
     static float priorities = 1.0f;
     indices.deviceCreateInfo[i] = VkDeviceQueueCreateInfo{
         .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
@@ -175,12 +171,10 @@ static void addToFamilies(QueueFamilies &indices, uint32_t i)
     indices.uniqueFamilies.insert(i);
     ++indices.count;
 }
-static bool complete(QueueFamilies const &families, std::vector<VkQueueFlagBits> const &queues, bool offscreen)
-{
+static bool complete(QueueFamilies const &families, std::vector<VkQueueFlagBits> const &queues, bool offscreen) {
     return (offscreen || families.presentQueue) && queues.size() == (offscreen ? families.count : families.count - 1);
 }
-static QueueFamilies findQueueFamilies(VkPhysicalDevice const &device, VkSurfaceKHR surface, std::vector<VkQueueFlagBits> const &queues)
-{
+static QueueFamilies findQueueFamilies(VkPhysicalDevice const &device, VkSurfaceKHR surface, std::vector<VkQueueFlagBits> const &queues) {
     QueueFamilies indices;
     bool offscreen = !surface;
     
@@ -219,8 +213,7 @@ static QueueFamilies findQueueFamilies(VkPhysicalDevice const &device, VkSurface
     return indices;
 }
 
-VkQueue QueueFamilies::getQueue(VkQueueFlagBits type, uint32_t queueIndex) const
-{
+VkQueue QueueFamilies::getQueue(VkQueueFlagBits type, uint32_t queueIndex) const {
     if(!indices.contains(type)) 
         return VK_NULL_HANDLE;
 
@@ -235,8 +228,7 @@ VkQueue QueueFamilies::getQueue(VkQueueFlagBits type, uint32_t queueIndex) const
 // You cant get this from an egg!
 // A sensation of your screen! A show that makes you scream!
 // Say it with him folks!
-static InitInfo::DeviceFeatures getFeaturesSupport(VkPhysicalDevice dev)
-{
+static InitInfo::DeviceFeatures getFeaturesSupport(VkPhysicalDevice dev) {
     InitInfo::DeviceFeatures features;
 
     features.vulkan14 = {
@@ -269,8 +261,7 @@ static InitInfo::DeviceFeatures getFeaturesSupport(VkPhysicalDevice dev)
 /// IMPORTANT: The structure must not contain other fields or the offset must be set accordingly.
 /// @param start The offset to start the comparison in bytes
 template<typename T, typename B = VkBool32>
-static bool checkFeaturesSupport(T const &required, T const &supported, size_t start = 0)
-{
+static bool checkFeaturesSupport(T const &required, T const &supported, size_t start = 0) {
     B const *pReq = reinterpret_cast<B const *>(&required);
     B const *pSup = reinterpret_cast<B const *>(&supported);
 
@@ -284,16 +275,14 @@ static bool checkFeaturesSupport(T const &required, T const &supported, size_t s
 
     return true;
 }
-static bool checkFeaturesSupport(InitInfo::DeviceFeatures const &required, InitInfo::DeviceFeatures const &supported)
-{
+static bool checkFeaturesSupport(InitInfo::DeviceFeatures const &required, InitInfo::DeviceFeatures const &supported) {
     return checkFeaturesSupport(required.features, supported.features, 0) &&
            checkFeaturesSupport(required.vulkan11, supported.vulkan11, sizeof(VkStructureType)+sizeof(void*)) && // skip sType and pNext
            checkFeaturesSupport(required.vulkan12, supported.vulkan12, sizeof(VkStructureType)+sizeof(void*)) &&
            checkFeaturesSupport(required.vulkan13, supported.vulkan13, sizeof(VkStructureType)+sizeof(void*)) &&
            checkFeaturesSupport(required.vulkan14, supported.vulkan14, sizeof(VkStructureType)+sizeof(void*));
 }
-static bool isDeviceSuitable(VkPhysicalDevice dev, VkSurfaceKHR surface, InitInfo const &info)
-{
+static bool isDeviceSuitable(VkPhysicalDevice dev, VkSurfaceKHR surface, InitInfo const &info) {
     bool presentSupport = false;
     if(!info.offscreen)
     {
@@ -339,8 +328,7 @@ static bool isDeviceSuitable(VkPhysicalDevice dev, VkSurfaceKHR surface, InitInf
 
     return suitable;
 }
-static bool pickPhysicalDevice(InitInfo const &info, InitResult &result)
-{
+static bool pickPhysicalDevice(InitInfo const &info, InitResult &result) {
     uint32_t deviceCount = 0;
     vkEnumeratePhysicalDevices(result.instance, &deviceCount, nullptr);
     std::vector<VkPhysicalDevice> devices(deviceCount);
@@ -373,8 +361,7 @@ static bool pickPhysicalDevice(InitInfo const &info, InitResult &result)
 }
 
 
-static VkDevice createDevice(VkPhysicalDevice const &physicalDevice, QueueFamilies const &families, std::vector<char const *> extensions)
-{
+static VkDevice createDevice(VkPhysicalDevice const &physicalDevice, QueueFamilies const &families, std::vector<char const *> extensions) {
     VkPhysicalDeviceVulkan12Features enabledVk11Features{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
         .pNext = nullptr
@@ -412,8 +399,7 @@ static VkDevice createDevice(VkPhysicalDevice const &physicalDevice, QueueFamili
     return device;
 }
 
-static void createAllocator(InitInfo const &info, InitResult &result)
-{
+static void createAllocator(InitInfo const &info, InitResult &result) {
     VmaAllocatorCreateInfo allocatorCI{
         .flags = info.allocatorFlags, 
         .physicalDevice = result.physicalDevice,
@@ -427,8 +413,7 @@ static void createAllocator(InitInfo const &info, InitResult &result)
     CHECK_VK_RES(vmaCreateAllocator(&allocatorCI, &result.vma));
 }
 
-InitResult vk::init(InitInfo info)
-{
+InitResult vk::init(InitInfo info) {
     InitResult result;
 
     if(!createInstance(info, result))

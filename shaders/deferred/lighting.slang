@@ -10,8 +10,7 @@ T reinhard<T>(T x) where T : IArithmetic {
 }
 
 [shader("fragment")]
-float4 fsMain(VsOut in)
-{
+float4 fsMain(VsOut in) {
     // Temporary phong lighting
     const float3 sunDir = float3(0.5, -1, 1);
     float3 N = uNormal.Sample(in.uv).rgb;
@@ -22,7 +21,7 @@ float4 fsMain(VsOut in)
     float3 specular = float3(pow(max(dot(R, V), 0.0), 16.0) * 0.75) * 0;
     float3 albedo = uAlbedo.Sample(in.uv).rgb;
     float4 oColor = float4(diffuse * albedo.rgb + specular, 1.0);
-    oColor.rgb = uAlbedo.Sample(in.uv).rgb;
+    // oColor.rgb = uNormal.Sample(in.uv).rgb;
 
     // Tone mapping
     oColor.rgb = reinhard(oColor.rgb);

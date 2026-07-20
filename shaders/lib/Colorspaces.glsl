@@ -253,8 +253,7 @@ const rgb_space Pixel = rgb_space(primariesPixel, whitePixel, gam22Pc);
  */
 
 // Converts RGB colors to a linear light scale
-vec4 toLinear(vec4 color, const transfer trc)
-{
+vec4 toLinear(vec4 color, const transfer trc) {
 	if (trc.tvRange) {
 		color = color*85.0/73.0 - 16.0/219.0;
 	}
@@ -272,8 +271,7 @@ vec4 toLinear(vec4 color, const transfer trc)
 }
 
 // Gamma-corrects RGB colors to be sent to a display
-vec4 toGamma(vec4 color, const transfer trc)
-{
+vec4 toGamma(vec4 color, const transfer trc) {
 	bvec4 cutoff = lessThan(color, vec4(trc.cutoffToGamma));
 	bvec4 negCutoff = lessThanEqual(color, vec4(-1.0*trc.cutoffToGamma));
 	vec4 higher = (1.0 + trc.off)*pow(color, vec4(1.0/trc.power)) - trc.off;
@@ -291,8 +289,7 @@ vec4 toGamma(vec4 color, const transfer trc)
 }
 
 // Scales a color to the closest in-gamut representation of that color
-vec4 gamutScale(vec4 color, float luma)
-{
+vec4 gamutScale(vec4 color, float luma) {
 	float low = min(color.r, min(color.g, min(color.b, 0.0)));
 	float high = max(color.r, max(color.g, max(color.b, 1.0)));
 
@@ -305,8 +302,7 @@ vec4 gamutScale(vec4 color, float luma)
 }
 
 // Converts from xy to RGB
-vec4 convert(vec4 color, rgb_space from, rgb_space to)
-{
+vec4 convert(vec4 color, rgb_space from, rgb_space to) {
 	color.xyz = rgbToXyz(from)*color.rgb;
 	float luma = color.y;
 

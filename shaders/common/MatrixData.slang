@@ -1,10 +1,8 @@
-struct CameraMatrixData
-{
-    float4x4 projMat;
-    float4x4 viewMat;
+struct CameraMatrixData {
+    column_major float4x4 projMat;
+    column_major float4x4 viewMat;
 };
-struct ModelMatrixData
-{
-    float4x4 modelMat;
-    float4x4 normMat;
+struct ModelMatrixData {
+    column_major float4x4 modelMat;
+    column_major float4x4 normMat;
 };

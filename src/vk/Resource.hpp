@@ -14,11 +14,9 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 #include "spdlog/fmt/fmt.h"
 #include <vector>
 
-namespace vk
-{
+namespace vk {
 
-struct AllocationCreateInfo
-{
+struct AllocationCreateInfo {
     VkDevice device = VK_NULL_HANDLE;
     VmaAllocator allocator = VK_NULL_HANDLE;
     VmaPool pool = VK_NULL_HANDLE;
@@ -28,8 +26,7 @@ struct AllocationCreateInfo
     VkSharingMode sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 };
 
-struct BufferCreateInfo
-{
+struct BufferCreateInfo {
     VkBufferUsageFlags usage = 0;
     VkBufferCreateFlags createFlags = 0;
     AllocationCreateInfo allocInfo;
@@ -41,8 +38,7 @@ struct BufferCreateInfo
 };
 
 /// @brief A buffer data allocated on the gpu
-struct Buffer
-{
+struct Buffer {
     VkBuffer buffer = VK_NULL_HANDLE;
     VmaAllocation allocation = VK_NULL_HANDLE;
     
@@ -63,8 +59,7 @@ Buffer makeBuffer(BufferCreateInfo const &ci);
 void destroy(Buffer &buffer);
 
 template<typename T>
-inline Buffer makeBuffer(VmaAllocator allocator, T const &obj, VkBufferUsageFlags usage)
-{
+inline Buffer makeBuffer(VmaAllocator allocator, T const &obj, VkBufferUsageFlags usage) {
     return makeBuffer(BufferCreateInfo{
         .usage = usage,
         .allocInfo = {
@@ -75,8 +70,7 @@ inline Buffer makeBuffer(VmaAllocator allocator, T const &obj, VkBufferUsageFlag
     });
 }
 template<typename T>
-inline Buffer makeBuffer(VmaAllocator allocator, std::vector<T> const &vec, VkBufferUsageFlags usage)
-{
+inline Buffer makeBuffer(VmaAllocator allocator, std::vector<T> const &vec, VkBufferUsageFlags usage) {
     return makeBuffer(BufferCreateInfo{
         .usage = usage,
         .allocInfo = {
@@ -87,8 +81,7 @@ inline Buffer makeBuffer(VmaAllocator allocator, std::vector<T> const &vec, VkBu
     });
 }
 
-struct ImageCreateInfo
-{
+struct ImageCreateInfo {
     /// VK_IMAGE_USAGE_TRANSFER_XXX_BIT is added automatically if data is not nullptr.
     /// VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER or VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE will create the sampler.
     VkImageUsageFlags usage = 0; 
@@ -177,8 +170,7 @@ struct ImageCreateInfo
     }
 };
 /// @brief The image allocated on the gpu
-struct Image
-{
+struct Image {
     VmaAllocation allocation = VK_NULL_HANDLE;
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE; ///< A view on the entire texture in the original format.

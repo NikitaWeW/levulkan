@@ -12,12 +12,12 @@ struct Bitmap
     unsigned numComponents;
     glm::uvec2 size;
 
-    inline std::size_t getOffsetOf(glm::uvec2 pos) const { return numComponents * (pos.y * size.x + pos.x); }
+    inline std::size_t offsetOf(glm::uvec2 pos) const { return numComponents * (pos.y * size.x + pos.x); }
 };
 
-struct Texture
-{
-    Bitmap<uint8_t> bitmap;
+template<typename T = uint8_t>
+struct Texture {
+    Bitmap<T> bitmap;
     std::string path;
     bool srgb = false;
     bool linearSampling = false;
@@ -30,8 +30,8 @@ struct Texture
         MirrorClampToEdge,
     } addressMode = AddressMode::Repeat;
 };
-struct Cubemap
-{
+using Texture2D = Texture<>;
+struct Cubemap {
     std::array<Bitmap<float>, 6> faces;
     std::string path;
 };

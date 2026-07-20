@@ -9,6 +9,7 @@
 
 #include "Logging.hpp"
 #include "IO.hpp"
+#include "Renderdoc.hpp"
 #include "Controller.hpp"   
 #include "resource/Resources.hpp"
 #include "resource/Loaders.hpp"
@@ -16,8 +17,7 @@
 static Registry sReg;
 constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
 
-struct Transform
-{
+struct Transform {
     glm::vec3 position{0};
     glm::quat orientation{1, 0, 0, 0};
     glm::vec3 scale{1};
@@ -25,15 +25,13 @@ struct Transform
         return glm::translate(glm::mat4{1.0f}, position) * glm::mat4_cast(orientation) * glm::scale(glm::mat4{1.0f}, scale);
     };
 };
-struct ModelInstance
-{
+struct ModelInstance {
     Entity eModel;
 };
 
-struct VulkanMaterial
-{
+struct VulkanMaterial {
     ::Material::Properties properties;
-    // Texture array indices
+    // Texture2D array indices
     struct Textures
     {
         uint32_t albedo;
@@ -44,8 +42,7 @@ struct VulkanMaterial
         uint32_t displacement;
     } textures;
 };
-struct VulkanModel
-{
+struct VulkanModel {
     struct Mesh 
     {
         VulkanMaterial material;
@@ -86,15 +83,13 @@ struct ResizeToSwapchain {};
 
 ////////////////////////////////////////////////////////////////
 
-static std::string printTexture(Entity e)
-{
-    if(!e.valid() || !e.has<Texture>())
+static std::string printTexture(Entity e) {
+    if(!e.valid() || !e.has<Texture2D>())
         return fmt::format("e{} -- INVALID", e.id());
-    auto const &texture = e.get<Texture>();
-    return fmt::format("e{}, \"{:<30} {}x{}, {:>3} {} mips", e.id(), texture.path + "\",", texture.bitmap.size.x, texture.bitmap.size.y,(texture.srgb ? "srgb" : "not srgb"), texture.numMipLevels);
+    auto const &texture2D = e.get<Texture2D>();
+    return fmt::format("e{}, \"{:<30} {}x{}, {:>3} {} mips", e.id(), texture2D.path + "\",", texture2D.bitmap.size.x, texture2D.bitmap.size.y,(texture2D.srgb ? "srgb" : "not srgb"), texture2D.numMipLevels);
 }
-[[maybe_unused]] static void printModelData(Entity e)
-{
+[[maybe_unused]] static void printModelData(Entity e) {
     assert(e.valid() && e.has<Model>());
     Model const &model = e.get<Model>();
     LOG_INFO("");
@@ -147,8 +142,7 @@ static std::string printTexture(Entity e)
         LOG_INFO("  IOR:           {}", mesh.material.properties.ior);
     }
 }
-static Transform lookat(glm::vec3 pos, glm::vec3 center)
-{
+static Transform lookat(glm::vec3 pos, glm::vec3 center) {
     auto dir = glm::normalize(center - pos);
     auto up = glm::abs(glm::dot(dir, {0,1,0})) > 0.999 ? glm::vec3{1,0,0} : glm::vec3{0,1,0};
     return {
@@ -156,8 +150,7 @@ static Transform lookat(glm::vec3 pos, glm::vec3 center)
         .orientation = glm::normalize(glm::quatLookAt(dir, up))
     };
 }
-static Entity makeWindow(Registry &reg, std::string_view name)
-{
+static Entity makeWindow(Registry &reg, std::string_view name) {
     auto eWindow = reg.create<Window>();
     auto &window = eWindow.get<Window>();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -169,8 +162,7 @@ static Entity makeWindow(Registry &reg, std::string_view name)
 
     return eWindow;
 }
-static VkCommandPool createCommandPool(uint32_t index, VkDevice device)
-{
+static VkCommandPool createCommandPool(uint32_t index, VkDevice device) {
     VkCommandPoolCreateInfo commandPoolCI{
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
@@ -180,8 +172,7 @@ static VkCommandPool createCommandPool(uint32_t index, VkDevice device)
     vkCreateCommandPool(device, &commandPoolCI, nullptr, &commandPool);
     return commandPool;
 }
-static VkFence createFence(VkDevice dev)
-{
+static VkFence createFence(VkDevice dev) {
     VkFence fence = nullptr;
     VkFenceCreateInfo fenceCI{
         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
@@ -189,8 +180,7 @@ static VkFence createFence(VkDevice dev)
     CHECK_VK_RES(vkCreateFence(dev, &fenceCI, nullptr, &fence));
     return fence;
 }
-static void updateUniformBufferDescriptors(vk::RingBuffer const &buffer, vk::Pipeline const &pipeline, uint32_t set = 0, uint32_t desc = 0)
-{
+static void updateUniformBufferDescriptors(vk::RingBuffer const &buffer, vk::Pipeline const &pipeline, uint32_t set = 0, uint32_t desc = 0) {
     vk::writeDescriptors(pipeline, {vk::DescriptorWrite{
         .dstSet = set,
         .dstBinding = desc,
@@ -201,8 +191,7 @@ static void updateUniformBufferDescriptors(vk::RingBuffer const &buffer, vk::Pip
         }}
     }});
 }
-static void fullscreenPass(vk::RenderPass const &pass, VkCommandBuffer cb, VkRenderingAttachmentInfo attachment, VkExtent2D extent)
-{
+static void fullscreenPass(vk::RenderPass const &pass, VkCommandBuffer cb, VkRenderingAttachmentInfo attachment, VkExtent2D extent) {
     VkRenderingInfo renderingInfo{
         .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
         .renderArea = {
@@ -242,8 +231,7 @@ static void fullscreenPass(vk::RenderPass const &pass, VkCommandBuffer cb, VkRen
 ////////////////////////////////////////////////////////////////
 
 
-static Entity loadModel(std::string_view path, ModelLoaderOptions options = {}, std::optional<Material> material = {})
-{
+static Entity loadModel(std::string_view path, ModelLoaderOptions options = {}, std::optional<Material> material = {}) {
     static ModelLoader loader(sReg.getReg());
     
     auto eModel = Entity{&sReg, loader.loadFromFile(path, options)};
@@ -266,8 +254,7 @@ static Entity loadModel(std::string_view path, ModelLoaderOptions options = {}, 
     return eModel;
 }
 template<typename T>
-static VkFormat getBitmapFormat(Bitmap<T> const& bmp, bool srgb)
-{
+static VkFormat getBitmapFormat(Bitmap<T> const& bmp, bool srgb) {
     if constexpr (std::is_same_v<T, uint8_t>)
     {
         switch (bmp.numComponents)
@@ -276,16 +263,6 @@ static VkFormat getBitmapFormat(Bitmap<T> const& bmp, bool srgb)
             case 2: return srgb ? VK_FORMAT_R8G8_SRGB     : VK_FORMAT_R8G8_UNORM;
             case 3: return srgb ? VK_FORMAT_R8G8B8_SRGB   : VK_FORMAT_R8G8B8_UNORM;
             case 4: return srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-        }
-    }
-    else if constexpr (std::is_same_v<T, float>)
-    {
-        switch (bmp.numComponents)
-        {
-            case 1: return VK_FORMAT_R32_SFLOAT;
-            case 2: return VK_FORMAT_R32G32_SFLOAT;
-            case 3: return VK_FORMAT_R32G32B32_SFLOAT;
-            case 4: return VK_FORMAT_R32G32B32A32_SFLOAT;
         }
     }
     else if constexpr (std::is_same_v<T, uint16_t>)
@@ -298,6 +275,36 @@ static VkFormat getBitmapFormat(Bitmap<T> const& bmp, bool srgb)
             case 4: return VK_FORMAT_R16G16B16A16_UNORM;
         }
     }
+    else if constexpr (std::is_same_v<T, uint32_t>)
+    {
+        switch (bmp.numComponents)
+        {
+            case 1: return VK_FORMAT_R32_UINT;
+            case 2: return VK_FORMAT_R32G32_UINT;
+            case 3: return VK_FORMAT_R32G32B32_UINT;
+            case 4: return VK_FORMAT_R32G32B32A32_UINT;
+        }
+    }
+    else if constexpr (std::is_same_v<T, float>)
+    {
+        switch (bmp.numComponents)
+        {
+            case 1: return VK_FORMAT_R32_SFLOAT;
+            case 2: return VK_FORMAT_R32G32_SFLOAT;
+            case 3: return VK_FORMAT_R32G32B32_SFLOAT;
+            case 4: return VK_FORMAT_R32G32B32A32_SFLOAT;
+        }
+    }
+    else if constexpr (std::is_same_v<T, double>)
+    {
+        switch (bmp.numComponents)
+        {
+            case 1: return VK_FORMAT_R64_SFLOAT;
+            case 2: return VK_FORMAT_R64G64_SFLOAT;
+            case 3: return VK_FORMAT_R64G64B64_SFLOAT;
+            case 4: return VK_FORMAT_R64G64B64A64_SFLOAT;
+        }
+    }
 
     LOG_ERROR("Unsupported Bitmap format");
     return VK_FORMAT_UNDEFINED;
@@ -305,8 +312,7 @@ static VkFormat getBitmapFormat(Bitmap<T> const& bmp, bool srgb)
 
 /// @brief Allocates resources on the gpu
 /// TODO: extend for render graph
-class ResourceAllocator
-{
+class ResourceAllocator {
 private:
     vk::AllocationCreateInfo mAllocInfo;
     VkCommandBuffer mCommandBuffer = nullptr;
@@ -339,23 +345,23 @@ public:
 
     inline uint32_t processImage(Entity eImage)
     {
-        assert(eImage.valid() && (eImage.has<Texture>()) && "Invalid model!");
+        assert(eImage.valid() && (eImage.has<Texture2D>()) && "Invalid model!");
         assert(mCommandBuffer && "ResourceAllocator uninitialized! (Make sure to not use the default constructor)");
-        if(!eImage.has<vk::Image>() && eImage.has<Texture>())
+        if(!eImage.has<vk::Image>() && eImage.has<Texture2D>())
         {
-            auto &image = eImage.get<Texture>();
+            auto &image = eImage.get<Texture2D>();
 
             if(image.bitmap.numComponents == 3)
-                LOG_WARN("Making R32G32B32 texture \"{}\". Maybe change it to 32 bits or something...", image.path);
+                LOG_WARN("Making R32G32B32 texture2D \"{}\". Maybe change it to 32 bits or something...", image.path);
 
             VkSamplerAddressMode addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
             switch(image.addressMode)
             {
-                case Texture::AddressMode::Repeat:            addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;               break;
-                case Texture::AddressMode::MirroredRepeat:    addressMode = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;      break;
-                case Texture::AddressMode::ClampToEdge:       addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;        break;
-                case Texture::AddressMode::ClampToBorder:     addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;      break;
-                case Texture::AddressMode::MirrorClampToEdge: addressMode = VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE; break;
+                case Texture2D::AddressMode::Repeat:            addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;               break;
+                case Texture2D::AddressMode::MirroredRepeat:    addressMode = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;      break;
+                case Texture2D::AddressMode::ClampToEdge:       addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;        break;
+                case Texture2D::AddressMode::ClampToBorder:     addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;      break;
+                case Texture2D::AddressMode::MirrorClampToEdge: addressMode = VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE; break;
                 default: LOG_WARN("Unknown address mode in e{}!", eImage.id()); break;
             }
             vk::ImageCreateInfo ci{
@@ -466,8 +472,7 @@ public:
 
 ////////////////////////////////////////////////////////////////
 
-static bool init()
-{
+static bool init() {
     if(!glfwInit())
     {
         LOG_ERROR("Failed to init glfw!");
@@ -488,8 +493,7 @@ static bool init()
 
     return true;
 }
-int app(int argc, char **argv)
-{
+int app(int argc, char **argv) {
     if(!init())
     {
         LOG_ERROR("Failed to init!");
@@ -581,8 +585,9 @@ int app(int argc, char **argv)
     { // Scene
         auto suzanne = loadModel("assets/suzanne.glb");
         auto cube = loadModel("assets/cube.glb");
+        auto sphere = loadModel("assets/sphere.glb");
         auto cubes = loadModel("assets/deccer_cubes/SM_Deccer_Cubes_Textured_Complex.gltf");
-        std::vector<Entity> props{suzanne, cube, suzanne};
+        std::vector<Entity> props{suzanne, cube, cube, sphere, suzanne};
         uint numProps = 20;
 
         for(uint i = 0; i < numProps; ++i)
@@ -600,7 +605,7 @@ int app(int argc, char **argv)
     ResourceAllocator alloc(ALLOCATION_INFO, commandPool, graphicsQueue);
 
     alloc.begin();
-    for(auto e : sReg.view<Texture>())
+    for(auto e : sReg.view<Texture2D>())
         alloc.processImage(e);
     for(auto e : sReg.view<Model>())
         alloc.processModel(e);
@@ -1414,6 +1419,7 @@ int app(int argc, char **argv)
             .pImageIndices = &imageIndex
         };
         CHECK_VK_RES(vkQueuePresentKHR(presentQueue, &presentInfo));
+
         deltatime = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - start).count() * 1e-9f;
         uniformBufferRealloc = false;
         resizedAttachments = false;
@@ -1462,8 +1468,7 @@ int app(int argc, char **argv)
     LOG_INFO("Exiting");
     return 0;
 }
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
     initLogger();
 
     CPPTRACE_TRY {

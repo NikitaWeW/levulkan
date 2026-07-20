@@ -12,15 +12,13 @@ using namespace vk;
 #endif
 
 RenderGraph::RenderGraph() = default;
-RenderGraph::RenderGraph(RenderGraphCreateInfo const &createInfo)
-{
+RenderGraph::RenderGraph(RenderGraphCreateInfo const &createInfo) {
     mQueueFamilies = createInfo.queueFamilies;
 }
 RenderGraph::RenderGraph(RenderGraph &&) = default;
 RenderGraph &RenderGraph::operator=(RenderGraph &&) = default;
 RenderGraph::~RenderGraph() = default;
-void RenderGraph::addPass(RenderPass const &pass)
-{
+void RenderGraph::addPass(RenderPass const &pass) {
     if(mPassNameToIndex.contains(pass.name))
     {
         LOG_ERROR("Render graph already contains \"{}\" pass", pass.name);
@@ -31,8 +29,7 @@ void RenderGraph::addPass(RenderPass const &pass)
     mPasses.emplace(index, pass);
     mUpToDate = false;
 }
-void RenderGraph::removePass(std::string const &name)
-{
+void RenderGraph::removePass(std::string const &name) {
     if(!mPassNameToIndex.contains(name))
     {
         LOG_ERROR("Render graph does not contain \"{}\" pass", name);
@@ -43,43 +40,37 @@ void RenderGraph::removePass(std::string const &name)
     mPassNameToIndex.erase(name);
     mUpToDate = false;
 }
-RenderPass const *RenderGraph::findPass(std::string const &name) const
-{
+RenderPass const *RenderGraph::findPass(std::string const &name) const {
     if(!mPassNameToIndex.contains(name))
         return nullptr;
 
     return &mPasses.get(mPassNameToIndex.at(name));
 }
-RenderPass *RenderGraph::findPass(std::string const &name)
-{
+RenderPass *RenderGraph::findPass(std::string const &name) {
     if(!mPassNameToIndex.contains(name))
         return nullptr;
 
     mUpToDate = false;
     return &mPasses.get(mPassNameToIndex.at(name));
 }
-void RenderGraph::clear()
-{
+void RenderGraph::clear() {
     mPasses.clear();
     mPassNameToIndex.clear();
     mResources.clear();
     mResourceNameToIndex.clear();
 }
 
-void RenderGraph::setResource(std::string const &name, RestrictedEntity<std::logical_or<>, vk::Image, vk::Buffer> resource)
-{
+void RenderGraph::setResource(std::string const &name, RestrictedEntity<std::logical_or<>, vk::Image, vk::Buffer> resource) {
     auto index = mResourceNameToIndex.contains(name) ? mResourceNameToIndex.at(name) : (mResourceNameToIndex[name] = mNextIndex++);
     mResources[index] = resource;
 }
-Entity RenderGraph::findResource(std::string const &name) const
-{
+Entity RenderGraph::findResource(std::string const &name) const {
     if(!mResourceNameToIndex.contains(name))
         return Entity();
 
     return mResources.get(mResourceNameToIndex.at(name));
 }
-void RenderGraph::removeResource(std::string const &name)
-{
+void RenderGraph::removeResource(std::string const &name) {
     if(!mResourceNameToIndex.contains(name))
     {
         LOG_ERROR("Render graph does not contain \"{}\" resource", name);
@@ -98,8 +89,7 @@ std::ranges::subrange<Entity *> RenderGraph::getResourcesRange() { return mResou
 SparseSet<std::vector<Barrier>> const &RenderGraph::getBarriers() const { return mBarriers; }
 std::vector<uint32_t> const &RenderGraph::getPassStack() const { return mPassStack; }
 
-void RenderGraph::validate(uint32_t passIndex)
-{
+void RenderGraph::validate(uint32_t passIndex) {
     #define VALIDATION_ASSERT(x) if(!static_cast<bool>(x)) { LOG_ERROR("{}:{} Render graph validation assertion failed: {}", __FILE__, __LINE__, #x); mFailed = true; return; }
 
     VALIDATION_ASSERT(passIndex != 0);
@@ -154,15 +144,13 @@ void RenderGraph::validate(uint32_t passIndex)
 
     #undef VALIDATION_ASSERT
 }
-static std::string collapseAttributes(std::vector<std::string> const &attributes)
-{
+static std::string collapseAttributes(std::vector<std::string> const &attributes) {
     std::string res;
     for(auto const &attrib : attributes)
         res.append("[").append(attrib).append("]");
     return res;
 }
-std::string RenderGraph::dumpGraphviz(int indent, GraphvizSettings settings) const
-{
+std::string RenderGraph::dumpGraphviz(int indent, GraphvizSettings settings) const {
     assert(mUpToDate && "you need to build the render graph first!");
     std::stringstream ss;
     auto newline = [indent](int i){ return (indent >= 0) ? ("\n" + std::string(i, ' ')) : " "; };
@@ -226,8 +214,7 @@ std::string RenderGraph::dumpGraphviz(int indent, GraphvizSettings settings) con
 
     return ss.str();
 }
-static std::string printDependencies(RenderPass const &pass)
-{
+static std::string printDependencies(RenderPass const &pass) {
     std::string reads;
     for(auto dependency : pass.reads)
         reads.append(fmt::format("{}/{}; ", dependency.pass, dependency.resource));
@@ -243,8 +230,7 @@ static std::string printDependencies(RenderPass const &pass)
 }
 
 // There gotta be a simpler way
-void RenderGraph::processPass(uint32_t passIndex, bool backtrack)
-{
+void RenderGraph::processPass(uint32_t passIndex, bool backtrack) {
     assert(passIndex != 0);
     
     auto const &pass = mPasses[passIndex];
@@ -313,8 +299,7 @@ void RenderGraph::processPass(uint32_t passIndex, bool backtrack)
     }
 }
 
-void RenderGraph::buildBarriers()
-{
+void RenderGraph::buildBarriers() {
     std::unordered_map<uint32_t, Barrier::Scope> resourceState;
     for(auto passIndex : mPassStack)
     {
@@ -386,8 +371,7 @@ void RenderGraph::buildBarriers()
     }
 }
 
-bool RenderGraph::build()
-{
+bool RenderGraph::build() {
     if(mUpToDate)
         return true;
 

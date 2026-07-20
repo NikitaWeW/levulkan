@@ -1,5 +1,4 @@
-struct MaterialProperties
-{
+struct MaterialProperties {
     vec3 ambient;
     vec4 albedo;
     vec3 specular;
@@ -10,8 +9,7 @@ struct MaterialProperties
     float roughness;
     float ior;
 };
-struct MaterialTextures
-{
+struct MaterialTextures {
     uint albedo;
     uint metallic;
     uint roughness;
@@ -19,8 +17,7 @@ struct MaterialTextures
     uint normal;
     uint displacement;
 };
-struct Material
-{
+struct Material {
     MaterialProperties properties;
     MaterialTextures textures;
 };

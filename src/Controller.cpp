@@ -3,8 +3,7 @@
 
 #define CAMERA_COMPONENTS Controller::Camera, io::EventListener
 
-Entity Controller::createCamera(Registry &reg, glm::vec3 pos, glm::vec3 target)
-{
+Entity Controller::createCamera(Registry &reg, glm::vec3 pos, glm::vec3 target) {
     auto e = reg.create<CAMERA_COMPONENTS>();
     auto up = glm::abs(glm::dot(glm::normalize(target - pos), glm::vec3{0,1,0})) > 0.99 ? glm::vec3{1,0,0} : glm::vec3{0,1,0};
     auto q = glm::quat_cast(glm::lookAt(pos, target, up));
@@ -16,8 +15,7 @@ Entity Controller::createCamera(Registry &reg, glm::vec3 pos, glm::vec3 target)
     };
     return e;
 }
-static void updateOrientation(glm::vec2 offset, glm::quat &q)
-{
+static void updateOrientation(glm::vec2 offset, glm::quat &q) {
     auto newOrientation = glm::normalize(
         glm::angleAxis(glm::radians(offset.y), glm::vec3{1, 0, 0}) *
         q * 
@@ -27,8 +25,7 @@ static void updateOrientation(glm::vec2 offset, glm::quat &q)
         q = {newOrientation};
 }
 
-void Controller::update(Registry &reg, float dt)
-{
+void Controller::update(Registry &reg, float dt) {
     for(Entity eCamera : reg.view<CAMERA_COMPONENTS>())
     {
         auto &camera = eCamera.get<Controller::Camera>();

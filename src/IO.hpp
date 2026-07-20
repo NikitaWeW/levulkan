@@ -5,17 +5,14 @@
 #include <queue>
 #include "ECS.hpp"
 
-struct Window
-{
+struct Window {
     glm::uvec2 size;
     GLFWwindow *handle;
 };
 
-namespace io
-{
+namespace io {
 
-struct EventListener
-{
+struct EventListener {
     struct KeyEvent
     {
         GLFWwindow *window;
@@ -56,14 +53,12 @@ struct EventListener
     glm::dvec2 prevCursorPos{-1};
 };
 
-inline void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
-{
+inline void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     ecs::registry &reg = *static_cast<ecs::registry *>(glfwGetWindowUserPointer(window));
     for(auto e : reg.view<EventListener>())
         reg.get<EventListener>(e).keyEvents.emplace(window, key, scancode, action, mods);
 }
-inline void cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
-{
+inline void cursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
     ecs::registry &reg = *static_cast<ecs::registry *>(glfwGetWindowUserPointer(window));
     auto cursorPos = glm::dvec2{xpos, ypos};
     for(auto e : reg.view<EventListener>())
@@ -76,26 +71,22 @@ inline void cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
         listener.cursorPosEvents.emplace(window, cursorPos, delta);
     }
 }
-inline void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
-{
+inline void scrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
     ecs::registry &reg = *static_cast<ecs::registry *>(glfwGetWindowUserPointer(window));
     for(auto e : reg.view<EventListener>())
         reg.get<EventListener>(e).scrollEvents.emplace(window, glm::dvec2{xoffset, yoffset});
 }
-inline void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
-{
+inline void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
     ecs::registry &reg = *static_cast<ecs::registry *>(glfwGetWindowUserPointer(window));
     for(auto e : reg.view<EventListener>())
         reg.get<EventListener>(e).mouseButtonEvents.emplace(window, button, action, mods);
 }
-inline void charCallback(GLFWwindow* window, unsigned int codepoint)
-{
+inline void charCallback(GLFWwindow* window, unsigned int codepoint) {
     ecs::registry &reg = *static_cast<ecs::registry *>(glfwGetWindowUserPointer(window));
     for(auto e : reg.view<EventListener>())
         reg.get<EventListener>(e).textInputEvents.emplace(window, codepoint);
 }
-inline void setCallbacks(GLFWwindow *window, ecs::registry &registry)
-{
+inline void setCallbacks(GLFWwindow *window, ecs::registry &registry) {
     glfwSetWindowUserPointer(window, &registry);
     glfwSetKeyCallback(window, keyCallback);
     glfwSetCursorPosCallback(window, cursorPosCallback);

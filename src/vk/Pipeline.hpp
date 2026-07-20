@@ -19,15 +19,13 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 
 namespace vk {
 
-struct DescriptorBinding
-{
+struct DescriptorBinding {
     uint32_t set = 0;
     uint32_t binding = 0;
     auto operator<=>(DescriptorBinding const &other) const = default;
 };
 
-struct PipelineLayoutCreateInfo
-{
+struct PipelineLayoutCreateInfo {
     std::map<DescriptorBinding, VkDescriptorType> descriptorTypeOverride; ///< Optional overrides of the descriptor type for specific bindings. Useful to make some descriptors dynamic.
     std::map<DescriptorBinding, VkDescriptorBindingFlags> descriptorBindingFlags; ///< Optional additional flags for descriptor bindings. VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT is set automatically.s
     std::map<uint32_t, VkDescriptorSetLayoutCreateFlags> descriptorSetFlags; ///< Optional flags for descriptor sets.
@@ -36,8 +34,7 @@ struct PipelineLayoutCreateInfo
     uint32_t maxVariableCountSize = 100;
     uint32_t maxDescriptorSets = 16;
 };
-struct GraphicsPipelineCreateInfo
-{
+struct GraphicsPipelineCreateInfo {
     PipelineLayoutCreateInfo layout; ///< Pipeline layout create info
     VkPipelineCreateFlags flags = 0;
     std::vector<VkDynamicState> dynamicState; ///< Dynamic state to enable.
@@ -103,22 +100,19 @@ struct GraphicsPipelineCreateInfo
         } constant;
     } blending;
 };
-struct ComputePipelineCreateInfo
-{
+struct ComputePipelineCreateInfo {
     PipelineLayoutCreateInfo layout; ///< Pipeline layout create info
     VkPipelineCreateFlags flags = 0;
     VmaAllocator allocator = VK_NULL_HANDLE;
 };
-struct RaytracingPipelineCreateInfo
-{
+struct RaytracingPipelineCreateInfo {
     PipelineLayoutCreateInfo layout; ///< Pipeline layout create info
     VkPipelineCreateFlags flags = 0;
     VmaAllocator allocator = VK_NULL_HANDLE;
 };
 
 /// @brief The vulkan pipeline.
-struct Pipeline
-{
+struct Pipeline {
     enum class Type { INVALID = 0, GRAPHICS, COMPUTE, RAYTRACING };
     struct Layout
     {
@@ -148,8 +142,7 @@ struct Pipeline
     VmaAllocator allocator;
 };
 // FIXME: this runs on hopes and dreams
-struct DescriptorWrite
-{
+struct DescriptorWrite {
     uint32_t dstSet = 0;
     uint32_t dstBinding = 0;
     uint32_t dstArrayElement = 0;

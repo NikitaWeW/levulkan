@@ -21,8 +21,7 @@ namespace vk {
 
 /// Very minimal init options
 /// The init utility is designed to be tweaked directly.
-struct InitInfo
-{
+struct InitInfo {
     std::string appName; ///< The name of the application.
     GLFWwindow *window = VK_NULL_HANDLE; ///< The window handle. 
     uint32_t version = VK_API_VERSION_1_3; ///< Vulkan api version,
@@ -47,14 +46,12 @@ struct InitInfo
 };
 
 /// @brief Add necessary extensions and layers to enable validation layers.
-inline void enableValidationLayers(InitInfo &info)
-{
+inline void enableValidationLayers(InitInfo &info) {
     info.layers.emplace_back("VK_LAYER_KHRONOS_validation");
     info.instanceExtensions.emplace_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 }
 
-struct QueueFamilies
-{
+struct QueueFamilies {
     VkDevice device;
     std::map<VkQueueFlagBits, uint32_t> indices;
     std::optional<uint32_t> presentQueue;
@@ -67,8 +64,7 @@ struct QueueFamilies
     /// @returns VK_NULL_HANDLE if queue type is not present, a valid queue otherwise
     VkQueue getQueue(VkQueueFlagBits type, uint32_t queueIndex = 0) const;
 };
-struct InitResult
-{
+struct InitResult {
     bool success = false; ///< Indicates that the initialization went successfully.
 
     VkInstance instance = VK_NULL_HANDLE;
@@ -88,8 +84,7 @@ struct InitResult
 /// @brief Initialize vulkan instance together with other stuff.
 InitResult init(InitInfo info);
 
-struct SwapchainCreateInfo
-{
+struct SwapchainCreateInfo {
     struct AllocateInfo
     {
         VkDevice device = VK_NULL_HANDLE;
@@ -101,8 +96,7 @@ struct SwapchainCreateInfo
     VkImageUsageFlags imageUsage = 0;
     Registry *registry = nullptr;
 };
-struct Swapchain
-{
+struct Swapchain {
     VkSwapchainKHR swapchain;
 
     std::vector<Entity> images;

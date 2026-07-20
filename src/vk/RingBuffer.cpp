@@ -3,25 +3,21 @@
 #include "Logging.hpp"
 using namespace vk;
 
-RingBuffer::RingBuffer(BufferCreateInfo createInfo)
-{
+RingBuffer::RingBuffer(BufferCreateInfo createInfo) {
     mCreateInfo = createInfo;
     mBuffer = vk::makeBuffer(createInfo);
 }
-RingBuffer::~RingBuffer()
-{
+RingBuffer::~RingBuffer() {
     vk::destroy(mBuffer);
 }
 
-static uint32_t align(uint32_t value, uint32_t alignment)
-{
+static uint32_t align(uint32_t value, uint32_t alignment) {
     if(alignment == 0)
         return value;
     // return (value + alignment - 1) & ~(alignment - 1); // alignment is power of 2
     return value + ((alignment - (value % alignment)) % alignment);
 }
-uint32_t RingBuffer::request(uint32_t size, uint32_t index, uint32_t alignment)
-{
+uint32_t RingBuffer::request(uint32_t size, uint32_t index, uint32_t alignment) {
     uint32_t alignedHead = align(mHead, alignment);
     // LOG_TRACE("RingBuffer::request(size = {}, index = {}, alignment = {}); alignedHead = {}", size, index, alignment, alignedHead);
     if(!mAllocations.contains(index))
@@ -59,8 +55,7 @@ uint32_t RingBuffer::request(uint32_t size, uint32_t index, uint32_t alignment)
 
     return 0;
 }
-void RingBuffer::free(uint32_t index)
-{
+void RingBuffer::free(uint32_t index) {
     if(!mAllocations.contains(index))
         return;
 
@@ -68,8 +63,7 @@ void RingBuffer::free(uint32_t index)
     mAllocations.erase(index);
     mTail = (allocation.head + allocation.size) % mBuffer.createInfo.size;
 }
-bool RingBuffer::realloc()
-{
+bool RingBuffer::realloc() {
     if(mBuffer.createInfo.size == mCreateInfo.size)
         return false;
 

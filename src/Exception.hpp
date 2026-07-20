@@ -5,8 +5,7 @@
 
 // For future use in engine
 
-class EngineException : public std::exception
-{
+class EngineException : public std::exception {
 private:
     std::string mMessage;
     cpptrace::raw_trace mTrace;
