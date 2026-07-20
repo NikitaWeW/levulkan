@@ -230,7 +230,9 @@ static void fullscreenPass(vk::RenderPass const &pass, VkCommandBuffer cb, VkRen
     vkCmdSetScissor(cb, 0, 1, &scissor);
 
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.pipeline);
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 0, pass.pipeline.layout.descSets.size(), pass.pipeline.layout.descSets.dense().data(), 0, nullptr);
+    // Might be optimized away
+    if(!pass.pipeline.layout.descSets.empty())
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 0, pass.pipeline.layout.descSets.size(), pass.pipeline.layout.descSets.dense().data(), 0, nullptr);
     
     vkCmdDraw(cb, 3, 1, 0, 0);
 
@@ -739,7 +741,8 @@ int app(int argc, char **argv)
     ///////////////////////////////////////////////////
 
     bool uniformBufferRealloc = false;
-    bool resizedAttachments = true;
+    bool resizedAttachments = false;
+    bool updateDescriptors = true;
     uint frameIndex = 0;
     uint imageIndex = 0;
     float deltatime = 1e-6;
@@ -789,8 +792,15 @@ int app(int argc, char **argv)
     ///////////////////////////////////////////////////
 
     auto gbuffer_pass = [&](vk::RenderPass const &pass, VkCommandBuffer cb) {
-        if(uniformBufferRealloc)
+        if(uniformBufferRealloc || updateDescriptors)
             updateUniformBufferDescriptors(uniformBuffer, pass.pipeline);
+        if(updateDescriptors) {
+            vk::writeDescriptors(pass.pipeline, {vk::DescriptorWrite{
+                .dstSet = 1,
+                .dstBinding = 0,
+                .imageInfo = imageInfos,
+            }});
+        }
         
         // Update matrix data
         UniformBuffer uniformBufferData;
@@ -812,7 +822,7 @@ int app(int argc, char **argv)
                 .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                 .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                .clearValue{.color{{ 0.0f, 0.0f, 0.2f, 1.0f }}}
+                .clearValue{.color{{ 0.0f, 0.0f, 0.0f, 1.0f }}}
             },
             VkRenderingAttachmentInfo{
                 .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -820,7 +830,7 @@ int app(int argc, char **argv)
                 .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                 .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                .clearValue{.color{{ 0.0f, 0.0f, 0.2f, 1.0f }}}
+                .clearValue{.color{{ 0.0f, 0.0f, 0.0f, 1.0f }}}
             },
             VkRenderingAttachmentInfo{
                 .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -828,7 +838,7 @@ int app(int argc, char **argv)
                 .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                 .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                .clearValue{.color{{ 0.0f, 0.0f, 0.2f, 1.0f }}}
+                .clearValue{.color{{ 0.0f, 0.0f, 0.0f, 1.0f }}}
             },
         };
         VkRenderingAttachmentInfo depthAttachmentInfo{
@@ -856,7 +866,7 @@ int app(int argc, char **argv)
 
         VkViewport vp{
             .x = 0,
-            .y = static_cast<float>(window.size.y),
+            .y = 0,
             .width = static_cast<float>(window.size.x),
             .height = static_cast<float>(window.size.y),
             .minDepth = 0.0f,
@@ -868,7 +878,9 @@ int app(int argc, char **argv)
 
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.pipeline);
         // Cannot bind all of them because set 0 has dynamic offset
-        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 1, 1, &pass.pipeline.layout.descSets.get(1), 0, nullptr);
+        // Might be optimized away
+        if(pass.pipeline.layout.descSets.contains(1))
+            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 1, 1, &pass.pipeline.layout.descSets.get(1), 0, nullptr);
 
         for(auto eInstance : sReg.view<ModelInstance>())
         {
@@ -896,7 +908,8 @@ int app(int argc, char **argv)
                 uniformBufferData.uMaterial = mesh.material;
 
                 uint32_t offset = uniformBuffer.request(sizeof(UniformBuffer), frameIndex, properties.limits.minUniformBufferOffsetAlignment);
-                vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 0, 1, &pass.pipeline.layout.descSets.get(0), 1, &offset);
+                if(pass.pipeline.layout.descSets.contains(0))
+                    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 0, 1, &pass.pipeline.layout.descSets.get(0), 1, &offset);
                 std::memcpy(static_cast<char *>(uniformBuffer.getBuffer().mapped) + offset, &uniformBufferData, sizeof(UniformBuffer));
 
                 VkDeviceSize vOffset = 0;
@@ -972,19 +985,10 @@ int app(int argc, char **argv)
         .pipeline = gbuffer_pipeline
     });
 
-    vk::writeDescriptors(gbuffer_pipeline, {vk::DescriptorWrite{
-        .dstSet = 1,
-        .dstBinding = 0,
-        .imageInfo = imageInfos,
-    }});
-    updateUniformBufferDescriptors(uniformBuffer, gbuffer_pipeline);
-
-    // Uniform buffer written in the pass logic
-
     ///////////////////////////////////////////////////
 
     auto lighting_pass = [&](vk::RenderPass const &pass, VkCommandBuffer cb) {
-        if(resizedAttachments) {
+        if(resizedAttachments || updateDescriptors) {
             vk::writeDescriptors(pass.pipeline, {
                 vk::DescriptorWrite{
                     .dstSet = 0,
@@ -1029,7 +1033,7 @@ int app(int argc, char **argv)
             .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
             .imageView = renderGraph.findResource("main_color").get<vk::Image>().view,
             .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
             .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
             .clearValue{.color{{ 0.2f, 0.0f, 0.0f, 1.0f }}}
         };
@@ -1188,6 +1192,8 @@ int app(int argc, char **argv)
     assert(initRes.queueFamilies.presentQueue.has_value());
     vkGetDeviceQueue(device, initRes.queueFamilies.presentQueue.value(), 0, &presentQueue);
 
+    LOG_INFO("Starting rendering.");
+
     bool shouldResize = false;
     while(!glfwWindowShouldClose(window.handle))
     {
@@ -1236,7 +1242,6 @@ int app(int argc, char **argv)
                     if(!pass.shader.valid || !pass.pipeline.valid)
                         continue;
 
-                    LOG_INFO("Recompiling \"{}\" from pass \"{}\"", pass.shader.createInfo.src, pass.name);
                     auto newShader = vk::makeShader(pass.shader.createInfo);
                     if(!newShader.valid)
                         continue;
@@ -1262,9 +1267,8 @@ int app(int argc, char **argv)
                     assert(false && "unknown pipeline");
                     }
                 }
-                // Update descriptors
-                uniformBufferRealloc = true;
-                resizedAttachments = true;
+
+                updateDescriptors = true;
             }
         }
 
@@ -1286,7 +1290,7 @@ int app(int argc, char **argv)
             LOG_TRACE("VK_ERROR_OUT_OF_DATE_KHR");
             shouldResize = true;
             continue;
-        } else if(imageAcquireRes != VK_SUBOPTIMAL_KHR) {
+        } else if(imageAcquireRes == VK_SUBOPTIMAL_KHR) {
             // Ignore
             // FIXME: Infinite VK_SUBOPTIMAL_KHR (on wayland)
             // LOG_TRACE("VK_SUBOPTIMAL_KHR");
@@ -1413,6 +1417,7 @@ int app(int argc, char **argv)
         deltatime = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - start).count() * 1e-9f;
         uniformBufferRealloc = false;
         resizedAttachments = false;
+        updateDescriptors = false;
         // LOG_INFO("dt {:.2f}ms fps {:.2f}", deltatime * 1e3, 1 / deltatime);
     }
 

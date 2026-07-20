@@ -359,7 +359,7 @@ std::vector<std::string> split(std::string s, std::string const &delimiter) {
     std::vector<std::string> tokens;
     size_t pos = 0;
     std::string token;
-    while((pos = s.find_first_of(delimiter)) != std::string::npos) {
+    while((pos = s.find(delimiter)) != std::string::npos) {
         token = s.substr(0, pos);
         tokens.push_back(token);
         s.erase(0, pos + delimiter.length());
@@ -850,6 +850,7 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
     slang::SessionDesc sessionDesc{
         .targets = &targetDesc,
         .targetCount = 1,
+        // .defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR,
         .searchPaths = includeDirs.data(),
         .searchPathCount = static_cast<SlangInt>(includeDirs.size()),
         .preprocessorMacros = definitions.data(),
@@ -947,12 +948,10 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
     std::vector<slang::IComponentType *> componentTypes;
     for(auto &module : modules)
     {
-        auto entryPointCount = module.module->getDefinedEntryPointCount();
+        int32_t entryPointCount = module.module->getDefinedEntryPointCount();
 
-        for(uint i = 0; i < entryPointCount; ++i)
-        {
+        for(int32_t i = 0; i < entryPointCount; ++i)
             module.module->getDefinedEntryPoint(i, module.entryPoints.emplace_back(entryPointIndex++).entry.writeRef());
-        }
 
         componentTypes.emplace_back(module.module);
         for(auto const &entryPoint : module.entryPoints)
