@@ -60,10 +60,6 @@ FsOut fsMain(VsOut in) {
     out.albedo = uBuffer.material.properties.albedo * texture(uBuffer.material.textures.albedo, uv);
     out.position = float4(in.viewPos, 1);
 
-    // FIXME: texture(uBuffer.material.textures.normal, uv) produces strange results.
-    // The problem is definitely on the gpu (slang) side.
-    // The sampler parameters are all correct and glsl version of this code works well.
-    // FIX: It fixed itself magically after changing 49.3% of newline braces to inline braces.
     out.normal.a = 1;
     out.normal.xyz = texture(uBuffer.material.textures.normal, uv).rgb * 2 - 1;
     out.normal.xyz = normalize(mul(transpose(in.tbn), out.normal.xyz));

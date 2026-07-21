@@ -39,7 +39,7 @@
 namespace vk {
 
 enum class ShaderBackend {
-    GLSL, SLANG
+    NONE = 0, GLSL, SLANG
 };
 enum class SpirvVersion {
     SpirvVersion_1_0 = (1 << 16),            
@@ -51,7 +51,7 @@ enum class SpirvVersion {
     SpirvVersion_1_6 = (1 << 16) | (6 << 8), 
 };
 struct ShaderCreateInfo {
-    ShaderBackend backend = ShaderBackend::GLSL; ///< The source language.
+    ShaderBackend backend = ShaderBackend::NONE; ///< The source language.
     std::string src; ///< The path to the source. Can be empty to disable shader compilation. If src is a directory, the files inside the directory are collected as stages. The source can be split using #stage directives otherwise.
     std::string bin; ///< The path to the binary root directory. Can be empty to disable writing and collecting shader binaries.
     VkDevice device = VK_NULL_HANDLE; ///< The logical device. Leave null to not create shader modules.

@@ -53,6 +53,7 @@ struct Buffer {
     bool owns = true;
 
     bool valid() const;
+    inline std::string name() const { return createInfo.name.empty() ? fmt::format("{:#x}", reinterpret_cast<uintptr_t>(this)) : createInfo.name; }
 };
 
 Buffer makeBuffer(BufferCreateInfo const &ci);

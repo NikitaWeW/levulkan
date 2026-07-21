@@ -176,7 +176,7 @@ template <> struct fmt::formatter<SpvReflectDescriptorBinding> {
 
 // WARNING: nested spaghetti code incoming (works on hopes and dreams, or not)
 // TODO: Add more error checking
-static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Shader const &shader, VmaAllocator allocator) {
+static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Shader const &shader) {
     Pipeline::Layout layout;
     layout._reflection = new Reflection(reflect(shader));
     auto &reflection = *static_cast<Reflection *>(layout._reflection);
@@ -308,7 +308,7 @@ Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const
         .device = shader.createInfo.device,
     };
 
-    pipeline.layout = makePipelineLayout(dev, ci.layout, shader, ci.allocator);
+    pipeline.layout = makePipelineLayout(dev, ci.layout, shader);
     auto const &reflection = *static_cast<Reflection const *>(pipeline.layout._reflection);
 
     VkPipelineVertexInputStateCreateInfo vertexInputState{
@@ -420,7 +420,7 @@ Pipeline vk::makePipeline(Shader const &shader, ComputePipelineCreateInfo const 
         .device = shader.createInfo.device
     };
 
-    pipeline.layout = makePipelineLayout(dev, ci.layout, shader, ci.allocator);
+    pipeline.layout = makePipelineLayout(dev, ci.layout, shader);
     auto const &reflection = *static_cast<Reflection const *>(pipeline.layout._reflection);
 
     VkComputePipelineCreateInfo pipelineCI{
@@ -443,7 +443,7 @@ Pipeline vk::makePipeline(Shader const &shader, RaytracingPipelineCreateInfo con
         .device = shader.createInfo.device,
     };
 
-    pipeline.layout = makePipelineLayout(dev, ci.layout, shader, ci.allocator);
+    pipeline.layout = makePipelineLayout(dev, ci.layout, shader);
     // auto const &reflection = *static_cast<Reflection const *>(pipeline.layout._reflection);
 
     assert(false && "not implemented!");

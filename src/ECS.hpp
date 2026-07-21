@@ -175,6 +175,15 @@ public:
     }
 };
 
+template<typename Component>
+using REntity = RestrictedEntity<std::logical_or<>, Component>;
+
+template<typename... Components>
+using RAllEntity = RestrictedEntity<std::logical_and<>, Components...>;
+
+template<typename... Components>
+using RAnyEntity = RestrictedEntity<std::logical_or<>, Components...>;
+
 inline Registry::Registry(Registry const &o) { *this = o; }
 inline Registry::Registry(Registry &&o) { *this = std::move(o); }
 inline Registry &Registry::operator=(Registry const &o) {
@@ -277,3 +286,5 @@ public:
     /// @copydoc ecs::sparse_set::get
     inline T const &at(size_t index) const { return this->get(index); }
 };
+
+extern Registry sReg;

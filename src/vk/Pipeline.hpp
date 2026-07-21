@@ -38,7 +38,6 @@ struct GraphicsPipelineCreateInfo {
     PipelineLayoutCreateInfo layout; ///< Pipeline layout create info
     VkPipelineCreateFlags flags = 0;
     std::vector<VkDynamicState> dynamicState; ///< Dynamic state to enable.
-    VmaAllocator allocator;
 
     struct Input {
         std::vector<VkVertexInputBindingDescription> bindings;
@@ -54,7 +53,7 @@ struct GraphicsPipelineCreateInfo {
     struct DepthStencil {
         VkPipelineDepthStencilStateCreateFlags flags = 0;
         bool depthTestEnable = false;
-        bool depthWriteEnable = true;
+        bool depthWriteEnable = false;
         VkCompareOp depthCompareOp = VK_COMPARE_OP_LESS;
         bool depthBoundsTestEnable = false;
         bool stencilTestEnable = false;
@@ -103,12 +102,10 @@ struct GraphicsPipelineCreateInfo {
 struct ComputePipelineCreateInfo {
     PipelineLayoutCreateInfo layout; ///< Pipeline layout create info
     VkPipelineCreateFlags flags = 0;
-    VmaAllocator allocator = VK_NULL_HANDLE;
 };
 struct RaytracingPipelineCreateInfo {
     PipelineLayoutCreateInfo layout; ///< Pipeline layout create info
     VkPipelineCreateFlags flags = 0;
-    VmaAllocator allocator = VK_NULL_HANDLE;
 };
 
 /// @brief The vulkan pipeline.
@@ -139,7 +136,6 @@ struct Pipeline {
 
     // Not owning
     VkDevice device;
-    VmaAllocator allocator;
 };
 // FIXME: this runs on hopes and dreams
 struct DescriptorWrite {

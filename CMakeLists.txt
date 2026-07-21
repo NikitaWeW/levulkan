@@ -62,6 +62,7 @@ message(STATUS "Found slang: \"${slang_DIR}\"")
 
 set(LEVULKAN_SOURCE
     "src/main.cpp"
+    "src/Renderer.cpp"
     "src/Controller.cpp"
     "src/libraries/stb.c"
     "src/libraries/vk_mem_alloc.cpp"

@@ -1054,6 +1054,8 @@ Shader vk::makeShader(ShaderCreateInfo const &ci) {
     }  else if(canCompile) {
         LOG_TRACE("Compiling from source \"{}\"", program.createInfo.src);
 
+        if(program.createInfo.backend == ShaderBackend::NONE)
+            LOG_ERROR("Backend not set!");
         if(!gShaderBackends.contains(program.createInfo.backend)) {
             LOG_ERROR("Backend not supported!");
             return program;
