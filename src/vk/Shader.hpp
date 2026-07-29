@@ -32,7 +32,12 @@
 */
 #pragma once
 #include "vulkan.h"
+#include "spirv-tools/optimizer.hpp"
+#include "spirv-tools/libspirv.hpp"
+#include "spirv_reflect.h"
 
+#include <map>
+#include <optional>
 #include <vector>
 #include <string>
 
@@ -63,8 +68,9 @@ struct ShaderCreateInfo {
     std::vector<std::string> systemIncludeDirs; ///< System (<>) include directories. First most relevant.
     std::vector<std::pair<std::string, std::string>> definitions; ///< Preprocessor definitions.
     bool debugInfo = true; ///< Compile with debug info.
-    enum class Optimization { None, Default, Aggressive } optimization = Optimization::Default;
-    bool obfuscate = false;
+    bool optimize = true; ///< Optimize source as well as spirv.
+    bool reflect = true; ///< Generate spirv reflection.
+    bool strip = false; ///< Strip reflection and debug info.
 };
 
 /// @brief The compiled spirv program.
@@ -81,6 +87,7 @@ struct Shader {
         std::string path = "";
         std::vector<uint32_t> spirv;
         VkShaderModule module = VK_NULL_HANDLE;
+        std::optional<SpvReflectShaderModule> reflection;
     };
 
     bool valid = false;

@@ -119,8 +119,12 @@ struct SimpleShaderCreateInfo {
     vk::SpirvVersion spirvVersion = vk::SpirvVersion::SpirvVersion_1_6;
 };
 struct SimplePipeline {
-    vk::Pipeline::Type type = vk::Pipeline::Type::INVALID;
+    vk::Pipeline::Type type = vk::Pipeline::Type::Invalid;
+    std::vector<VkDynamicState> dynamicState = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineCreateFlags flags = 0;
+    struct {
+        std::unordered_map<std::string, Entity> descriptors;
+    } layout;
     struct {
         vk::GraphicsPipelineCreateInfo::Input         input;
         vk::GraphicsPipelineCreateInfo::DepthStencil  depthStencil;
@@ -147,6 +151,7 @@ class RenderManager {
 
     Entity addImageResource(std::string_view name, glm::uvec2 size, vk::ImageCreateInfo ci);
     vk::Shader makeShader(std::string_view name);
+    vk::Pipeline makePipeline(SimpleRenderPass const &pass, VkQueueFlagBits queue);
 public:
     RenderManager() = default;
     RenderManager(vk::AllocationCreateInfo allocInfo, SimpleShaderCreateInfo shaderInfo, REntity<vk::Swapchain> swapchain, VkPhysicalDevice device);

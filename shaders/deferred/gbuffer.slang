@@ -30,8 +30,8 @@ VsOut vsMain(Attributes attr) {
     out.clipPos = mul(uBuffer.cameraMatrixData.projMat, float4(out.viewPos, 1));
     out.uv = attr.uv;
     
-    normal  = normalize(mul(float3x3(uBuffer.modelMatrixData.normMat), normal));
-    tangent = normalize(mul(float3x3(uBuffer.modelMatrixData.normMat), tangent));
+    normal  = normalize(mul(mul(uBuffer.cameraMatrixData.viewMat, uBuffer.modelMatrixData.normMat), float4(normal, 0))).xyz;
+    tangent = normalize(mul(mul(uBuffer.cameraMatrixData.viewMat, uBuffer.modelMatrixData.normMat), float4(tangent, 0))).xyz;
     tangent = normalize(tangent - dot(tangent, normal) * normal);
     float3 bitangent = cross(tangent, normal);
     out.tbn = float3x3(tangent, bitangent, normal);
@@ -62,7 +62,8 @@ FsOut fsMain(VsOut in) {
 
     out.normal.a = 1;
     out.normal.xyz = texture(uBuffer.material.textures.normal, uv).rgb * 2 - 1;
-    out.normal.xyz = normalize(mul(transpose(in.tbn), out.normal.xyz));
+    out.normal.xyz = mul(transpose(in.tbn), out.normal.xyz);
+    out.normal.xyz = normalize(out.normal.xyz) * 0.5 + 0.5;
 
     out.pbr.r = clamp(uBuffer.material.properties.metallic + texture(uBuffer.material.textures.metallic, uv).r, 0, 1);
     out.pbr.g = clamp(uBuffer.material.properties.roughness + texture(uBuffer.material.textures.roughness, uv).r, 0, 1);

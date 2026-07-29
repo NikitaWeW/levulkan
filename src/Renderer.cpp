@@ -159,6 +159,16 @@ uint32_t ResourceAllocator::processImage(Entity eImage) {
         eImage.emplace<ImageIndex>(mProcessedImages.size());
         mProcessedImages.emplace_back(eImage);
 
+        vk::insertImageMemoryBarrier(mCommandBuffer, eImage.get<vk::Image>().image,
+            VK_ACCESS_TRANSFER_READ_BIT,
+            VK_ACCESS_SHADER_READ_BIT,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
+            {VK_IMAGE_ASPECT_COLOR_BIT, 0, ci.dimensions.mipLevels, 0, 1}
+        );
+
         LOG_TRACE("Allocated image e{} \"{}\" {}x{}, {} {} mips of type {} format {} usage {} filter {} address mode {}", 
             eImage.id(), 
             image.path, 
@@ -250,8 +260,8 @@ RenderManager::RenderManager(vk::AllocationCreateInfo allocInfo, SimpleShaderCre
     }
 }
 RenderManager::~RenderManager() {
-    for(auto [name, shader] : mShaders) {
-        vk::destroy(shader);
+    for(auto &pass : mRenderGraph.getPassesRange()) {
+        vk::destroy(pass.shader);
     }
 }
 Entity RenderManager::addColorResource(std::string_view name, glm::uvec2 size) {
@@ -267,7 +277,7 @@ Entity RenderManager::addColorResource(std::string_view name, glm::uvec2 size) {
 
     return addImageResource(name, size, ci);
 }
-Entity RenderManager::addDepthStencilResource(std::string_view name, glm::uvec2 size, 0}) {
+Entity RenderManager::addDepthStencilResource(std::string_view name, glm::uvec2 size) {
     vk::ImageCreateInfo ci{
         .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
         .imageType = VK_IMAGE_TYPE_2D,
@@ -300,7 +310,20 @@ void RenderManager::addResource(RAnyEntity<vk::Image, vk::Buffer> eResource) {
     auto name = eResource.has<vk::Image>() ? eResource.get<vk::Image>().name() : eResource.get<vk::Buffer>().name();
     mRenderGraph.setResource(name, eResource);
 }
-
+vk::Pipeline RenderManager::makePipeline(SimpleRenderPass const &pass, VkQueueFlagBits queue) {
+    vk::PipelineLayoutCreateInfo layout{
+        // .
+    };
+    
+    // if(queue == VK_QUEUE_GRAPHICS_BIT) {
+    //     vk::GraphicsPipelineCreateInfo ci{
+    //         .layout = layout,
+    //         .dynamicState = pass.pipeline.dynamicState,
+    //         .input
+    //     };
+    // }
+    return {};
+}
 void RenderManager::addPass(SimpleRenderPass const &pass) {
     vk::Shader shader = makeShader(pass.shader);
 
@@ -308,16 +331,16 @@ void RenderManager::addPass(SimpleRenderPass const &pass) {
         LOG_ERROR("Failed to compile shader {}", pass.shader);
     }
 
-    auto stage = shader.binDescriptors[0].stage;
+    auto queue = shaderStageToQueue(shader.binDescriptors[0].stage);
 
     mRenderGraph.addPass(vk::RenderPass{
         .name     = pass.name,
         .reads    = pass.reads,
         .writes   = pass.writes,
-        .queue    = shaderStageToQueue(stage),
+        .queue    = queue,
         .callback = pass.callback,
         .shader   = std::move(shader),
-        // TODO: pipeline
+        .pipeline = makePipeline(pass, queue),
     });
 }
 

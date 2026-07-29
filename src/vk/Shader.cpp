@@ -2,7 +2,6 @@
 #include "Utility.hpp"
 #include "Logging.hpp"
 #include "nlohmann/json.hpp"
-#include "spirv-tools/optimizer.hpp"
 
 #ifdef SHADER_ENABLE_GLSL
 #include "glslang/Public/ShaderLang.h"
@@ -153,6 +152,13 @@ static const std::unordered_map<std::string, VkShaderStageFlagBits> gVulkanStage
     {"VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR"         , VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR        },
     {"VK_SHADER_STAGE_MISS_BIT_KHR"                , VK_SHADER_STAGE_MISS_BIT_KHR               },
     {"VK_SHADER_STAGE_CALLABLE_BIT_KHR"            , VK_SHADER_STAGE_CALLABLE_BIT_KHR           },
+};
+static const std::unordered_map<uint32_t, spv_target_env> gVulkanVersionToSpvTargetEnv = {
+    {VK_VERSION_1_0, spv_target_env::SPV_ENV_VULKAN_1_0},
+    {VK_VERSION_1_1, spv_target_env::SPV_ENV_VULKAN_1_1},
+    {VK_VERSION_1_2, spv_target_env::SPV_ENV_VULKAN_1_2},
+    {VK_VERSION_1_3, spv_target_env::SPV_ENV_VULKAN_1_3},
+    {VK_VERSION_1_4, spv_target_env::SPV_ENV_VULKAN_1_4},
 };
 
 template<typename T = char>
@@ -322,11 +328,82 @@ static std::vector<ShaderStage> collectSources(Shader &program) {
     return stages;
 }
 
-static void optimizeSpirv(Shader &program) {
-    // TODO
+static void spirvToolsMessageCallback(spv_message_level_t level, char const *source, spv_position_t const &position, char const *message) {
+    spdlog::level::level_enum logLevel;
+    
+    switch(level) {
+    case SPV_MSG_FATAL:          logLevel = spdlog::level::err;
+    case SPV_MSG_INTERNAL_ERROR: logLevel = spdlog::level::err;
+    case SPV_MSG_ERROR:          logLevel = spdlog::level::err;
+    case SPV_MSG_WARNING:        logLevel = spdlog::level::warn;
+    case SPV_MSG_INFO:           logLevel = spdlog::level::info;
+    case SPV_MSG_DEBUG:          logLevel = spdlog::level::debug;
+    default: logLevel = spdlog::level::info; break;
+    }
+
+    LOG(logLevel, "Spirv optimizer at {}:{}:{} - {}", source, position.line, position.column, message);
 }
-static void obfuscateSpirv(Shader &program) {
-    // TODO
+static void runOptimizer(Shader &program, spvtools::Optimizer &optimizer) {
+    for(auto &bin : program.binaries) {
+        std::vector<uint32_t> optimizedSpriv;
+        auto res = optimizer.Run(bin.spirv.data(), bin.spirv.size(), &optimizedSpriv);
+        if(!res) {
+            LOG_ERROR("Failed to optimize spirv binary {}", bin.path);
+            continue;
+        }
+
+        bin.spirv = std::move(optimizedSpriv);
+    }
+}
+static void stripSpirv(Shader &program) {
+    spvtools::OptimizerOptions optimizerOptions;
+    optimizerOptions.set_preserve_bindings(true);
+    spvtools::Optimizer optimizer(gVulkanVersionToSpvTargetEnv.at(program.createInfo.targetVersion));
+    optimizer.SetMessageConsumer(spirvToolsMessageCallback);
+
+    optimizer.RegisterSizePasses(true);
+    optimizer.RegisterPass(spvtools::CreateStripDebugInfoPass());
+    optimizer.RegisterPass(spvtools::CreateStripReflectInfoPass());
+
+    runOptimizer(program, optimizer);
+}
+static void optimizeSpirv(Shader &program) {
+    spvtools::OptimizerOptions optimizerOptions;
+    optimizerOptions.set_preserve_bindings(true);
+    spvtools::Optimizer optimizer(gVulkanVersionToSpvTargetEnv.at(program.createInfo.targetVersion));
+    optimizer.SetMessageConsumer(spirvToolsMessageCallback);
+
+    optimizer.RegisterPerformancePasses(true);
+    
+    runOptimizer(program, optimizer);
+}
+static void reflectSpirv(Shader &program) {
+    for(auto &bin : program.binaries) {
+        SpvReflectShaderModule module;
+        auto res = spvReflectCreateShaderModule(bin.spirv.size() * sizeof(bin.spirv[0]), bin.spirv.data(), &module);
+
+        if(res != SPV_REFLECT_RESULT_SUCCESS) {
+            LOG_ERROR("Failed to reflect binary \"{}\" from program \"{}\"/\"{}\"", bin.path, program.createInfo.src, program.createInfo.bin);
+            continue;
+        }
+
+        bin.reflection.emplace(module);
+    }
+}
+
+static bool createModules(Shader &program) { 
+    for(auto &bin : program.binaries) {
+        VkShaderModuleCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = bin.spirv.size() * sizeof(bin.spirv[0]);
+        createInfo.pCode = bin.spirv.data();
+        auto res = vkCreateShaderModule(program.createInfo.device, &createInfo, nullptr, &bin.module);
+
+        if(res != VK_SUCCESS) {
+            LOG_ERROR("Failed to create shader module for program \"{}\"/\"{}\"", program.createInfo.src, program.createInfo.bin);
+            return false;
+        }
+    }
 }
 
 #ifdef SHADER_ENABLE_GLSL
@@ -749,11 +826,6 @@ static bool compileGlsl(Shader &program, std::vector<std::string> &outIncludes) 
 #endif
 
 #ifdef SHADER_ENABLE_SLANG
-static std::unordered_map<ShaderCreateInfo::Optimization, SlangOptimizationLevel> gOptimizationToSlang{
-    {ShaderCreateInfo::Optimization::None,       SlangOptimizationLevel::SLANG_OPTIMIZATION_LEVEL_NONE   },
-    {ShaderCreateInfo::Optimization::Default,    SlangOptimizationLevel::SLANG_OPTIMIZATION_LEVEL_HIGH   },
-    {ShaderCreateInfo::Optimization::Aggressive, SlangOptimizationLevel::SLANG_OPTIMIZATION_LEVEL_MAXIMAL},
-};
 static std::unordered_map<SlangStage, VkShaderStageFlagBits> gSlangToVulkanStage{
     { SLANG_STAGE_VERTEX,          VK_SHADER_STAGE_VERTEX_BIT                  },      
     { SLANG_STAGE_HULL,            VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT    },
@@ -819,11 +891,19 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
 
     std::vector<slang::CompilerOptionEntry> options{
         slang::CompilerOptionEntry{slang::CompilerOptionName::EmitSpirvDirectly, {slang::CompilerOptionValueKind::Int, 1}},
-        slang::CompilerOptionEntry{slang::CompilerOptionName::Optimization, {slang::CompilerOptionValueKind::Int, static_cast<int32_t>(gOptimizationToSlang.at(program.createInfo.optimization))}},
-        slang::CompilerOptionEntry{slang::CompilerOptionName::DebugInformation, {slang::CompilerOptionValueKind::Int, static_cast<int32_t>(program.createInfo.debugInfo ? SlangDebugInfoLevel::SLANG_DEBUG_INFO_LEVEL_MAXIMAL : SlangDebugInfoLevel::SLANG_DEBUG_INFO_LEVEL_NONE)}}
     };
-    if(program.createInfo.obfuscate)
-        options.emplace_back(slang::CompilerOptionEntry{slang::CompilerOptionName::Obfuscate, {slang::CompilerOptionValueKind::Int, 1}});
+    
+    if(program.createInfo.optimize) {
+        options.emplace_back(slang::CompilerOptionEntry{slang::CompilerOptionName::Optimization, {slang::CompilerOptionValueKind::Int, SlangOptimizationLevel::SLANG_OPTIMIZATION_LEVEL_MAXIMAL}});
+    } else {
+        options.emplace_back(slang::CompilerOptionEntry{slang::CompilerOptionName::Optimization, {slang::CompilerOptionValueKind::Int, SlangOptimizationLevel::SLANG_OPTIMIZATION_LEVEL_NONE}});
+    }
+
+    if(program.createInfo.debugInfo) {
+        options.emplace_back(slang::CompilerOptionEntry{slang::CompilerOptionName::DebugInformation, {slang::CompilerOptionValueKind::Int, SlangDebugInfoLevel::SLANG_DEBUG_INFO_LEVEL_MAXIMAL}});
+    } else {
+        options.emplace_back(slang::CompilerOptionEntry{slang::CompilerOptionName::DebugInformation, {slang::CompilerOptionValueKind::Int, SlangDebugInfoLevel::SLANG_DEBUG_INFO_LEVEL_NONE}});
+    }
 
     std::vector<char const *> includeDirs;
     for(auto const &dir : program.createInfo.includeDirs)
@@ -1065,11 +1145,6 @@ Shader vk::makeShader(ShaderCreateInfo const &ci) {
         if(!gShaderBackends.at(program.createInfo.backend)(program, includes))
             return program;
 
-        if(program.createInfo.optimization == ShaderCreateInfo::Optimization::Aggressive)
-            optimizeSpirv(program);
-        if(program.createInfo.obfuscate)
-            obfuscateSpirv(program);
-
         if(canWrite)
             writeBinaries(program, includes);
     } else {
@@ -1077,22 +1152,24 @@ Shader vk::makeShader(ShaderCreateInfo const &ci) {
         return program;
     }
 
-    // Create vulkan modules from binaries.
-    if(program.createInfo.device)
-    {
-        for(auto &bin : program.binaries)
-        {
-            VkShaderModuleCreateInfo createInfo{};
-            createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-            createInfo.codeSize = bin.spirv.size() * sizeof(bin.spirv[0]);
-            createInfo.pCode = bin.spirv.data();
-            auto res = vkCreateShaderModule(program.createInfo.device, &createInfo, nullptr, &bin.module);
+    // Reflect before stripping.
+    // TODO: separate reflection info.
+    // Serialize and save the SpvReflectShaderModule's together with the binaries.
+    // And then deserialize them on load. 
+    // This way the debug info always can be safely stripped.
+    if(program.createInfo.reflect) {
+        reflectSpirv(program);
+    }
+    if(program.createInfo.strip) {
+        stripSpirv(program);
+    }
+    if(program.createInfo.optimize) {
+        optimizeSpirv(program);
+    }
 
-            if(res != VK_SUCCESS) {
-                LOG_ERROR("Failed to create shader module for program \"{}\"/\"{}\"", program.createInfo.src, program.createInfo.bin);
-                return program;
-            }
-        }
+    if(program.createInfo.device) {
+        auto res = createModules(program);
+        if(!res) return program;
     } else {
         LOG_WARN("Not creating shader modules for \"{}\"/\"{}\", because device is VK_NULL_HANDLE.", program.createInfo.src, program.createInfo.bin);
     }
@@ -1102,12 +1179,14 @@ Shader vk::makeShader(ShaderCreateInfo const &ci) {
 }
 
 void vk::destroy(Shader &shader) {
-    for(auto &bin : shader.binaries)
-    {
-        if(bin.module && shader.createInfo.device)
-        {
+    for(auto &bin : shader.binaries) {
+        if(bin.module && shader.createInfo.device) {
             vkDestroyShaderModule(shader.createInfo.device, bin.module, nullptr);
             bin.module = VK_NULL_HANDLE;
+        }
+
+        if(bin.reflection.has_value()) {
+            spvReflectDestroyShaderModule(&bin.reflection.value());
         }
     }
     shader.valid = false;
