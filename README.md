@@ -6,19 +6,23 @@ Yeah...
 
 A lot of stuff is going to be merged into my engine.
 
+## How to use
+
+- Probably don't
+
 ## Features
 - Device, swapchain and other stuff initialization. (src/vk/Init.hpp)
 - GLSL Shader compilation and binary management with custom #stage parser/splitter. (src/vk/Shader.hpp)
 - Pipeline and descriptor set management with shader reflection. (src/vk/Pipeline.hpp)
 - GPU ring buffer. Useful for frequently updated data. (src/vk/RingBuffer.hpp)
 - Vulkan render graph. (src/vk/RenderGraph.hpp)
+- Probably something else but I forgot the project has a readme.
 
 ## Building 
 
-The project uses cmake with cpm.cmake.
 ```shell
 cd levulkan
-cmake -S . -B build
+cmake -B build
 cmake --build build
 build/levulkan # profit
 ```

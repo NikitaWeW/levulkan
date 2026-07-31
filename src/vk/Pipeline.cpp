@@ -1,6 +1,7 @@
+// WARNING: nested spaghetti code incoming (works on hopes and dreams, or not)
+
 #include "Pipeline.hpp"
 #include "Utility.hpp"
-#include "spirv_reflect.h"
 #include "Logging.hpp"
 
 using namespace vk;
@@ -97,8 +98,10 @@ static constexpr VkFormat toVulkanFormat(SpvReflectFormat const &format) {
 }
 
 struct Reflection  {
+    std::unordered_map<std::string, DescriptorBinding> descriptorNames;
     std::vector<VkPipelineShaderStageCreateInfo> stages;
     std::map<uint32_t, SparseSet<VkDescriptorSetLayoutBinding>> descSets;
+    std::map<uint32_t, SparseSet<VkDescriptorBindingFlags>> descFlags;
     std::map<DescriptorBinding, SpvReflectDescriptorBinding> descBindings;
     std::map<DescriptorBinding, VkPushConstantRange> pushConstants;
     std::unordered_map<uint32_t, VkFormat> input;
@@ -116,14 +119,11 @@ static Reflection reflect(Shader const &shader) {
             .pName = binDesc.entry.c_str()
         });
 
-        SpvReflectShaderModule module;
-        SPV_CHK(spvReflectCreateShaderModule(bin.spirv.size() * sizeof(bin.spirv[0]), bin.spirv.data(), &module), bin.path, continue);
-
         // Descriptor bindings
         uint32_t count = 0;
-        SPV_CHK(spvReflectEnumerateDescriptorBindings(&module, &count, nullptr), bin.path, continue);
+        SPV_CHK(spvReflectEnumerateDescriptorBindings(&bin.reflection.value(), &count, nullptr), bin.path, continue);
         std::vector<SpvReflectDescriptorBinding *> descBindings(count);
-        SPV_CHK(spvReflectEnumerateDescriptorBindings(&module, &count, descBindings.data()), bin.path, continue);
+        SPV_CHK(spvReflectEnumerateDescriptorBindings(&bin.reflection.value(), &count, descBindings.data()), bin.path, continue);
         for(auto descBinding : descBindings)
         {
             reflection.descBindings[{descBinding->set, descBinding->binding}] = *descBinding;
@@ -133,12 +133,17 @@ static Reflection reflect(Shader const &shader) {
             binding.descriptorType = toVulkanDescriptorType(descBinding->descriptor_type);
             binding.descriptorCount = std::max(descBinding->count, binding.descriptorCount);
             binding.stageFlags |= binDesc.stage;
+
+            if(reflection.descriptorNames.contains(descBinding->name) && reflection.descriptorNames.at(descBinding->name) != DescriptorBinding{descBinding->set, descBinding->binding})
+                LOG_WARN("Descriptor binding \"{}\" {{set={}, binding={}}} is different from binding {{set={}, binding={}}} with the same name!", descBinding->name, descBinding->set, descBinding->binding, reflection.descriptorNames.at(descBinding->name).set, reflection.descriptorNames.at(descBinding->name).binding);
+
+            reflection.descriptorNames[descBinding->name] = {descBinding->set, descBinding->binding};
         }
 
         // Push constants
-        SPV_CHK(spvReflectEnumeratePushConstantBlocks(&module, &count, nullptr), bin.path, continue);
+        SPV_CHK(spvReflectEnumeratePushConstantBlocks(&bin.reflection.value(), &count, nullptr), bin.path, continue);
         std::vector<SpvReflectBlockVariable *> pushConstants(count);
-        SPV_CHK(spvReflectEnumeratePushConstantBlocks(&module, &count, pushConstants.data()), bin.path, continue);
+        SPV_CHK(spvReflectEnumeratePushConstantBlocks(&bin.reflection.value(), &count, pushConstants.data()), bin.path, continue);
         for(auto pushConstant : pushConstants)
         {
             auto &constant = reflection.pushConstants[{pushConstant->offset, pushConstant->size}];
@@ -148,20 +153,18 @@ static Reflection reflect(Shader const &shader) {
         }
 
         // Input
-        SPV_CHK(spvReflectEnumerateInputVariables(&module, &count, nullptr), bin.path, continue);
+        SPV_CHK(spvReflectEnumerateInputVariables(&bin.reflection.value(), &count, nullptr), bin.path, continue);
         std::vector<SpvReflectInterfaceVariable *> inputVariables(count);
-        SPV_CHK(spvReflectEnumerateInputVariables(&module, &count, inputVariables.data()), bin.path, continue);
+        SPV_CHK(spvReflectEnumerateInputVariables(&bin.reflection.value(), &count, inputVariables.data()), bin.path, continue);
         for(auto inputVariable : inputVariables)
             reflection.input.try_emplace(inputVariable->location, toVulkanFormat(inputVariable->format));
 
         // Output
-        SPV_CHK(spvReflectEnumerateOutputVariables(&module, &count, nullptr), bin.path, continue);
+        SPV_CHK(spvReflectEnumerateOutputVariables(&bin.reflection.value(), &count, nullptr), bin.path, continue);
         std::vector<SpvReflectInterfaceVariable *> outputVariables(count);
-        SPV_CHK(spvReflectEnumerateOutputVariables(&module, &count, outputVariables.data()), bin.path, continue);
+        SPV_CHK(spvReflectEnumerateOutputVariables(&bin.reflection.value(), &count, outputVariables.data()), bin.path, continue);
         for(auto outputVariable : outputVariables)
             reflection.output.try_emplace(outputVariable->location, toVulkanFormat(outputVariable->format));
-
-        spvReflectDestroyShaderModule(&module);
     }
 
     return reflection;
@@ -173,20 +176,23 @@ template <> struct fmt::formatter<SpvReflectDescriptorBinding> {
         return fmt::format_to(ctx.out(), "layout(set = {}, binding = {}) ({})", binding.set, binding.binding, string_VkDescriptorType(toVulkanDescriptorType(binding.descriptor_type)));
     }
 };
+template <> struct fmt::formatter<DescriptorBinding> {
+    constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+    auto format(DescriptorBinding const &binding, format_context &ctx) const {
+        return fmt::format_to(ctx.out(), "layout(set = {}, binding = {})", binding.set, binding.binding);
+    }
+};
 
-// WARNING: nested spaghetti code incoming (works on hopes and dreams, or not)
 // TODO: Add more error checking
-static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Shader const &shader, VmaAllocator allocator) {
+static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInfo const &ci, Shader const &shader, void **pReflection) {
     Pipeline::Layout layout;
-    layout._reflection = new Reflection(reflect(shader));
-    auto &reflection = *static_cast<Reflection *>(layout._reflection);
+    *pReflection = new Reflection(reflect(shader));
+    auto &reflection = *static_cast<Reflection *>(*pReflection);
 
-    std::map<uint32_t, SparseSet<VkDescriptorBindingFlags>> descFlags;
- 
     // Descriptor flags
-    for(auto [binding, desc] : reflection.descBindings)
+    for(auto &[binding, desc] : reflection.descBindings)
     {
-        auto &flags = descFlags[binding.set][binding.binding];
+        auto &flags = reflection.descFlags[binding.set][binding.binding];
         if(ci.descriptorBindingFlags.contains(binding))
             flags |= ci.descriptorBindingFlags.at(binding);
 
@@ -203,8 +209,14 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
         {
             if(ci.unsizedDescriptorSize.contains({set, (uint32_t) binding}))
                 desc.descriptorCount = std::max(desc.descriptorCount, ci.unsizedDescriptorSize.at({set, (uint32_t) binding}));
-            if(ci.descriptorTypeOverride.contains({set, (uint32_t) binding}))
-                desc.descriptorType = ci.descriptorTypeOverride.at({set, (uint32_t) binding});
+            if(ci.dynamicDescriptors.contains({set, (uint32_t) binding})) {
+                if(desc.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                    desc.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+                else if(desc.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                    desc.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
+                else 
+                    LOG_ERROR("Binding {{set={}, binding={}}} of type {} is in ci.dynamicDescriptors, but the type is not VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER nor VK_DESCRIPTOR_TYPE_STORAGE_BUFFER!", set, binding, string_VkDescriptorType(desc.descriptorType));
+            }
         }
     }
 
@@ -214,8 +226,8 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
     {
         VkDescriptorSetLayoutBindingFlagsCreateInfo flagsCI{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
-            .bindingCount = (uint32_t) descFlags.at(set).size(),
-            .pBindingFlags = descFlags.at(set).dense().data(),
+            .bindingCount = (uint32_t) reflection.descFlags.at(set).size(),
+            .pBindingFlags = reflection.descFlags.at(set).dense().data(),
         };
         VkDescriptorSetLayoutCreateInfo layoutCI{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -225,62 +237,6 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
             .pBindings = bindings.dense().data(),
         };
         vkCreateDescriptorSetLayout(dev, &layoutCI, nullptr, &layout.descLayouts[set]);
-    }
-
-    // Descriptor pool
-    SparseSet<VkDescriptorPoolSize> poolSizes;
-    for(auto const &[set, bindings] : reflection.descSets)
-    {
-        for(auto const &binding : bindings.dense())
-        {
-            auto const &flags = descFlags.at(set).get(binding.binding);
-            auto &size = poolSizes[binding.descriptorType];
-            size.type = binding.descriptorType;
-            size.descriptorCount += flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT ? ci.maxVariableCountSize : binding.descriptorCount;
-        }
-    }
-    VkDescriptorPoolCreateInfo poolCI{
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .maxSets = ci.maxDescriptorSets,
-        .poolSizeCount = (uint32_t) poolSizes.size(),
-        .pPoolSizes = poolSizes.dense().data()
-    };
-    CHECK_VK_RES(vkCreateDescriptorPool(dev, &poolCI, nullptr, &layout.descPool));
-
-    // Allocate descriptors
-    for(auto const &[set, bindings] : reflection.descSets)
-    {
-        uint32_t count;
-        std::optional<VkDescriptorSetVariableDescriptorCountAllocateInfo> variableSizedBinding;
-        for(auto binding : bindings.dense())
-        {
-            auto const &flags = descFlags.at(set).get(binding.binding);
-            if(flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT)
-            {
-                if(ci.unsizedDescriptorSize.contains({set, binding.binding}))
-                {
-                    count = ci.unsizedDescriptorSize.at({set, binding.binding});
-                    variableSizedBinding = {
-                        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO,
-                        .descriptorSetCount = 1,
-                        .pDescriptorCounts = &count
-                    };
-                    break;
-                } else {
-                    LOG_ERROR("You must specify an unsizedDescriptorSize a variable sized array descriptor binding {}", reflection.descBindings.at({set, binding.binding}));
-                    continue;
-                }
-            }
-        }
-
-        VkDescriptorSetAllocateInfo descSetAlloc{
-            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-            .pNext = variableSizedBinding.has_value() ? &variableSizedBinding.value() : nullptr,
-            .descriptorPool = layout.descPool,
-            .descriptorSetCount = 1,
-            .pSetLayouts = &layout.descLayouts.get(set)
-        };
-        CHECK_VK_RES(vkAllocateDescriptorSets(dev, &descSetAlloc, &layout.descSets[set]));
     }
 
     std::vector<VkPushConstantRange> pushConstants;
@@ -299,17 +255,20 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
 
     return layout;
 }
-Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const &ci) {
+Pipeline vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout, GraphicsPipelineCreateInfo const &ci) {
     auto const &dev = shader.createInfo.device;
 
     Pipeline pipeline{
-        .type = Pipeline::Type::GRAPHICS,
-        .createInfo = {.graphics = ci},
+        .type = Pipeline::Type::Graphics,
+        .createInfo = {
+            .layout = layout,
+            .graphics = ci,
+        },
         .device = shader.createInfo.device,
     };
 
-    pipeline.layout = makePipelineLayout(dev, ci.layout, shader, ci.allocator);
-    auto const &reflection = *static_cast<Reflection const *>(pipeline.layout._reflection);
+    pipeline.layout = makePipelineLayout(dev, layout, shader, &pipeline._reflection);
+    auto const &reflection = *static_cast<Reflection const *>(pipeline._reflection);
 
     VkPipelineVertexInputStateCreateInfo vertexInputState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -411,17 +370,20 @@ Pipeline vk::makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const
     pipeline.valid = true;
     return pipeline;
 }
-Pipeline vk::makePipeline(Shader const &shader, ComputePipelineCreateInfo const &ci) {
+Pipeline vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout, ComputePipelineCreateInfo const &ci) {
     auto const &dev = shader.createInfo.device;
 
     Pipeline pipeline{
-        .type = Pipeline::Type::COMPUTE,
-        .createInfo = {.compute = ci},
+        .type = Pipeline::Type::Compute,
+        .createInfo = {
+            .layout = layout,
+            .compute = ci,
+        },
         .device = shader.createInfo.device
     };
 
-    pipeline.layout = makePipelineLayout(dev, ci.layout, shader, ci.allocator);
-    auto const &reflection = *static_cast<Reflection const *>(pipeline.layout._reflection);
+    pipeline.layout = makePipelineLayout(dev, layout, shader, &pipeline._reflection);
+    auto const &reflection = *static_cast<Reflection const *>(pipeline._reflection);
 
     VkComputePipelineCreateInfo pipelineCI{
         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
@@ -434,17 +396,20 @@ Pipeline vk::makePipeline(Shader const &shader, ComputePipelineCreateInfo const 
     pipeline.valid = true;
     return pipeline;
 }
-Pipeline vk::makePipeline(Shader const &shader, RaytracingPipelineCreateInfo const &ci) {
+Pipeline vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout, RaytracingPipelineCreateInfo const &ci) {
     auto const &dev = shader.createInfo.device;
     
     Pipeline pipeline{
-        .type = Pipeline::Type::RAYTRACING,
-        .createInfo = {.raytracing = ci},
+        .type = Pipeline::Type::RayTracing,
+        .createInfo = {
+            .layout = layout,
+            .raytracing = ci,
+        },
         .device = shader.createInfo.device,
     };
 
-    pipeline.layout = makePipelineLayout(dev, ci.layout, shader, ci.allocator);
-    // auto const &reflection = *static_cast<Reflection const *>(pipeline.layout._reflection);
+    pipeline.layout = makePipelineLayout(dev, layout, shader, &pipeline._reflection);
+    // auto const &reflection = *static_cast<Reflection const *>(pipeline._reflection);
 
     assert(false && "not implemented!");
 
@@ -452,9 +417,91 @@ Pipeline vk::makePipeline(Shader const &shader, RaytracingPipelineCreateInfo con
     return pipeline;
 }
 
-void vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite> const &writes) {
-    assert(pipeline.layout._reflection);
-    auto const &reflection = *static_cast<Reflection *>(pipeline.layout._reflection);
+void vk::allocateDescriptors(vk::Pipeline &pipeline, DescriptorAllocationInfo ci) {
+    assert(ci.numFrames != 0);
+    assert(pipeline._reflection);
+    auto const &reflection = *static_cast<Reflection *>(pipeline._reflection);
+
+    if(pipeline.descriptorSets.sets.size() != 0) {
+        LOG_WARN("vk::allocateDescriptors: Reallocating descriptors!");
+
+        vkDeviceWaitIdle(pipeline.device);
+        vkDestroyDescriptorPool(pipeline.device, pipeline.descriptorSets.pool, nullptr);
+        pipeline.descriptorSets.sets.clear();
+    }
+
+    // Descriptor pool
+    SparseSet<VkDescriptorPoolSize> poolSizes;
+    for(auto const &[set, bindings] : reflection.descSets)
+    {
+        for(auto const &binding : bindings.dense())
+        {
+            auto const &flags = reflection.descFlags.at(set).get(binding.binding);
+            auto &size = poolSizes[binding.descriptorType];
+            size.type = binding.descriptorType;
+            size.descriptorCount += (flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT ? ci.maxVariableCountSize : binding.descriptorCount) * ci.numFrames;
+        }
+    }
+    VkDescriptorPoolCreateInfo poolCI{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .maxSets = ci.maxDescriptorSets * ci.numFrames,
+        .poolSizeCount = (uint32_t) poolSizes.size(),
+        .pPoolSizes = poolSizes.dense().data()
+    };
+    CHECK_VK_RES(vkCreateDescriptorPool(pipeline.device, &poolCI, nullptr, &pipeline.descriptorSets.pool));
+
+    // Allocate descriptors
+    for(uint i = 0; i < ci.numFrames; ++i) {
+        auto &sets = pipeline.descriptorSets.sets.emplace_back();
+        for(auto const &[set, bindings] : reflection.descSets) {
+            uint32_t count;
+            std::optional<VkDescriptorSetVariableDescriptorCountAllocateInfo> variableSizedBinding;
+            for(auto binding : bindings.dense())
+            {
+                auto const &flags = reflection.descFlags.at(set).get(binding.binding);
+                if(flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT)
+                {
+                    if(pipeline.createInfo.layout.unsizedDescriptorSize.contains({set, binding.binding}))
+                    {
+                        count = pipeline.createInfo.layout.unsizedDescriptorSize.at({set, binding.binding});
+                        variableSizedBinding = {
+                            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO,
+                            .descriptorSetCount = 1,
+                            .pDescriptorCounts = &count
+                        };
+                        break;
+                    } else {
+                        LOG_ERROR("You must specify an unsizedDescriptorSize a variable sized array descriptor binding {}", reflection.descBindings.at({set, binding.binding}));
+                        continue;
+                    }
+                }
+            }
+    
+            VkDescriptorSetAllocateInfo descSetAlloc{
+                .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                .pNext = variableSizedBinding.has_value() ? &variableSizedBinding.value() : nullptr,
+                .descriptorPool = pipeline.descriptorSets.pool,
+                .descriptorSetCount = 1,
+                .pSetLayouts = &pipeline.layout.descLayouts.get(set)
+            };
+            CHECK_VK_RES(vkAllocateDescriptorSets(pipeline.device, &descSetAlloc, &sets[set]));
+        }
+    }
+}
+void vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite> const &writes, uint32_t frame) {
+    if(frame >= pipeline.descriptorSets.sets.size()) {
+        LOG_ERROR("vk::writeDescriptors: Frame {} is outside of descriptor frames with size of {}!", frame, pipeline.descriptorSets.sets.size());
+        LOG_WARN("Have you forgot to call vk::allocateDescriptors?");
+        return;
+    }
+    if(pipeline.descriptorSets.sets.empty()) {
+        // LOG_ERROR("Pipeline doesn't have any descriptor sets!");
+        return;
+    }
+
+    assert(pipeline.valid);
+    assert(pipeline._reflection);
+    auto const &reflection = *static_cast<Reflection *>(pipeline._reflection);
 
     std::vector<VkWriteDescriptorSet> descWrites;
     descWrites.reserve(writes.size());
@@ -468,7 +515,7 @@ void vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite>
 
         descWrites.emplace_back(VkWriteDescriptorSet{   
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = pipeline.layout.descSets.at(write.dstSet),
+            .dstSet = pipeline.descriptorSets.sets.at(frame).at(write.dstSet),
             .dstBinding = write.dstBinding,
             .dstArrayElement = write.dstArrayElement,
             .descriptorCount = write.size(),
@@ -481,12 +528,58 @@ void vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite>
 
     vkUpdateDescriptorSets(pipeline.device, descWrites.size(), descWrites.data(), 0, nullptr);
 }
+void vk::bindDescriptorSet(VkCommandBuffer cb, Pipeline const &pipeline, uint32_t set, uint32_t frame, std::vector<uint32_t> offsets) {
+    if(frame >= pipeline.descriptorSets.sets.size()) {
+        LOG_ERROR("vk::bindDescriptorSet: Frame {} is outside of descriptor frames with size of {}!", frame, pipeline.descriptorSets.sets.size());
+        LOG_WARN("Have you forgot to call vk::allocateDescriptors?");
+        return;
+    }
+    if(pipeline.descriptorSets.sets.empty()) {
+        LOG_ERROR("Pipeline doesent have any descriptor sets!");
+        return;
+    }
+    if(!pipeline.descriptorSets.sets.at(frame).contains(set)) {
+        LOG_WARN("Pipeline doesent contain set {}!", set);
+        return;
+    }
+
+    assert(pipeline.valid);
+    assert(pipeline._reflection);
+    auto const &reflection = *static_cast<Reflection *>(pipeline._reflection);
+
+    VkShaderStageFlags stages = VK_SHADER_STAGE_ALL;
+
+    if(pipeline.type == Pipeline::Type::Graphics)
+        stages = VK_SHADER_STAGE_ALL_GRAPHICS;
+    if(pipeline.type == Pipeline::Type::Compute)
+        stages = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkBindDescriptorSetsInfo bindInfo{
+        .sType = VK_STRUCTURE_TYPE_BIND_DESCRIPTOR_SETS_INFO,
+        .stageFlags = stages,
+        .layout = pipeline.layout.layout,
+        .firstSet = set,
+        .descriptorSetCount = 1,
+        .pDescriptorSets = &pipeline.descriptorSets.sets.at(frame).at(set),
+        .dynamicOffsetCount = 0,
+        .pDynamicOffsets = nullptr,
+    };
+    if(!offsets.empty()) {
+        bindInfo.dynamicOffsetCount = 1;
+        bindInfo.pDynamicOffsets = offsets.data();
+    }
+
+    vkCmdBindDescriptorSets2(cb, &bindInfo);
+}
 
 void vk::destroy(Pipeline &pipeline) {
     if(!pipeline.device)
         return;
-    if(pipeline.layout.descPool != VK_NULL_HANDLE)
-        vkDestroyDescriptorPool(pipeline.device, pipeline.layout.descPool, nullptr);
+
+    vkDeviceWaitIdle(pipeline.device);
+
+    if(pipeline.descriptorSets.pool != VK_NULL_HANDLE)
+        vkDestroyDescriptorPool(pipeline.device, pipeline.descriptorSets.pool, nullptr);
 
     for(auto layout : pipeline.layout.descLayouts.dense())
     {
@@ -494,10 +587,9 @@ void vk::destroy(Pipeline &pipeline) {
             vkDestroyDescriptorSetLayout(pipeline.device, layout, nullptr);
     }
 
-    if(pipeline.layout._reflection)
-        delete static_cast<Reflection *>(pipeline.layout._reflection);
+    if(pipeline._reflection)
+        delete static_cast<Reflection *>(pipeline._reflection);
 
     vkDestroyPipelineLayout(pipeline.device, pipeline.layout.layout, nullptr);
-
     vkDestroyPipeline(pipeline.device, pipeline.pipeline, nullptr);
 }

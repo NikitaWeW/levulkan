@@ -50,10 +50,10 @@ void Controller::update(Registry &reg, float dt) {
             if(glfwGetKey(window.handle, GLFW_KEY_E) == GLFW_PRESS) velocity += up;
             if(glfwGetKey(window.handle, GLFW_KEY_Q) == GLFW_PRESS) velocity -= up;
 
-            if(glfwGetKey(window.handle, GLFW_KEY_UP   ) == GLFW_PRESS) arrowOffset -= glm::vec2{0,1} * camera.sensitivity * 0.5f;
-            if(glfwGetKey(window.handle, GLFW_KEY_DOWN ) == GLFW_PRESS) arrowOffset += glm::vec2{0,1} * camera.sensitivity * 0.5f;
-            if(glfwGetKey(window.handle, GLFW_KEY_RIGHT) == GLFW_PRESS) arrowOffset += glm::vec2{1,0} * camera.sensitivity * 0.5f;
-            if(glfwGetKey(window.handle, GLFW_KEY_LEFT ) == GLFW_PRESS) arrowOffset -= glm::vec2{1,0} * camera.sensitivity * 0.5f;
+            if(glfwGetKey(window.handle, GLFW_KEY_UP   ) == GLFW_PRESS) arrowOffset -= glm::vec2{0,1} * camera.sensitivity;
+            if(glfwGetKey(window.handle, GLFW_KEY_DOWN ) == GLFW_PRESS) arrowOffset += glm::vec2{0,1} * camera.sensitivity;
+            if(glfwGetKey(window.handle, GLFW_KEY_RIGHT) == GLFW_PRESS) arrowOffset += glm::vec2{1,0} * camera.sensitivity;
+            if(glfwGetKey(window.handle, GLFW_KEY_LEFT ) == GLFW_PRESS) arrowOffset -= glm::vec2{1,0} * camera.sensitivity;
         }
         if(velocity != glm::vec3{0})
             velocity = {glm::normalize(velocity)};

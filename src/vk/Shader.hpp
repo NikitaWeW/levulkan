@@ -32,14 +32,19 @@
 */
 #pragma once
 #include "vulkan.h"
+#include "spirv-tools/optimizer.hpp"
+#include "spirv-tools/libspirv.hpp"
+#include "spirv_reflect.h"
 
+#include <map>
+#include <optional>
 #include <vector>
 #include <string>
 
 namespace vk {
 
 enum class ShaderBackend {
-    GLSL, SLANG
+    NONE = 0, GLSL, SLANG
 };
 enum class SpirvVersion {
     SpirvVersion_1_0 = (1 << 16),            
@@ -51,7 +56,7 @@ enum class SpirvVersion {
     SpirvVersion_1_6 = (1 << 16) | (6 << 8), 
 };
 struct ShaderCreateInfo {
-    ShaderBackend backend = ShaderBackend::GLSL; ///< The source language.
+    ShaderBackend backend = ShaderBackend::NONE; ///< The source language.
     std::string src; ///< The path to the source. Can be empty to disable shader compilation. If src is a directory, the files inside the directory are collected as stages. The source can be split using #stage directives otherwise.
     std::string bin; ///< The path to the binary root directory. Can be empty to disable writing and collecting shader binaries.
     VkDevice device = VK_NULL_HANDLE; ///< The logical device. Leave null to not create shader modules.
@@ -62,9 +67,11 @@ struct ShaderCreateInfo {
     std::vector<std::string> includeDirs; ///< Local ("") include directories. First most relevant. Source directory added implicitly.
     std::vector<std::string> systemIncludeDirs; ///< System (<>) include directories. First most relevant.
     std::vector<std::pair<std::string, std::string>> definitions; ///< Preprocessor definitions.
+    bool validate = true;   ///< Validate the spirv output.
     bool debugInfo = true; ///< Compile with debug info.
-    enum class Optimization { None, Default, Aggressive } optimization = Optimization::Default;
-    bool obfuscate = false;
+    bool optimize = true; ///< Optimize source as well as spirv.
+    bool reflect = true; ///< Generate spirv reflection.
+    bool strip = false; ///< Strip reflection and debug info.
 };
 
 /// @brief The compiled spirv program.
@@ -81,6 +88,7 @@ struct Shader {
         std::string path = "";
         std::vector<uint32_t> spirv;
         VkShaderModule module = VK_NULL_HANDLE;
+        std::optional<SpvReflectShaderModule> reflection;
     };
 
     bool valid = false;

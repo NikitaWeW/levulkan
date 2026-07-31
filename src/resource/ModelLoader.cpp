@@ -331,7 +331,7 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg) {
         normal = mRegistry->create(Texture{
             .bitmap = Bitmap<unsigned char>{
                 .pixels = {
-                    127, 127, 255
+                    128, 128, 255
                 },
                 .numComponents = 3,
                 .size = {1, 1},
@@ -382,12 +382,12 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg) {
         },
         .properties = {
             .ambient       = {0.1f, 0.1f, 0.1f},
-            .albedo        = {0.8f, 0.8f, 0.8f, 1.0f},
+            .albedo        = {1.0f, 1.0f, 1.0f, 1.0f},
             .specular      = {0.5f, 0.5f, 0.5f},
             .emission      = {0.0f, 0.0f, 0.0f},
 
             .shininess = 32.0f,
-            .metallic  = 0.0f,
+            .metallic  = 1.0f,
             .roughness = 1.0f,
             .ior       = 1.5f
         }

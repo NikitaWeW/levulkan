@@ -2,9 +2,6 @@
 
 #include "vk/vk.hpp"
 #include "ECS.hpp"
-#include "glm/glm.hpp"
-#include "glm/gtc/quaternion.hpp"
-#include "cpptrace/cpptrace.hpp"
 #include "cpptrace/from_current.hpp"
 
 #include "Logging.hpp"
@@ -12,76 +9,18 @@
 #include "Renderdoc.hpp"
 #include "Controller.hpp"   
 #include "resource/Resources.hpp"
-#include "resource/Loaders.hpp"
+#include "Renderer.hpp"
 
-static Registry sReg;
+Registry sReg;
 constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
 
-struct Transform {
-    glm::vec3 position{0};
-    glm::quat orientation{1, 0, 0, 0};
-    glm::vec3 scale{1};
-    inline glm::mat4 getMat() const {
-        return glm::translate(glm::mat4{1.0f}, position) * glm::mat4_cast(orientation) * glm::scale(glm::mat4{1.0f}, scale);
-    };
-};
-struct ModelInstance {
-    Entity eModel;
-};
-
-struct VulkanMaterial {
-    ::Material::Properties properties;
-    // Texture2D array indices
-    struct Textures
-    {
-        uint32_t albedo;
-        uint32_t metallic;
-        uint32_t roughness;
-        uint32_t ambient;
-        uint32_t normal;
-        uint32_t displacement;
-    } textures;
-};
-struct VulkanModel {
-    struct Mesh 
-    {
-        VulkanMaterial material;
-        // TODO: https://www.youtube.com/watch?v=7bSzp-QildA
-        struct Buffers
-        {
-            vk::Buffer pos;
-            vk::Buffer uv;
-            vk::Buffer norm;
-            vk::Buffer tan;
-            vk::Buffer idx;
-        } buffers;
-        size_t indexCount;
-        size_t meshIndex;
-    };
-
-    // TODO: add animation support
-
-    Entity eModel;
-    std::vector<Mesh> meshes;
-};
-struct MatrixData {
-    struct CameraData {
-        glm::mat4 projMat;
-        glm::mat4 viewMat;
-    } camera;
-    struct ModelData {
-        glm::mat4 modelMat;
-        glm::mat4 normMat;
-    } model;
-};
-
-struct UniformBuffer {
-    VulkanMaterial uMaterial;
-    MatrixData uMatrixData;
-};
-struct ResizeToSwapchain {};
-
 ////////////////////////////////////////////////////////////////
+
+template<typename T>
+static T hash_combine(T lhs, T rhs) {
+    lhs ^= rhs + T(0x9e3779b9) + (lhs << T(6)) + (lhs >> T(2));
+    return lhs;
+}
 
 static std::string printTexture(Entity e) {
     if(!e.valid() || !e.has<Texture2D>())
@@ -142,6 +81,52 @@ static std::string printTexture(Entity e) {
         LOG_INFO("  IOR:           {}", mesh.material.properties.ior);
     }
 }
+static Entity loadTexture(std::string_view path, TextureLoaderOptions options = {}, bool required = true)
+{
+    static TextureLoader loader(sReg.getReg());
+    
+    auto eTexture = Entity{&sReg, loader.loadFromFile(path, options)};
+    if(!required && !eTexture.valid())
+        return eTexture;
+    if(required && !eTexture.valid()) {
+        LOG_ERROR("Failed to load {}, which is required!", path);
+        assert(false);
+        return eTexture;
+    }
+
+    // ...
+
+    return eTexture;
+}
+static Entity loadModel(std::string_view path, std::optional<Material::Textures> textures = {}, ModelLoaderOptions options = {}, bool required = true) {
+    static ModelLoader loader(sReg.getReg());
+    
+    auto eModel = Entity{&sReg, loader.loadFromFile(path, options)};
+    if(!required && !eModel.valid())
+        return eModel;
+    if(required && !eModel.valid()) {
+        LOG_ERROR("Failed to load {}, which is required!", path);
+        assert(false);
+        return eModel;
+    }
+    auto &model = eModel.get<Model>();
+    
+    if(textures.has_value())
+    {
+        auto defaultMaterial = loader.getDefaultMaterial();
+        if(textures->albedo       == INVALID_ENTITY) textures->albedo       = defaultMaterial.textures.albedo;
+        if(textures->metallic     == INVALID_ENTITY) textures->metallic     = defaultMaterial.textures.metallic;
+        if(textures->roughness    == INVALID_ENTITY) textures->roughness    = defaultMaterial.textures.roughness;
+        if(textures->ambient      == INVALID_ENTITY) textures->ambient      = defaultMaterial.textures.ambient;
+        if(textures->normal       == INVALID_ENTITY) textures->normal       = defaultMaterial.textures.normal;
+        if(textures->displacement == INVALID_ENTITY) textures->displacement = defaultMaterial.textures.displacement;
+
+        for(auto &mesh : model.meshes)
+            mesh.material.textures = textures.value();
+    }
+
+    return eModel;
+}
 static Transform lookat(glm::vec3 pos, glm::vec3 center) {
     auto dir = glm::normalize(center - pos);
     auto up = glm::abs(glm::dot(dir, {0,1,0})) > 0.999 ? glm::vec3{1,0,0} : glm::vec3{0,1,0};
@@ -156,6 +141,7 @@ static Entity makeWindow(Registry &reg, std::string_view name) {
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     window.handle = glfwCreateWindow(800, 600, name.data(), nullptr, nullptr);
     glfwGetWindowSize(window.handle, reinterpret_cast<int *>(&window.size.x), reinterpret_cast<int *>(&window.size.y));
+    glfwSwapInterval(1);
     if(glfwRawMouseMotionSupported())
         glfwSetInputMode(window.handle, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
     io::setCallbacks(window.handle, reg.getReg());
@@ -191,284 +177,27 @@ static void updateUniformBufferDescriptors(vk::RingBuffer const &buffer, vk::Pip
         }}
     }});
 }
-static void fullscreenPass(vk::RenderPass const &pass, VkCommandBuffer cb, VkRenderingAttachmentInfo attachment, VkExtent2D extent) {
-    VkRenderingInfo renderingInfo{
-        .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-        .renderArea = {
-            .offset = { 0, 0 },
-            .extent = extent,
-        },
-        .layerCount = 1,
-        .colorAttachmentCount = 1,
-        .pColorAttachments = &attachment,
-        .pDepthAttachment = nullptr
+static void assetGrid(std::vector<Entity> const &props, glm::uvec3 dimensions, glm::vec3 offset, float distance) {
+    static std::random_device dev;
+    static std::mt19937 rng(dev());
+    std::uniform_int_distribution<std::mt19937::result_type> distP(0, props.size()-1);
+    std::uniform_int_distribution<std::mt19937::result_type> distX(0, dimensions.x-1);
+    std::uniform_int_distribution<std::mt19937::result_type> distY(0, dimensions.y-1);
+    std::uniform_int_distribution<std::mt19937::result_type> distZ(0, dimensions.z-1);
+    auto position = [&](float x, float y, float z) -> glm::vec3 {
+        return (glm::vec3(x, y, z) - glm::vec3(dimensions) * 0.5f ) * distance + offset;
     };
 
-    vkCmdBeginRendering(cb, &renderingInfo);
-
-    VkViewport vp{
-        .x = 0,
-        .y = static_cast<float>(extent.height),
-        .width = static_cast<float>(extent.width),
-        .height = -static_cast<float>(extent.height),
-        .minDepth = 0.0f,
-        .maxDepth = 1.0f
-    };
-    vkCmdSetViewport(cb, 0, 1, &vp);
-    VkRect2D scissor{ .extent = extent };
-    vkCmdSetScissor(cb, 0, 1, &scissor);
-
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.pipeline);
-    // Might be optimized away
-    if(!pass.pipeline.layout.descSets.empty())
-        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 0, pass.pipeline.layout.descSets.size(), pass.pipeline.layout.descSets.dense().data(), 0, nullptr);
-    
-    vkCmdDraw(cb, 3, 1, 0, 0);
-
-    vkCmdEndRendering(cb);
+    for(uint x = 0; x < dimensions.x; ++x)
+        for(uint y = 0; y < dimensions.y; ++y)
+            for(uint z = 0; z < dimensions.z; ++z) {
+        // x+y*dimensions.x+z*dimensions.x*dimensions.y;
+        sReg.create(ModelInstance{props[distP(rng)]}, lookat(
+            position(x, y, z), 
+            position(distX(rng), distY(rng), distZ(rng))
+        ));
+    }
 }
-
-////////////////////////////////////////////////////////////////
-
-
-static Entity loadModel(std::string_view path, ModelLoaderOptions options = {}, std::optional<Material> material = {}) {
-    static ModelLoader loader(sReg.getReg());
-    
-    auto eModel = Entity{&sReg, loader.loadFromFile(path, options)};
-    auto &model = eModel.get<Model>();
-    
-    if(material.has_value())
-    {
-        auto defaultMaterial = loader.getDefaultMaterial();
-        if(material->textures.albedo       == INVALID_ENTITY) material->textures.albedo       = defaultMaterial.textures.albedo;
-        if(material->textures.metallic     == INVALID_ENTITY) material->textures.metallic     = defaultMaterial.textures.metallic;
-        if(material->textures.roughness    == INVALID_ENTITY) material->textures.roughness    = defaultMaterial.textures.roughness;
-        if(material->textures.ambient      == INVALID_ENTITY) material->textures.ambient      = defaultMaterial.textures.ambient;
-        if(material->textures.normal       == INVALID_ENTITY) material->textures.normal       = defaultMaterial.textures.normal;
-        if(material->textures.displacement == INVALID_ENTITY) material->textures.displacement = defaultMaterial.textures.displacement;
-
-        for(auto &mesh : model.meshes)
-            mesh.material = material.value();
-    }
-
-    return eModel;
-}
-template<typename T>
-static VkFormat getBitmapFormat(Bitmap<T> const& bmp, bool srgb) {
-    if constexpr (std::is_same_v<T, uint8_t>)
-    {
-        switch (bmp.numComponents)
-        {
-            case 1: return srgb ? VK_FORMAT_R8_SRGB       : VK_FORMAT_R8_UNORM;
-            case 2: return srgb ? VK_FORMAT_R8G8_SRGB     : VK_FORMAT_R8G8_UNORM;
-            case 3: return srgb ? VK_FORMAT_R8G8B8_SRGB   : VK_FORMAT_R8G8B8_UNORM;
-            case 4: return srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-        }
-    }
-    else if constexpr (std::is_same_v<T, uint16_t>)
-    {
-        switch (bmp.numComponents)
-        {
-            case 1: return VK_FORMAT_R16_UNORM;
-            case 2: return VK_FORMAT_R16G16_UNORM;
-            case 3: return VK_FORMAT_R16G16B16_UNORM;
-            case 4: return VK_FORMAT_R16G16B16A16_UNORM;
-        }
-    }
-    else if constexpr (std::is_same_v<T, uint32_t>)
-    {
-        switch (bmp.numComponents)
-        {
-            case 1: return VK_FORMAT_R32_UINT;
-            case 2: return VK_FORMAT_R32G32_UINT;
-            case 3: return VK_FORMAT_R32G32B32_UINT;
-            case 4: return VK_FORMAT_R32G32B32A32_UINT;
-        }
-    }
-    else if constexpr (std::is_same_v<T, float>)
-    {
-        switch (bmp.numComponents)
-        {
-            case 1: return VK_FORMAT_R32_SFLOAT;
-            case 2: return VK_FORMAT_R32G32_SFLOAT;
-            case 3: return VK_FORMAT_R32G32B32_SFLOAT;
-            case 4: return VK_FORMAT_R32G32B32A32_SFLOAT;
-        }
-    }
-    else if constexpr (std::is_same_v<T, double>)
-    {
-        switch (bmp.numComponents)
-        {
-            case 1: return VK_FORMAT_R64_SFLOAT;
-            case 2: return VK_FORMAT_R64G64_SFLOAT;
-            case 3: return VK_FORMAT_R64G64B64_SFLOAT;
-            case 4: return VK_FORMAT_R64G64B64A64_SFLOAT;
-        }
-    }
-
-    LOG_ERROR("Unsupported Bitmap format");
-    return VK_FORMAT_UNDEFINED;
-}
-
-/// @brief Allocates resources on the gpu
-/// TODO: extend for render graph
-class ResourceAllocator {
-private:
-    vk::AllocationCreateInfo mAllocInfo;
-    VkCommandBuffer mCommandBuffer = nullptr;
-    VkFence mFence = nullptr;
-    VkQueue mQueue = nullptr;
-    std::vector<Entity> mProcessedImages;
-public:
-    /// @brief The index in the #images array
-    /// Every processed image has this component.
-    struct ImageIndex {
-        uint32_t index = 0;
-    };
-    ResourceAllocator() = default;
-    inline ResourceAllocator(vk::AllocationCreateInfo const &allocInfo, VkCommandPool commandPool, VkQueue queue) {
-        mAllocInfo = allocInfo;
-
-        VkCommandBufferAllocateInfo commandBufferAllocInfo{
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .commandPool = commandPool,
-            .commandBufferCount = 1,
-        };
-        CHECK_VK_RES(vkAllocateCommandBuffers(mAllocInfo.device, &commandBufferAllocInfo, &mCommandBuffer));
-        mFence = createFence(mAllocInfo.device);
-        mQueue = queue;
-    }
-    inline ~ResourceAllocator() {
-        vkDestroyFence(mAllocInfo.device, mFence, nullptr);
-    }
-    inline std::vector<Entity> getProcessedImages() const { return mProcessedImages; }
-
-    inline uint32_t processImage(Entity eImage)
-    {
-        assert(eImage.valid() && (eImage.has<Texture2D>()) && "Invalid model!");
-        assert(mCommandBuffer && "ResourceAllocator uninitialized! (Make sure to not use the default constructor)");
-        if(!eImage.has<vk::Image>() && eImage.has<Texture2D>())
-        {
-            auto &image = eImage.get<Texture2D>();
-
-            if(image.bitmap.numComponents == 3)
-                LOG_WARN("Making R32G32B32 texture2D \"{}\". Maybe change it to 32 bits or something...", image.path);
-
-            VkSamplerAddressMode addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-            switch(image.addressMode)
-            {
-                case Texture2D::AddressMode::Repeat:            addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;               break;
-                case Texture2D::AddressMode::MirroredRepeat:    addressMode = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;      break;
-                case Texture2D::AddressMode::ClampToEdge:       addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;        break;
-                case Texture2D::AddressMode::ClampToBorder:     addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;      break;
-                case Texture2D::AddressMode::MirrorClampToEdge: addressMode = VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE; break;
-                default: LOG_WARN("Unknown address mode in e{}!", eImage.id()); break;
-            }
-            vk::ImageCreateInfo ci{
-                .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
-                .allocInfo = mAllocInfo,
-                .imageType = VK_IMAGE_TYPE_2D,
-                .commandBuffer = mCommandBuffer,
-                .format = getBitmapFormat(image.bitmap, image.srgb),
-                .dimensions = {
-                    .width = image.bitmap.size.x,
-                    .height = image.bitmap.size.y,
-                    .mipLevels = image.numMipLevels
-                },
-                .sampler = {
-                    .magFilter = image.linearSampling ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
-                    .minFilter = image.linearSampling ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
-                    .mipmapMode = image.linearSampling ? VK_SAMPLER_MIPMAP_MODE_NEAREST : VK_SAMPLER_MIPMAP_MODE_LINEAR,
-                    .addressModeU = addressMode,
-                    .addressModeV = addressMode,
-                    .addressModeW = addressMode,
-                    .anisotropyEnable = image.linearSampling,
-                },
-                .view = {
-                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                    .viewType = VK_IMAGE_VIEW_TYPE_2D
-                },
-                .data = image.bitmap.pixels.data(),
-                .name = image.path
-            };
-            eImage.emplace<vk::Image>(vk::makeImage(ci));
-            eImage.emplace<ResourceAllocator::ImageIndex>(mProcessedImages.size());
-            mProcessedImages.emplace_back(eImage);
-
-            LOG_TRACE("Allocated image e{} \"{}\" {}x{}, {} {} mips of type {} format {} usage {} filter {} address mode {}", 
-                eImage.id(), 
-                image.path, 
-                image.bitmap.size.x, image.bitmap.size.y,
-                image.srgb ? "srgb" : "linear",
-                image.numMipLevels,
-                string_VkImageViewType(eImage.get<vk::Image>().createInfo.view.viewType), 
-                string_VkFormat(eImage.get<vk::Image>().createInfo.format),
-                string_VkImageUsageFlags(eImage.get<vk::Image>().createInfo.usage),
-                string_VkFilter(ci.sampler.minFilter),
-                string_VkSamplerAddressMode(ci.sampler.addressModeU)
-            );
-        }
-        // TODO: cubemaps
-
-        return eImage.get<ResourceAllocator::ImageIndex>().index;
-    }
-    inline void processModel(Entity eModel)
-    {
-        assert(eModel.valid() && eModel.has<Model>() && "Invalid model!");
-        if(eModel.has<VulkanModel>())
-            return;
-
-        auto &model = eModel.get<Model>();
-        eModel.emplace<VulkanModel>();
-        auto &vulkanModel = eModel.get<VulkanModel>();
-        for(uint i = 0; i < model.meshes.size(); ++i)
-        {
-            auto const &mesh = model.meshes[i];
-            auto &vulkanMesh = vulkanModel.meshes.emplace_back();
-            
-            vulkanMesh.meshIndex = i;
-            vulkanMesh.indexCount = mesh.geometry.indices.size();
-
-            vulkanMesh.buffers = {
-                .pos  = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.positions, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
-                .uv   = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.texCoords, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
-                .norm = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.normals,   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
-                .tan  = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.tangents,  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
-                .idx  = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.indices,   VK_BUFFER_USAGE_INDEX_BUFFER_BIT),
-            };
-
-            vulkanMesh.material.textures = {
-                .albedo       = processImage(Entity{&eModel.reg(), mesh.material.textures.albedo      }),
-                .metallic     = processImage(Entity{&eModel.reg(), mesh.material.textures.metallic    }),
-                .roughness    = processImage(Entity{&eModel.reg(), mesh.material.textures.roughness   }),
-                .ambient      = processImage(Entity{&eModel.reg(), mesh.material.textures.ambient     }),
-                .normal       = processImage(Entity{&eModel.reg(), mesh.material.textures.normal      }),
-                .displacement = processImage(Entity{&eModel.reg(), mesh.material.textures.displacement}),
-            };
-            vulkanMesh.material.properties = mesh.material.properties;
-        }
-    }
-    inline void begin()
-    {
-        VkCommandBufferBeginInfo beginInfo{
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
-        };
-        CHECK_VK_RES(vkBeginCommandBuffer(mCommandBuffer, &beginInfo));
-    }
-    inline void end()
-    {
-        vkEndCommandBuffer(mCommandBuffer);
-    
-        VkSubmitInfo submitInfo{
-            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .commandBufferCount = 1,
-            .pCommandBuffers = &mCommandBuffer,
-        };
-        CHECK_VK_RES(vkQueueSubmit(mQueue, 1, &submitInfo, mFence));
-        CHECK_VK_RES(vkWaitForFences(mAllocInfo.device, 1, &mFence, true, UINT64_MAX));
-    }
-};
 
 ////////////////////////////////////////////////////////////////
 
@@ -505,7 +234,7 @@ int app(int argc, char **argv) {
     vk::InitInfo initInfo{
         .appName = "levulkan",
         .window = window.handle,
-        .version = VK_API_VERSION_1_3,
+        .version = VK_API_VERSION_1_4,
         .queues = {VK_QUEUE_GRAPHICS_BIT, VK_QUEUE_COMPUTE_BIT, VK_QUEUE_TRANSFER_BIT},
         .deviceFeatures = {
             .features = {
@@ -583,16 +312,21 @@ int app(int argc, char **argv) {
     ////////////////////////////////////////////////////////////////
 
     { // Scene
-        auto suzanne = loadModel("assets/suzanne.glb");
-        auto cube = loadModel("assets/cube.glb");
-        auto sphere = loadModel("assets/sphere.glb");
-        auto cubes = loadModel("assets/deccer_cubes/SM_Deccer_Cubes_Textured_Complex.gltf");
-        std::vector<Entity> props{suzanne, cube, cube, sphere, suzanne};
-        uint numProps = 20;
+        const auto prototypeTextures = Material::Textures{
+            .albedo = loadTexture("assets/textures/prototype/texture_03.png")
+        };
+        const auto suzanne = loadModel("assets/models/suzanne.glb", prototypeTextures);
+        const auto cube    = loadModel("assets/models/cube.glb",    prototypeTextures);
+        const auto sphere  = loadModel("assets/models/sphere.glb",  prototypeTextures);
+        const auto teapot  = loadModel("assets/models/teapot.glb",  prototypeTextures);
+        
+        const std::vector<Entity> props{suzanne, cube, sphere, teapot};
+        const glm::uvec3 numProps = {10, 3, 5};
+        const float distance = 2;
+        const glm::vec3 offset = {0, -1, -5};
+        assetGrid(props, numProps, offset, distance);
 
-        for(uint i = 0; i < numProps; ++i)
-            sReg.create(ModelInstance{props[i*7%(props.size())]}, lookat({(i-numProps*0.5)*2, -1, -3}, {0, 0, 0}));
-    
+        const auto cubes = loadModel("assets/models/deccer_cubes/SM_Deccer_Cubes_Textured_Complex.gltf");
         sReg.create(ModelInstance{cube}, Transform{.position = {0, -4, 0}}); 
         sReg.create(ModelInstance{cubes}, Transform{.position = {-10, 0, 10}}); 
     }
@@ -641,26 +375,13 @@ int app(int argc, char **argv) {
         .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
         .allocInfo = ALLOCATION_INFO,
         .imageType = VK_IMAGE_TYPE_2D,
+        .format = VK_FORMAT_D32_SFLOAT,
         .dimensions = {swapchain.createInfo.imageExtent.width, swapchain.createInfo.imageExtent.height},
         .view = {
             .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
             .viewType = VK_IMAGE_VIEW_TYPE_2D
         },
     };
-    std::vector<VkFormat> depthFormatList{ VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM_S8_UINT };
-    for(VkFormat &format : depthFormatList) {
-        VkFormatProperties2 formatProperties{ .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2 };
-        vkGetPhysicalDeviceFormatProperties2(initRes.physicalDevice, format, &formatProperties);
-        if(formatProperties.formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
-            DEPTH_ATTACHMENT_CREATE_INFO.format = format;
-            break;
-        }
-    }
-    if(DEPTH_ATTACHMENT_CREATE_INFO.format == VK_FORMAT_UNDEFINED)
-    {
-        LOG_ERROR("Failed to pick depth image format!");
-        DEPTH_ATTACHMENT_CREATE_INFO.format = depthFormatList.at(0);
-    }
 
     vk::ImageCreateInfo COLOR_ATTACHMENT_CREATE_INFO{
         .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -772,6 +493,7 @@ int app(int argc, char **argv) {
         ResizeToSwapchain{}
     ));
     COLOR_ATTACHMENT_CREATE_INFO.name = "gbuffer_normal";
+    COLOR_ATTACHMENT_CREATE_INFO.format = VK_FORMAT_R32G32B32A32_SFLOAT;
     renderGraph.setResource("gbuffer_normal", sReg.create(
         vk::makeImage(COLOR_ATTACHMENT_CREATE_INFO),
         ResizeToSwapchain{}
@@ -827,7 +549,7 @@ int app(int argc, char **argv) {
                 .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                 .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                .clearValue{.color{{ 0.0f, 0.0f, 0.0f, 1.0f }}}
+                .clearValue{.color{{ 0.0f, 0.0f, 0.0f, 0.0f }}}
             },
             VkRenderingAttachmentInfo{
                 .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -835,7 +557,7 @@ int app(int argc, char **argv) {
                 .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                 .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                .clearValue{.color{{ 0.0f, 0.0f, 0.0f, 1.0f }}}
+                .clearValue{.color{{ 0.5f, 0.5f, 0.5f, 0.0f }}}
             },
             VkRenderingAttachmentInfo{
                 .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -843,7 +565,7 @@ int app(int argc, char **argv) {
                 .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                 .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                .clearValue{.color{{ 0.0f, 0.0f, 0.0f, 1.0f }}}
+                .clearValue{.color{{ 0.0f, 0.0f, 0.0f, 0.0f }}}
             },
         };
         VkRenderingAttachmentInfo depthAttachmentInfo{
@@ -882,10 +604,7 @@ int app(int argc, char **argv) {
         vkCmdSetScissor(cb, 0, 1, &scissor);
 
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.pipeline);
-        // Cannot bind all of them because set 0 has dynamic offset
-        // Might be optimized away
-        if(pass.pipeline.layout.descSets.contains(1))
-            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 1, 1, &pass.pipeline.layout.descSets.get(1), 0, nullptr);
+        vk::bindDescriptorSet(cb, pass.pipeline, 1);
 
         for(auto eInstance : sReg.view<ModelInstance>())
         {
@@ -912,10 +631,9 @@ int app(int argc, char **argv) {
             {
                 uniformBufferData.uMaterial = mesh.material;
 
-                uint32_t offset = uniformBuffer.request(sizeof(UniformBuffer), frameIndex, properties.limits.minUniformBufferOffsetAlignment);
-                if(pass.pipeline.layout.descSets.contains(0))
-                    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 0, 1, &pass.pipeline.layout.descSets.get(0), 1, &offset);
-                std::memcpy(static_cast<char *>(uniformBuffer.getBuffer().mapped) + offset, &uniformBufferData, sizeof(UniformBuffer));
+                uint32_t offset = uniformBuffer.request(sizeof(uniformBufferData), frameIndex, properties.limits.minUniformBufferOffsetAlignment);
+                vk::bindDescriptorSet(cb, pass.pipeline, 0, 0, {offset});
+                std::memcpy(static_cast<char *>(uniformBuffer.getBuffer().mapped) + offset, &uniformBufferData, sizeof(uniformBufferData));
 
                 VkDeviceSize vOffset = 0;
                 vkCmdBindVertexBuffers(cb, 0, 1, &mesh.buffers.pos .buffer, &vOffset);
@@ -938,17 +656,13 @@ int app(int argc, char **argv) {
         .includeDirs = {"shaders"}
     });
     assert(gbuffer_shader.valid);
-    vk::Pipeline gbuffer_pipeline = vk::makePipeline(gbuffer_shader, vk::GraphicsPipelineCreateInfo{
-        .layout = {
-            .descriptorTypeOverride = {
-                {{.set = 0, .binding = 0}, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC}
-            },
+    vk::Pipeline gbuffer_pipeline = vk::makePipeline(gbuffer_shader, {
+            .dynamicDescriptors = {{.set = 0, .binding = 0}},
             .unsizedDescriptorSize = {
                 {{.set = 1, .binding = 0}, imageInfos.size()}
             },
-        },
+        }, vk::GraphicsPipelineCreateInfo{
         .dynamicState = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR },
-        .allocator = initRes.vma,
         .input = {
             .bindings = {
                 { 0, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX },
@@ -968,12 +682,18 @@ int app(int argc, char **argv) {
             .depth = DEPTH_ATTACHMENT_CREATE_INFO.format,
         },
         .depthStencil = {
-            .depthTestEnable = true
+            .depthTestEnable = true,
+            .depthWriteEnable = true
+        },
+        .rasterization = {
+            .cullMode = VK_CULL_MODE_BACK_BIT,
+            .frontFace = VK_FRONT_FACE_CLOCKWISE
         },
         .blending = {
             .attachments = std::vector<VkPipelineColorBlendAttachmentState>(4, ALPHA_BLENDING),
         },
     });
+    vk::allocateDescriptors(gbuffer_pipeline);
     assert(gbuffer_pipeline.valid);
     renderGraph.addPass({
         .name = "G Buffer",
@@ -993,6 +713,8 @@ int app(int argc, char **argv) {
     ///////////////////////////////////////////////////
 
     auto lighting_pass = [&](vk::RenderPass const &pass, VkCommandBuffer cb) {
+        if(uniformBufferRealloc || updateDescriptors)
+            updateUniformBufferDescriptors(uniformBuffer, pass.pipeline, 1, 0);
         if(resizedAttachments || updateDescriptors) {
             vk::writeDescriptors(pass.pipeline, {
                 vk::DescriptorWrite{
@@ -1034,7 +756,7 @@ int app(int argc, char **argv) {
             });
         }
 
-        VkRenderingAttachmentInfo colorAttachmentInfo = {
+        VkRenderingAttachmentInfo attachment{
             .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
             .imageView = renderGraph.findResource("main_color").get<vk::Image>().view,
             .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -1042,7 +764,47 @@ int app(int argc, char **argv) {
             .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
             .clearValue{.color{{ 0.2f, 0.0f, 0.0f, 1.0f }}}
         };
-        fullscreenPass(pass, cb, colorAttachmentInfo, {window.size.x, window.size.y});
+
+        VkRenderingInfo renderingInfo{
+            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+            .renderArea = {
+                .offset = { 0, 0 },
+                .extent = { window.size.x, window.size.y },
+            },
+            .layerCount = 1,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &attachment,
+            .pDepthAttachment = nullptr
+        };
+
+        vkCmdBeginRendering(cb, &renderingInfo);
+
+        VkViewport vp{
+            .x = 0,
+            .y = static_cast<float>(window.size.y),
+            .width = static_cast<float>(window.size.x),
+            .height = -static_cast<float>(window.size.y),
+            .minDepth = 0.0f,
+            .maxDepth = 1.0f
+        };
+        vkCmdSetViewport(cb, 0, 1, &vp);
+        VkRect2D scissor{ .extent = {window.size.x, window.size.y} };
+        vkCmdSetScissor(cb, 0, 1, &scissor);
+
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.pipeline);
+
+        vk::bindDescriptorSet(cb, pass.pipeline, 0);
+        
+        MatrixData::CameraData uniformBufferData;
+        uniformBufferData.viewMat = camera.viewMat;
+        uniformBufferData.projMat = camera.projMat;
+        uint32_t offset = uniformBuffer.request(sizeof(uniformBufferData), frameIndex, properties.limits.minUniformBufferOffsetAlignment);
+        vk::bindDescriptorSet(cb, pass.pipeline, 1, 0, {offset});
+        std::memcpy(static_cast<char *>(uniformBuffer.getBuffer().mapped) + offset, &uniformBufferData, sizeof(uniformBufferData));
+        
+        vkCmdDraw(cb, 3, 1, 0, 0);
+
+        vkCmdEndRendering(cb);
     };
     auto lighting_shader = vk::makeShader({
         .backend = vk::ShaderBackend::SLANG,
@@ -1052,10 +814,10 @@ int app(int argc, char **argv) {
         .includeDirs = {"shaders"}
     });
     assert(lighting_shader.valid);
-    vk::Pipeline lighting_pipeline = vk::makePipeline(lighting_shader, vk::GraphicsPipelineCreateInfo{
-        .layout = {},
+    vk::Pipeline lighting_pipeline = vk::makePipeline(lighting_shader, {
+        .dynamicDescriptors = {{1, 0}}
+    }, vk::GraphicsPipelineCreateInfo{
         .dynamicState = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR },
-        .allocator = initRes.vma,
         .input = {},
         .attachments = {
             .color = std::vector<VkFormat>(1, COLOR_ATTACHMENT_CREATE_INFO.format),
@@ -1065,6 +827,7 @@ int app(int argc, char **argv) {
             .attachments = { NO_BLENDING }
         },
     });
+    vk::allocateDescriptors(lighting_pipeline);
     assert(lighting_pipeline.valid);
 
     renderGraph.addPass({
@@ -1256,21 +1019,22 @@ int app(int argc, char **argv) {
                     vk::destroy(pass.pipeline);
                     switch(pass.pipeline.type)
                     {
-                    case vk::Pipeline::Type::GRAPHICS:
-                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.graphics);
+                    case vk::Pipeline::Type::Graphics:
+                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.layout, pass.pipeline.createInfo.graphics);
                     break;
 
-                    case vk::Pipeline::Type::COMPUTE:
-                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.compute);
+                    case vk::Pipeline::Type::Compute:
+                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.layout, pass.pipeline.createInfo.compute);
                     break;
 
-                    case vk::Pipeline::Type::RAYTRACING:
-                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.raytracing);
+                    case vk::Pipeline::Type::RayTracing:
+                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.layout, pass.pipeline.createInfo.raytracing);
                     break;
 
                     default:
                     assert(false && "unknown pipeline");
                     }
+                    vk::allocateDescriptors(pass.pipeline);
                 }
 
                 updateDescriptors = true;

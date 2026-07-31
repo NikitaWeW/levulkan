@@ -14,6 +14,7 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 #include "Resource.hpp"
 #include "Shader.hpp"
 #include "vulkan.h"
+#include <set>
 #include <vector>
 #include <map>
 
@@ -26,19 +27,14 @@ struct DescriptorBinding {
 };
 
 struct PipelineLayoutCreateInfo {
-    std::map<DescriptorBinding, VkDescriptorType> descriptorTypeOverride; ///< Optional overrides of the descriptor type for specific bindings. Useful to make some descriptors dynamic.
-    std::map<DescriptorBinding, VkDescriptorBindingFlags> descriptorBindingFlags; ///< Optional additional flags for descriptor bindings. VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT is set automatically.s
-    std::map<uint32_t, VkDescriptorSetLayoutCreateFlags> descriptorSetFlags; ///< Optional flags for descriptor sets.
+    std::set<DescriptorBinding> dynamicDescriptors;
     std::map<DescriptorBinding, uint32_t> unsizedDescriptorSize; ///< Self explanatory. Each unsized descriptor array must have an entry here.
-
-    uint32_t maxVariableCountSize = 100;
-    uint32_t maxDescriptorSets = 16;
+    std::map<DescriptorBinding, VkDescriptorBindingFlags> descriptorBindingFlags; ///< Optional additional flags for descriptor bindings. VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT is set automatically.
+    std::map<uint32_t, VkDescriptorSetLayoutCreateFlags> descriptorSetFlags; ///< Optional flags for descriptor sets.
 };
 struct GraphicsPipelineCreateInfo {
-    PipelineLayoutCreateInfo layout; ///< Pipeline layout create info
     VkPipelineCreateFlags flags = 0;
     std::vector<VkDynamicState> dynamicState; ///< Dynamic state to enable.
-    VmaAllocator allocator;
 
     struct Input {
         std::vector<VkVertexInputBindingDescription> bindings;
@@ -54,7 +50,7 @@ struct GraphicsPipelineCreateInfo {
     struct DepthStencil {
         VkPipelineDepthStencilStateCreateFlags flags = 0;
         bool depthTestEnable = false;
-        bool depthWriteEnable = true;
+        bool depthWriteEnable = false;
         VkCompareOp depthCompareOp = VK_COMPARE_OP_LESS;
         bool depthBoundsTestEnable = false;
         bool stencilTestEnable = false;
@@ -101,47 +97,47 @@ struct GraphicsPipelineCreateInfo {
     } blending;
 };
 struct ComputePipelineCreateInfo {
-    PipelineLayoutCreateInfo layout; ///< Pipeline layout create info
     VkPipelineCreateFlags flags = 0;
-    VmaAllocator allocator = VK_NULL_HANDLE;
 };
 struct RaytracingPipelineCreateInfo {
-    PipelineLayoutCreateInfo layout; ///< Pipeline layout create info
     VkPipelineCreateFlags flags = 0;
-    VmaAllocator allocator = VK_NULL_HANDLE;
 };
 
 /// @brief The vulkan pipeline.
 struct Pipeline {
-    enum class Type { INVALID = 0, GRAPHICS, COMPUTE, RAYTRACING };
-    struct Layout
-    {
+    enum class Type { Invalid = 0, Graphics, Compute, RayTracing };
+    struct Layout {
         VkPipelineLayout layout;
         SparseSet<VkDescriptorSetLayout> descLayouts;
-        SparseSet<VkDescriptorSet> descSets;
-        VkDescriptorPool descPool;
-
-        void *_reflection = nullptr; // Internal
     };
-
-    Type type = Type::INVALID;
+    
+    struct DescriptorSets {
+        std::vector<SparseSet<VkDescriptorSet>> sets;
+        VkDescriptorPool pool;
+    };
+    
+    Type type = Type::Invalid;
+    bool valid = false;
+    
     struct {
+        PipelineLayoutCreateInfo layout;
         GraphicsPipelineCreateInfo graphics;
         ComputePipelineCreateInfo compute;
         RaytracingPipelineCreateInfo raytracing;
     } createInfo;
-
-    bool valid = false;
-
-    // Owning
+    
     VkPipeline pipeline;
     Layout layout;
+    DescriptorSets descriptorSets;
+    void *_reflection = nullptr; // Internal
 
-    // Not owning
     VkDevice device;
-    VmaAllocator allocator;
 };
-// FIXME: this runs on hopes and dreams
+struct DescriptorAllocationInfo {
+    uint numFrames = 1; 
+    uint maxVariableCountSize = 100; 
+    uint maxDescriptorSets = 16;
+};
 struct DescriptorWrite {
     uint32_t dstSet = 0;
     uint32_t dstBinding = 0;
@@ -156,13 +152,15 @@ struct DescriptorWrite {
 };
 
 /// @brief Make a pipeline based on the shader reflection and other stuff.
-Pipeline makePipeline(Shader const &shader, GraphicsPipelineCreateInfo const &ci);
+Pipeline makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout, GraphicsPipelineCreateInfo const &ci);
 /// @copydoc makePipeline
-Pipeline makePipeline(Shader const &shader, ComputePipelineCreateInfo const &ci);
+Pipeline makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout, ComputePipelineCreateInfo const &ci);
 /// @copydoc makePipeline
-Pipeline makePipeline(Shader const &shader, RaytracingPipelineCreateInfo const &ci);
+Pipeline makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout, RaytracingPipelineCreateInfo const &ci);
 
-void writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite> const &writes);
+void allocateDescriptors(vk::Pipeline &pipeline, DescriptorAllocationInfo ci = {});
+void writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite> const &writes, uint frame = 0);
+void bindDescriptorSet(VkCommandBuffer cb, Pipeline const &pipeline, uint32_t set, uint32_t frame = 0, std::vector<uint32_t> offsets = {});
 
 void destroy(Pipeline &pipeline);
 

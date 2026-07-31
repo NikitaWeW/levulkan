@@ -51,13 +51,13 @@ struct Material
     struct Properties
     {
         glm::vec3 ambient;
-        glm::vec4 albedo;
+        glm::vec4 albedo{1.0f};
         glm::vec3 specular;
         glm::vec3 emission;
 
         float shininess;
-        float metallic;
-        float roughness;
+        float metallic = 1.0f;
+        float roughness = 1.0f;
         float ior;
     } properties;
 };
