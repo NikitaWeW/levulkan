@@ -9,7 +9,7 @@
 #include "Renderdoc.hpp"
 #include "Controller.hpp"   
 #include "resource/Resources.hpp"
-// #include "Renderer.hpp"
+#include "Renderer.hpp"
 
 Registry sReg;
 constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
@@ -98,7 +98,7 @@ static Entity loadTexture(std::string_view path, TextureLoaderOptions options = 
 
     return eTexture;
 }
-static Entity loadModel(std::string_view path, std::optional<Material> material = {}, ModelLoaderOptions options = {}, bool required = true) {
+static Entity loadModel(std::string_view path, std::optional<Material::Textures> textures = {}, ModelLoaderOptions options = {}, bool required = true) {
     static ModelLoader loader(sReg.getReg());
     
     auto eModel = Entity{&sReg, loader.loadFromFile(path, options)};
@@ -111,18 +111,18 @@ static Entity loadModel(std::string_view path, std::optional<Material> material 
     }
     auto &model = eModel.get<Model>();
     
-    if(material.has_value())
+    if(textures.has_value())
     {
         auto defaultMaterial = loader.getDefaultMaterial();
-        if(material->textures.albedo       == INVALID_ENTITY) material->textures.albedo       = defaultMaterial.textures.albedo;
-        if(material->textures.metallic     == INVALID_ENTITY) material->textures.metallic     = defaultMaterial.textures.metallic;
-        if(material->textures.roughness    == INVALID_ENTITY) material->textures.roughness    = defaultMaterial.textures.roughness;
-        if(material->textures.ambient      == INVALID_ENTITY) material->textures.ambient      = defaultMaterial.textures.ambient;
-        if(material->textures.normal       == INVALID_ENTITY) material->textures.normal       = defaultMaterial.textures.normal;
-        if(material->textures.displacement == INVALID_ENTITY) material->textures.displacement = defaultMaterial.textures.displacement;
+        if(textures->albedo       == INVALID_ENTITY) textures->albedo       = defaultMaterial.textures.albedo;
+        if(textures->metallic     == INVALID_ENTITY) textures->metallic     = defaultMaterial.textures.metallic;
+        if(textures->roughness    == INVALID_ENTITY) textures->roughness    = defaultMaterial.textures.roughness;
+        if(textures->ambient      == INVALID_ENTITY) textures->ambient      = defaultMaterial.textures.ambient;
+        if(textures->normal       == INVALID_ENTITY) textures->normal       = defaultMaterial.textures.normal;
+        if(textures->displacement == INVALID_ENTITY) textures->displacement = defaultMaterial.textures.displacement;
 
         for(auto &mesh : model.meshes)
-            mesh.material = material.value();
+            mesh.material.textures = textures.value();
     }
 
     return eModel;
@@ -234,7 +234,7 @@ int app(int argc, char **argv) {
     vk::InitInfo initInfo{
         .appName = "levulkan",
         .window = window.handle,
-        .version = VK_API_VERSION_1_3,
+        .version = VK_API_VERSION_1_4,
         .queues = {VK_QUEUE_GRAPHICS_BIT, VK_QUEUE_COMPUTE_BIT, VK_QUEUE_TRANSFER_BIT},
         .deviceFeatures = {
             .features = {
@@ -312,15 +312,13 @@ int app(int argc, char **argv) {
     ////////////////////////////////////////////////////////////////
 
     { // Scene
-        const auto prototypeMaterial = Material{
-            .textures = {
-                .albedo = loadTexture("assets/textures/prototype/texture_03.png")
-            }
+        const auto prototypeTextures = Material::Textures{
+            .albedo = loadTexture("assets/textures/prototype/texture_03.png")
         };
-        const auto suzanne = loadModel("assets/models/suzanne.glb", prototypeMaterial);
-        const auto cube    = loadModel("assets/models/cube.glb",    prototypeMaterial);
-        const auto sphere  = loadModel("assets/models/sphere.glb",  prototypeMaterial);
-        const auto teapot  = loadModel("assets/models/teapot.glb",  prototypeMaterial);
+        const auto suzanne = loadModel("assets/models/suzanne.glb", prototypeTextures);
+        const auto cube    = loadModel("assets/models/cube.glb",    prototypeTextures);
+        const auto sphere  = loadModel("assets/models/sphere.glb",  prototypeTextures);
+        const auto teapot  = loadModel("assets/models/teapot.glb",  prototypeTextures);
         
         const std::vector<Entity> props{suzanne, cube, sphere, teapot};
         const glm::uvec3 numProps = {10, 3, 5};
@@ -495,6 +493,7 @@ int app(int argc, char **argv) {
         ResizeToSwapchain{}
     ));
     COLOR_ATTACHMENT_CREATE_INFO.name = "gbuffer_normal";
+    COLOR_ATTACHMENT_CREATE_INFO.format = VK_FORMAT_R32G32B32A32_SFLOAT;
     renderGraph.setResource("gbuffer_normal", sReg.create(
         vk::makeImage(COLOR_ATTACHMENT_CREATE_INFO),
         ResizeToSwapchain{}
@@ -605,10 +604,7 @@ int app(int argc, char **argv) {
         vkCmdSetScissor(cb, 0, 1, &scissor);
 
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.pipeline);
-        // Cannot bind all of them because set 0 has dynamic offset
-        // Might be optimized away
-        if(pass.pipeline.layout.descSets.contains(1))
-            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 1, 1, &pass.pipeline.layout.descSets.get(1), 0, nullptr);
+        vk::bindDescriptorSet(cb, pass.pipeline, 1);
 
         for(auto eInstance : sReg.view<ModelInstance>())
         {
@@ -636,8 +632,7 @@ int app(int argc, char **argv) {
                 uniformBufferData.uMaterial = mesh.material;
 
                 uint32_t offset = uniformBuffer.request(sizeof(uniformBufferData), frameIndex, properties.limits.minUniformBufferOffsetAlignment);
-                if(pass.pipeline.layout.descSets.contains(0))
-                    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 0, 1, &pass.pipeline.layout.descSets.get(0), 1, &offset);
+                vk::bindDescriptorSet(cb, pass.pipeline, 0, 0, {offset});
                 std::memcpy(static_cast<char *>(uniformBuffer.getBuffer().mapped) + offset, &uniformBufferData, sizeof(uniformBufferData));
 
                 VkDeviceSize vOffset = 0;
@@ -661,15 +656,12 @@ int app(int argc, char **argv) {
         .includeDirs = {"shaders"}
     });
     assert(gbuffer_shader.valid);
-    vk::Pipeline gbuffer_pipeline = vk::makePipeline(gbuffer_shader, vk::GraphicsPipelineCreateInfo{
-        .layout = {
-            .descriptorTypeOverride = {
-                {{.set = 0, .binding = 0}, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC}
-            },
+    vk::Pipeline gbuffer_pipeline = vk::makePipeline(gbuffer_shader, {
+            .dynamicDescriptors = {{.set = 0, .binding = 0}},
             .unsizedDescriptorSize = {
                 {{.set = 1, .binding = 0}, imageInfos.size()}
             },
-        },
+        }, vk::GraphicsPipelineCreateInfo{
         .dynamicState = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR },
         .input = {
             .bindings = {
@@ -693,10 +685,15 @@ int app(int argc, char **argv) {
             .depthTestEnable = true,
             .depthWriteEnable = true
         },
+        .rasterization = {
+            .cullMode = VK_CULL_MODE_BACK_BIT,
+            .frontFace = VK_FRONT_FACE_CLOCKWISE
+        },
         .blending = {
             .attachments = std::vector<VkPipelineColorBlendAttachmentState>(4, ALPHA_BLENDING),
         },
     });
+    vk::allocateDescriptors(gbuffer_pipeline);
     assert(gbuffer_pipeline.valid);
     renderGraph.addPass({
         .name = "G Buffer",
@@ -796,12 +793,13 @@ int app(int argc, char **argv) {
 
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.pipeline);
 
-        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 0, 1, &pass.pipeline.layout.descSets.get(0), 1, nullptr);
+        vk::bindDescriptorSet(cb, pass.pipeline, 0);
         
         MatrixData::CameraData uniformBufferData;
+        uniformBufferData.viewMat = camera.viewMat;
+        uniformBufferData.projMat = camera.projMat;
         uint32_t offset = uniformBuffer.request(sizeof(uniformBufferData), frameIndex, properties.limits.minUniformBufferOffsetAlignment);
-        if(pass.pipeline.layout.descSets.contains(1))
-            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.layout.layout, 1, 1, &pass.pipeline.layout.descSets.get(1), 1, &offset);
+        vk::bindDescriptorSet(cb, pass.pipeline, 1, 0, {offset});
         std::memcpy(static_cast<char *>(uniformBuffer.getBuffer().mapped) + offset, &uniformBufferData, sizeof(uniformBufferData));
         
         vkCmdDraw(cb, 3, 1, 0, 0);
@@ -816,12 +814,9 @@ int app(int argc, char **argv) {
         .includeDirs = {"shaders"}
     });
     assert(lighting_shader.valid);
-    vk::Pipeline lighting_pipeline = vk::makePipeline(lighting_shader, vk::GraphicsPipelineCreateInfo{
-        .layout = {
-            .descriptorTypeOverride = {
-                {{1, 0}, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC}
-            }
-        },
+    vk::Pipeline lighting_pipeline = vk::makePipeline(lighting_shader, {
+        .dynamicDescriptors = {{1, 0}}
+    }, vk::GraphicsPipelineCreateInfo{
         .dynamicState = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR },
         .input = {},
         .attachments = {
@@ -832,6 +827,7 @@ int app(int argc, char **argv) {
             .attachments = { NO_BLENDING }
         },
     });
+    vk::allocateDescriptors(lighting_pipeline);
     assert(lighting_pipeline.valid);
 
     renderGraph.addPass({
@@ -1024,20 +1020,21 @@ int app(int argc, char **argv) {
                     switch(pass.pipeline.type)
                     {
                     case vk::Pipeline::Type::Graphics:
-                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.graphics);
+                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.layout, pass.pipeline.createInfo.graphics);
                     break;
 
                     case vk::Pipeline::Type::Compute:
-                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.compute);
+                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.layout, pass.pipeline.createInfo.compute);
                     break;
 
                     case vk::Pipeline::Type::RayTracing:
-                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.raytracing);
+                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.layout, pass.pipeline.createInfo.raytracing);
                     break;
 
                     default:
                     assert(false && "unknown pipeline");
                     }
+                    vk::allocateDescriptors(pass.pipeline);
                 }
 
                 updateDescriptors = true;

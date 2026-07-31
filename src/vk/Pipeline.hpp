@@ -160,7 +160,7 @@ Pipeline makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout, Ray
 
 void allocateDescriptors(vk::Pipeline &pipeline, DescriptorAllocationInfo ci = {});
 void writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite> const &writes, uint frame = 0);
-void bindDescriptors(VkCommandBuffer cb, vk::Pipeline const &pipeline, std::vector<uint32_t> dynamicOffsets, uint frame = 0);
+void bindDescriptorSet(VkCommandBuffer cb, Pipeline const &pipeline, uint32_t set, uint32_t frame = 0, std::vector<uint32_t> offsets = {});
 
 void destroy(Pipeline &pipeline);
 

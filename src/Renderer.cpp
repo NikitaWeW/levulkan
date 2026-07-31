@@ -391,7 +391,8 @@ vk::Shader RenderManager::makeShader(std::string_view name) {
         .includeDirs       = mShaderInfo.includeDirs,
         .systemIncludeDirs = mShaderInfo.systemIncludeDirs,
         .definitions       = mShaderInfo.definitions,
-        .optimization      = mShaderInfo.optimization,
+        .debugInfo         = true,
+        .optimize          = true,
     };
 
     return vk::makeShader(ci);

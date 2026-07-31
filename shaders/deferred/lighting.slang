@@ -1,7 +1,7 @@
 #include "common/MatrixData.slang"
 
 struct UniformBuffer {
-    CameraMatrixData cameraMatrixData;
+    CameraMatrixData cameraMatrixData; // Inverted
 };
 
 [[vk::binding(0, 1)]]
@@ -28,6 +28,7 @@ float4 fsMain(VsOut in) {
             return 0;
 
         normal = normalValue.rgb * 2 - 1;
+        normal = float4(normal, 0).xyz;
     }
     
     // Temporary phong lighting
@@ -38,7 +39,7 @@ float4 fsMain(VsOut in) {
     float3 diffuse = float3(max(dot(normal, L), 0.0025));
     float3 specular = float3(pow(max(dot(R, V), 0.0), 16.0) * 0.75) * 0;
     float4 oColor = float4(diffuse * albedo.rgb + specular, 1.0);
-    // oColor.rgb = normal;
+    // oColor.rgb = normal;    
 
     // Tone mapping
     oColor.rgb = reinhard(oColor.rgb);

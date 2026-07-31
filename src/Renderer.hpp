@@ -111,10 +111,6 @@ struct SimpleShaderCreateInfo {
     std::vector<std::string> systemIncludeDirs;
     std::vector<std::pair<std::string, std::string>> definitions;
 
-    bool debugInfo = true;
-    vk::ShaderCreateInfo::Optimization optimization = vk::ShaderCreateInfo::Optimization::Default;
-    bool obfuscate = false;
-
     uint32_t targetVersion = VK_API_VERSION_1_3;
     vk::SpirvVersion spirvVersion = vk::SpirvVersion::SpirvVersion_1_6;
 };

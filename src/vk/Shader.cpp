@@ -154,11 +154,11 @@ static const std::unordered_map<std::string, VkShaderStageFlagBits> gVulkanStage
     {"VK_SHADER_STAGE_CALLABLE_BIT_KHR"            , VK_SHADER_STAGE_CALLABLE_BIT_KHR           },
 };
 static const std::unordered_map<uint32_t, spv_target_env> gVulkanVersionToSpvTargetEnv = {
-    {VK_VERSION_1_0, spv_target_env::SPV_ENV_VULKAN_1_0},
-    {VK_VERSION_1_1, spv_target_env::SPV_ENV_VULKAN_1_1},
-    {VK_VERSION_1_2, spv_target_env::SPV_ENV_VULKAN_1_2},
-    {VK_VERSION_1_3, spv_target_env::SPV_ENV_VULKAN_1_3},
-    {VK_VERSION_1_4, spv_target_env::SPV_ENV_VULKAN_1_4},
+    {VK_API_VERSION_1_0, spv_target_env::SPV_ENV_VULKAN_1_0},
+    {VK_API_VERSION_1_1, spv_target_env::SPV_ENV_VULKAN_1_1},
+    {VK_API_VERSION_1_2, spv_target_env::SPV_ENV_VULKAN_1_2},
+    {VK_API_VERSION_1_3, spv_target_env::SPV_ENV_VULKAN_1_3},
+    {VK_API_VERSION_1_4, spv_target_env::SPV_ENV_VULKAN_1_4},
 };
 
 template<typename T = char>
@@ -328,23 +328,24 @@ static std::vector<ShaderStage> collectSources(Shader &program) {
     return stages;
 }
 
-static void spirvToolsMessageCallback(spv_message_level_t level, char const *source, spv_position_t const &position, char const *message) {
-    spdlog::level::level_enum logLevel;
-    
+static spdlog::level::level_enum spvMessageLevelToSpdlog(spv_message_level_t level) {
     switch(level) {
-    case SPV_MSG_FATAL:          logLevel = spdlog::level::err;
-    case SPV_MSG_INTERNAL_ERROR: logLevel = spdlog::level::err;
-    case SPV_MSG_ERROR:          logLevel = spdlog::level::err;
-    case SPV_MSG_WARNING:        logLevel = spdlog::level::warn;
-    case SPV_MSG_INFO:           logLevel = spdlog::level::info;
-    case SPV_MSG_DEBUG:          logLevel = spdlog::level::debug;
-    default: logLevel = spdlog::level::info; break;
+    case SPV_MSG_FATAL:          return spdlog::level::err;
+    case SPV_MSG_INTERNAL_ERROR: return spdlog::level::err;
+    case SPV_MSG_ERROR:          return spdlog::level::err;
+    case SPV_MSG_WARNING:        return spdlog::level::warn;
+    case SPV_MSG_INFO:           return spdlog::level::info;
+    case SPV_MSG_DEBUG:          return spdlog::level::debug;
+    default:                     return spdlog::level::warn;
     }
-
-    LOG(logLevel, "Spirv optimizer at {}:{}:{} - {}", source, position.line, position.column, message);
 }
 static void runOptimizer(Shader &program, spvtools::Optimizer &optimizer) {
     for(auto &bin : program.binaries) {
+        auto messageCallback = [&program, &bin](spv_message_level_t level, char const *, spv_position_t const &position, char const *message) {
+            LOG(spvMessageLevelToSpdlog(level), "Spirv optimizer at {}:{}:{} from {} -- {}", bin.path, position.line, position.column, program.createInfo.src, message);
+        };
+        optimizer.SetMessageConsumer(messageCallback);
+
         std::vector<uint32_t> optimizedSpriv;
         auto res = optimizer.Run(bin.spirv.data(), bin.spirv.size(), &optimizedSpriv);
         if(!res) {
@@ -359,7 +360,6 @@ static void stripSpirv(Shader &program) {
     spvtools::OptimizerOptions optimizerOptions;
     optimizerOptions.set_preserve_bindings(true);
     spvtools::Optimizer optimizer(gVulkanVersionToSpvTargetEnv.at(program.createInfo.targetVersion));
-    optimizer.SetMessageConsumer(spirvToolsMessageCallback);
 
     optimizer.RegisterSizePasses(true);
     optimizer.RegisterPass(spvtools::CreateStripDebugInfoPass());
@@ -371,7 +371,6 @@ static void optimizeSpirv(Shader &program) {
     spvtools::OptimizerOptions optimizerOptions;
     optimizerOptions.set_preserve_bindings(true);
     spvtools::Optimizer optimizer(gVulkanVersionToSpvTargetEnv.at(program.createInfo.targetVersion));
-    optimizer.SetMessageConsumer(spirvToolsMessageCallback);
 
     optimizer.RegisterPerformancePasses(true);
     
@@ -390,6 +389,22 @@ static void reflectSpirv(Shader &program) {
         bin.reflection.emplace(module);
     }
 }
+static bool validateSpirv(Shader &program) {
+    spvtools::SpirvTools tools(gVulkanVersionToSpvTargetEnv.at(program.createInfo.targetVersion));
+
+    bool valid = true;
+
+    for(auto &bin : program.binaries) {
+        auto messageCallback = [&program, &bin](spv_message_level_t level, char const *, spv_position_t const &position, char const *message) {
+            LOG(spvMessageLevelToSpdlog(level), "Spirv validator at {}:{}:{} from {} -- {}", bin.path, position.line, position.column, program.createInfo.src, message);
+        };
+        tools.SetMessageConsumer(messageCallback);
+
+        valid = valid && tools.Validate(bin.spirv);
+    }
+
+    return valid;
+}
 
 static bool createModules(Shader &program) { 
     for(auto &bin : program.binaries) {
@@ -404,6 +419,8 @@ static bool createModules(Shader &program) {
             return false;
         }
     }
+
+    return true;
 }
 
 #ifdef SHADER_ENABLE_GLSL
@@ -1150,6 +1167,12 @@ Shader vk::makeShader(ShaderCreateInfo const &ci) {
     } else {
         LOG_ERROR("Cannot find binaries in \"{}\" or compile from source \"{}\" shaders!", program.createInfo.bin, program.createInfo.src);
         return program;
+    }
+
+    if(program.createInfo.validate) {
+        if(!validateSpirv(program)) {
+            LOG_ERROR("Invalid spirv output!");
+        }
     }
 
     // Reflect before stripping.

@@ -67,6 +67,7 @@ struct ShaderCreateInfo {
     std::vector<std::string> includeDirs; ///< Local ("") include directories. First most relevant. Source directory added implicitly.
     std::vector<std::string> systemIncludeDirs; ///< System (<>) include directories. First most relevant.
     std::vector<std::pair<std::string, std::string>> definitions; ///< Preprocessor definitions.
+    bool validate = true;   ///< Validate the spirv output.
     bool debugInfo = true; ///< Compile with debug info.
     bool optimize = true; ///< Optimize source as well as spirv.
     bool reflect = true; ///< Generate spirv reflection.

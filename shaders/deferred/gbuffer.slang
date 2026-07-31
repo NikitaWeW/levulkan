@@ -65,8 +65,8 @@ FsOut fsMain(VsOut in) {
     out.normal.xyz = mul(transpose(in.tbn), out.normal.xyz);
     out.normal.xyz = normalize(out.normal.xyz) * 0.5 + 0.5;
 
-    out.pbr.r = clamp(uBuffer.material.properties.metallic + texture(uBuffer.material.textures.metallic, uv).r, 0, 1);
-    out.pbr.g = clamp(uBuffer.material.properties.roughness + texture(uBuffer.material.textures.roughness, uv).r, 0, 1);
+    out.pbr.r = clamp(uBuffer.material.properties.metallic * texture(uBuffer.material.textures.metallic, uv).r, 0, 1);
+    out.pbr.g = clamp(uBuffer.material.properties.roughness * texture(uBuffer.material.textures.roughness, uv).r, 0, 1);
     out.pbr.b = 0;
     out.pbr.a = 0;
 
