@@ -141,7 +141,7 @@ public:
 
 /// @brief Entity handle that requires specified components
 template<typename Op = std::logical_and<bool>, typename... Components>
-class RestrictedEntity : public Entity {
+class RestrictedEntity_T : public Entity {
 private:
     class OpWrapper {
     private:
@@ -160,15 +160,15 @@ public:
         return (OpWrapper(this->has<Components>()) % ...).get();
     }
     
-    inline RestrictedEntity() = default;
-    inline RestrictedEntity(Entity const &e) { *this = e; }
-    inline RestrictedEntity(Entity &&e) { *this = std::move(e); }
-    inline RestrictedEntity &operator=(Entity const &e) { 
+    inline RestrictedEntity_T() = default;
+    inline RestrictedEntity_T(Entity const &e) { *this = e; }
+    inline RestrictedEntity_T(Entity &&e) { *this = std::move(e); }
+    inline RestrictedEntity_T &operator=(Entity const &e) { 
         this->Entity::operator=(e);
         ECS_ASSERT(valid(), "Invalid RestrictedEntity!");
         return *this;
     }
-    inline RestrictedEntity &operator=(Entity &&e) { 
+    inline RestrictedEntity_T &operator=(Entity &&e) { 
         this->Entity::operator=(std::move(e));
         ECS_ASSERT(valid(), "Invalid RestrictedEntity!");
         return *this;
@@ -176,13 +176,13 @@ public:
 };
 
 template<typename Component>
-using REntity = RestrictedEntity<std::logical_or<>, Component>;
+using RestrictedEntity = RestrictedEntity_T<std::logical_or<>, Component>;
 
 template<typename... Components>
-using RAllEntity = RestrictedEntity<std::logical_and<>, Components...>;
+using RestrictedAllEntity = RestrictedEntity_T<std::logical_and<>, Components...>;
 
 template<typename... Components>
-using RAnyEntity = RestrictedEntity<std::logical_or<>, Components...>;
+using RestrictedAnyEntity = RestrictedEntity_T<std::logical_or<>, Components...>;
 
 inline Registry::Registry(Registry const &o) { *this = o; }
 inline Registry::Registry(Registry &&o) { *this = std::move(o); }

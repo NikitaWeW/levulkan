@@ -114,31 +114,34 @@ struct SimpleShaderCreateInfo {
     uint32_t targetVersion = VK_API_VERSION_1_3;
     vk::SpirvVersion spirvVersion = vk::SpirvVersion::SpirvVersion_1_6;
 };
-struct SimplePipeline {
+struct SimplePipelineCreateInfo {
     vk::Pipeline::Type type = vk::Pipeline::Type::Invalid;
     std::vector<VkDynamicState> dynamicState = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineCreateFlags flags = 0;
-    struct {
-        std::unordered_map<std::string, Entity> descriptors;
-    } layout;
-    struct {
+
+    struct Graphics {
         vk::GraphicsPipelineCreateInfo::Input         input;
         vk::GraphicsPipelineCreateInfo::DepthStencil  depthStencil;
         vk::GraphicsPipelineCreateInfo::Rasterization rasterization;
         vk::GraphicsPipelineCreateInfo::Multisample   multisample;
         VkPipelineColorBlendAttachmentState           blending;
     } graphics;
+
+    std::string shader;
 };
 struct SimpleRenderPass {
     std::string                                     name;
-    std::string                                     shader;
     std::vector<vk::RenderPass::ResourceDependency> reads;
     std::vector<vk::RenderPass::ResourceWrite>      writes;
-    SimplePipeline                                  pipeline;
     std::function<vk::RenderPass::callback_t>       callback;
 };
+// Component
+struct DescriptorArray {
+    std::vector<Entity> resources;
+};
+
 class RenderManager {
-    SimpleShaderCreateInfo mShaderInfo;
+    SimpleShaderCreateInfo mShaderCreateInfo;
     vk::AllocationCreateInfo mAllocInfo;
     vk::RenderGraph mRenderGraph;
     Entity mSwapchain;
@@ -150,14 +153,20 @@ class RenderManager {
     vk::Pipeline makePipeline(SimpleRenderPass const &pass, VkQueueFlagBits queue);
 public:
     RenderManager() = default;
-    RenderManager(vk::AllocationCreateInfo allocInfo, SimpleShaderCreateInfo shaderInfo, REntity<vk::Swapchain> swapchain, VkPhysicalDevice device);
+    RenderManager(vk::AllocationCreateInfo allocInfo, SimpleShaderCreateInfo shaderInfo, RestrictedEntity<vk::Swapchain> swapchain, VkPhysicalDevice device);
     ~RenderManager();
 
     Entity addColorResource(std::string_view name, glm::uvec2 size = {0, 0});
     Entity addDepthStencilResource(std::string_view name, glm::uvec2 size = {0, 0});
     Entity addBufferResource(std::string_view name, uint32_t size, void const *data = nullptr, VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    void addResource(RAnyEntity<vk::Image, vk::Buffer> eResource);
+    void addResource(RestrictedAnyEntity<vk::Image, vk::Buffer, DescriptorArray> eResource);
 
+    void addPipeline(std::string_view name, SimplePipelineCreateInfo ci);
+    void addShader(std::string_view name);
+    
     void addPass(vk::RenderPass const &pass);
-    void addPass(SimpleRenderPass const &pass);
+    void addPass(std::string_view name);
+
+    void attachPipeline(std::string_view passName, std::string_view pipelineName);
+    void attachResource(std::string_view passName, std::string_view resourceName);
 };

@@ -99,7 +99,7 @@ struct Barrier {
     VkDeviceSize offset;
     VkDeviceSize size;
 
-    inline VkImageMemoryBarrier2 getImageBarrier(RestrictedEntity<std::logical_or<>, vk::Image, vk::Buffer> eResource) const {
+    inline VkImageMemoryBarrier2 getImageBarrier(RestrictedEntity_T<std::logical_or<>, vk::Image, vk::Buffer> eResource) const {
         assert(eResource.has<vk::Image>());
         auto const &image = eResource.get<vk::Image>();
         return {
@@ -116,7 +116,7 @@ struct Barrier {
             .subresourceRange = subresourceRange
         };
     }
-    inline VkBufferMemoryBarrier2 getBufferBarrier(RestrictedEntity<std::logical_or<>, vk::Image, vk::Buffer> eResource) const {
+    inline VkBufferMemoryBarrier2 getBufferBarrier(RestrictedEntity_T<std::logical_or<>, vk::Image, vk::Buffer> eResource) const {
         assert(eResource.has<vk::Buffer>());
         auto const &buffer = eResource.get<vk::Buffer>();
         return {
@@ -168,7 +168,7 @@ public:
 
     /// Set a physical resource associated with the name.
     /// Does not outdate the render graph, e.g. can be used without rebuilding.
-    void setResource(std::string const &name, RestrictedEntity<std::logical_or<>, vk::Image, vk::Buffer> resource);
+    void setResource(std::string const &name, RestrictedEntity_T<std::logical_or<>, vk::Image, vk::Buffer> resource);
     /// @returns Invalid entity if not found.
     Entity findResource(std::string const &name) const;
     void removeResource(std::string const &name);

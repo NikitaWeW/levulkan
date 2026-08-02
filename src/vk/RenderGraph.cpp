@@ -60,7 +60,7 @@ void RenderGraph::clear() {
     mResourceNameToIndex.clear();
 }
 
-void RenderGraph::setResource(std::string const &name, RestrictedEntity<std::logical_or<>, vk::Image, vk::Buffer> resource) {
+void RenderGraph::setResource(std::string const &name, RestrictedEntity_T<std::logical_or<>, vk::Image, vk::Buffer> resource) {
     auto index = mResourceNameToIndex.contains(name) ? mResourceNameToIndex.at(name) : (mResourceNameToIndex[name] = mNextIndex++);
     mResources[index] = resource;
 }
