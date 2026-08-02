@@ -439,7 +439,7 @@ static void rtrim(std::string &s) {
     }).base(), s.end());
 }
 // Thanks to https://stackoverflow.com/a/14266139
-std::vector<std::string> split(std::string s, std::string const &delimiter) {
+static std::vector<std::string> split(std::string s, std::string const &delimiter) {
     std::vector<std::string> tokens;
     size_t pos = 0;
     std::string token;

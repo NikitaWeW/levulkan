@@ -6,20 +6,27 @@ project(levulkan C CXX)
 
 include(cmake/cpm.cmake)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+set(BUILD_SHARED_LIBS OFF)
 
 foreach(LOADER GLTF)
     set(ASSIMP_BUILD_${LOADER}_IMPORTER ON)
 endforeach()
-set(BUILD_SHARED_LIBS OFF)
 
 set(SPIRV_REFLECT_STATIC_LIB ON)
 set(SPIRV_REFLECT_EXECUTABLE OFF)
 set(SPIRV_REFLECT_INSTALL OFF)
+
 set(ASSIMP_NO_EXPORT ON)
 set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF)
 set(ASSIMP_BUILD_TESTS OFF)
 set(ASSIMP_INSTALL OFF)
 set(ASSIMP_WARNINGS_AS_ERRORS OF)
+
+set(ENABLE_COMMONCRYPTO OFF)
+set(ENABLE_GNUTLS OFF)
+set(ENABLE_WINDOWS_CRYPTO OFF)
+set(LIBZIP_DO_INSTALL OFF)
+set(ENABLE_ZSTD OFF)
 
 CPMAddPackage(
     NAME assimp
@@ -42,6 +49,7 @@ CPMAddPackage("gh:KhronosGroup/Spirv-Reflect#vulkan-sdk-1.4.341.0")
 CPMAddPackage("gh:jeremy-rifkin/cpptrace#v1.0.4")
 CPMAddPackage("gh:nlohmann/json#v3.12.0")
 CPMAddPackage("gh:KhronosGroup/Spirv-Headers#vulkan-sdk-1.4.341.0")
+CPMAddPackage("gh:nih-at/libzip#4cd7310")
 
 find_package(SPIRV-Tools)
 if(NOT SPIRV-Tools_FOUND)
@@ -80,7 +88,7 @@ set(LEVULKAN_SOURCE
 )
 
 add_executable(levulkan ${LEVULKAN_SOURCE})
-target_link_libraries(levulkan PRIVATE spdlog nicecs::ecs glm assimp meshoptimizer cpptrace::cpptrace nlohmann_json::nlohmann_json)
+target_link_libraries(levulkan PRIVATE spdlog nicecs::ecs glm assimp meshoptimizer cpptrace::cpptrace nlohmann_json::nlohmann_json zip)
 target_link_libraries(levulkan PRIVATE glfw volk GPUOpen::VulkanMemoryAllocator)
 target_link_libraries(levulkan PRIVATE glslang::glslang glslang::glslang-default-resource-limits spirv-reflect-static SPIRV-Headers SPIRV-Tools slang::slang)
 target_include_directories(levulkan PRIVATE "src")

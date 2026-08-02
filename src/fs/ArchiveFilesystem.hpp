@@ -1,6 +1,7 @@
 #pragma once
 #include "ECS.hpp"
 #include "IFilesystem.hpp"
+#include "zip.h"
 
 namespace fs {
 
@@ -38,9 +39,14 @@ protected:
         std::unique_ptr<ArchiveFile> file;
         uint id = 0;
     };
+    zip_t *mZip = nullptr;
     SparseSet<FileHandle> mOpenedFiles;
     uint mNextId = 1;
     Path mBasePath = ".";
+
+    // FIXME: No way storing password in plain text is a good idea.
+    // Maybe this will help: https://en.wikipedia.org/wiki/Key_derivation_function
+    std::string mPassword;
 
     friend ArchiveFile;
 
@@ -64,8 +70,11 @@ public:
     bool isRegularFile(Path const &path) override;
     bool isEmpty(Path const &path) override;
     IFile *open(Path const &path, FileOpenMode::Flags mode = 0) override;
+    std::chrono::file_clock::time_point lastTimeWrite(Path const &path) override;
 
+    /// @brief Closes the previous archive.
     void setBasePath(Path const &path) override;
+    void setPassword(std::string_view password);
 };
 
 };
