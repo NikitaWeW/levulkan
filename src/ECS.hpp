@@ -211,6 +211,7 @@ inline std::size_t Registry::size() const {
 template<typename... Include, typename... Exclude>
 inline std::vector<Entity> const Registry::view(exclude<Exclude...> toExclude) const {
     std::vector<Entity> res;
+    res.reserve(size() / 20u);
     for(auto const &e : getReg().view<Include...>(toExclude))
         res.emplace_back(const_cast<Registry *>(this), e); // Should be fine because the entity is const
 
@@ -219,14 +220,16 @@ inline std::vector<Entity> const Registry::view(exclude<Exclude...> toExclude) c
 template<typename... Include, typename... Exclude>
 inline std::vector<Entity> Registry::view(exclude<Exclude...> toExclude) {
     std::vector<Entity> res;
+    res.reserve(size() / 20u);
     for(auto const &e : getReg().view<Include...>(toExclude))
-        res.emplace_back(this, e);
+        res.emplace_back(const_cast<Registry *>(this), e);
 
     return res;
 }
 template<typename... Include, typename... Exclude>
 inline std::vector<Entity> const Registry::viewAny(exclude<Exclude...> toExclude) const {
     std::vector<Entity> res;
+    res.reserve(size() / 20u);
     for(auto const &e : getReg().viewAny<Include...>(toExclude))
         res.emplace_back(const_cast<Registry *>(this), e);
 
@@ -235,6 +238,7 @@ inline std::vector<Entity> const Registry::viewAny(exclude<Exclude...> toExclude
 template<typename... Include, typename... Exclude>
 inline std::vector<Entity> Registry::viewAny(exclude<Exclude...> toExclude) {
     std::vector<Entity> res;
+    res.reserve(size() / 20u);
     for(auto const &e : getReg().viewAny<Include...>(toExclude))
         res.emplace_back(const_cast<Registry *>(this), e);
 
