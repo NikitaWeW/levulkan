@@ -15,13 +15,15 @@ static void replaceAll(std::string &str, std::string_view from, std::string_view
 }
 void fs::Path::removeStuff() {
     replaceAll(mPath, "//", "/");
+    replaceAll(mPath, "/./", "/");
     
-    auto components = split();
-    mPath.clear();
-    for(auto const &component : components) {
-        if(component != ".") 
-            mPath.insert(mPath.size(), component);
-    }
+    // FIXME: Bullshit
+    // auto components = split();
+    // mPath.clear();
+    // for(auto const &component : components) {
+    //     if(component != ".") 
+    //         mPath.insert(mPath.size(), "/" + component);
+    // }
 }
 
 Path::Path() = default;
@@ -65,9 +67,15 @@ std::string const &Path::string() const {
 }
 
 std::string Path::filename() const {
-    return mPath.substr(mPath.find_last_of(SEPARATOR));
+    auto pos = mPath.find_last_of(SEPARATOR, std::max<int>(0, mPath.size() - 2));
+    if(pos == std::string::npos)
+        return "";
+    pos += 1;
+    return mPath.substr(pos, mPath.size() - pos - (mPath.back() == '/'));
 }
 std::string Path::extension() const {
+    if(mPath.back() == '/')
+        return "";
     auto filenameString = filename();
     return filenameString.substr(filenameString.find_last_of('.'));
 }
@@ -76,6 +84,9 @@ std::string Path::stem() const {
     return filenameString.substr(0, filenameString.find_last_of('.'));
 }
 Path Path::parentPath() const {
+    LOG_TRACE("Parent path of {} is {}", mPath, 
+        mPath.substr(0, mPath.find_last_of(SEPARATOR))
+    );
     return mPath.substr(0, mPath.find_last_of(SEPARATOR));
 }
 bool fs::Path::isAbsolute() const {
@@ -84,15 +95,14 @@ bool fs::Path::isAbsolute() const {
 bool Path::empty() const {
     return mPath.empty() || mPath == "/" || mPath == ".";
 }
-
 std::string Path::removeFilename() {
     auto fname = filename();
-    mPath.erase(mPath.size() - fname.size());
+    mPath.erase(mPath.size() - fname.size() - (mPath.back() == '/'));
     return fname;
 }
 std::string Path::removeExtension() {
     auto ext = extension();
-    mPath.erase(mPath.size() - ext.size());
+    mPath.erase(mPath.size() - ext.size() - (mPath.back() == '/'));
     return ext;
 }
 Path Path::removeParentPath() {
@@ -144,18 +154,13 @@ fs::Path fs::Path::makeAbsolute(Path const &relative) const {
 std::vector<std::string> Path::split() const {
     std::vector<std::string> res;
     res.reserve(std::count(mPath.begin(), mPath.end(), SEPARATOR.front()) + 1);
-    
-    // size_t pos = 0, prevPos = 0;
-    // while((pos = mPath.find(SEPARATOR, pos + 1)) != std::string::npos) {
-    //     res.emplace_back(mPath.substr(std::clamp<int>(prevPos+1, 0, mPath.size()), std::clamp<int>(pos-1, 0, mPath.size())));
-    //     prevPos = pos;
-    // }
-    // res.emplace_back(mPath.substr(prevPos, pos));
 
-    fs::Path remaining = mPath;
+    fs::Path remaining = *this;
     while(!remaining.empty()) {
         res.emplace_back(remaining.removeFilename());
     }
+
+    std::reverse(res.begin(), res.end());
 
     LOG_TRACE("split of {}: {}", mPath, res);
 

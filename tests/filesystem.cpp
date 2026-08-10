@@ -109,6 +109,11 @@ TEST_CASE("fs::Path tests", "[engine]") {
     REQUIRE(dir.extension() == "");
     REQUIRE(dir.parentPath() == "/path/to");
 
+    fs::Path dir2("/a/b/c");
+    REQUIRE(dir.filename() == "c");
+    REQUIRE(dir.extension() == "");
+    REQUIRE(dir.parentPath() == "/a/b");
+
     fs::Path root("/");
     REQUIRE(root.filename() == "");
     REQUIRE(root.extension() == "");
