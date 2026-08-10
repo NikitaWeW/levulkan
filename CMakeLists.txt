@@ -77,6 +77,10 @@ set(ENGINE_SOURCE
     "src/resource/ModelLoader.cpp"
     "src/resource/TextureLoader.cpp"
 
+    "src/fs/Path.cpp"
+    "src/fs/NativeFilesystem.cpp"
+    "src/fs/ArchiveFilesystem.cpp"
+
     "src/vk/Init.cpp"
     "src/vk/Pipeline.cpp"
     "src/vk/Resource.cpp"

@@ -55,48 +55,64 @@ static void testFilesystem(fs::IFilesystem *filesystem) {
     REQUIRE(filesystem->isRegularFile("/dir1/b.txt"));
 
     filesystem->copy("/dir1", "/dirCopy");
+    REQUIRE(filesystem->exists("/dirCopy/"));
+    REQUIRE(filesystem->isDirectory("/dirCopy/"));
+    REQUIRE(filesystem->exists("/dirCopy/b.txt"));
+    REQUIRE(filesystem->isRegularFile("/dirCopy/b.txt"));
+
+    filesystem->move("/dirCopy", "/dirMoved");
     REQUIRE(filesystem->exists("/dir1/b.txt"));
     REQUIRE(filesystem->isRegularFile("/dir1/b.txt"));
-
-    // TODO: finish tests
 }
 
 TEST_CASE("fs::Path tests", "[engine]") {
     REQUIRE(fs::Path().empty() == true);
     REQUIRE(fs::Path("/a/b").string() == "/a/b");
     
-    std::string str = "/path/to/file";
-    REQUIRE(fs::Path(str).string() == "/path/to/file");
-    REQUIRE(fs::Path(std::move(str)).string() == "/path/to/file");
-    REQUIRE(fs::Path(std::string_view("/view")).string() == "/view");
-    REQUIRE(fs::Path("/char").string() == "/char");
+    {
+        std::string str = "/path/to/file";
+        REQUIRE(fs::Path(str).string() == "/path/to/file");
+        REQUIRE(fs::Path(std::move(str)).string() == "/path/to/file");
+        REQUIRE(fs::Path(std::string_view("/view")).string() == "/view");
+        REQUIRE(fs::Path("/char").string() == "/char");
 
-    fs::Path original("/a/b");
-    fs::Path copy(original);
-    REQUIRE(copy.string() == "/a/b");
-    
-    fs::Path moved(std::move(original));
-    REQUIRE(moved.string() == "/a/b");
+        std::vector<std::string> strs = { "path", "to", "file" };
+        REQUIRE(fs::Path(strs) == "/path/to/file");
+    }
 
-    fs::Path assign;
-    assign = "/new/path";
-    REQUIRE(assign.string() == "/new/path");
+    {
+        fs::Path original("/a/b");
+        fs::Path copy(original);
+        REQUIRE(copy.string() == "/a/b");
+
+        fs::Path moved(std::move(original));
+        REQUIRE(moved.string() == "/a/b");
+
+        fs::Path assign;
+        assign = "/new/path";
+        REQUIRE(assign.string() == "/new/path");
+    }
 
     fs::Path file("/path/to/file.txt");
-    REQUIRE(file.filename().string() == "file.txt");
-    REQUIRE(file.extension().string() == ".txt");
-    REQUIRE(file.stem().string() == "file");
-    REQUIRE(file.parentPath().string() == "/path/to");
+    REQUIRE(file.filename() == "file.txt");
+    REQUIRE(file.extension() == ".txt");
+    REQUIRE(file.stem() == "file");
+    REQUIRE(file.parentPath() == "/path/to");
 
     fs::Path dir("/path/to/dir/");
-    REQUIRE(dir.filename().string() == "");
-    REQUIRE(dir.extension().string() == "");
-    REQUIRE(dir.parentPath().string() == "/path/to");
+    REQUIRE(dir.filename() == "dir");
+    REQUIRE(dir.extension() == "");
+    REQUIRE(dir.parentPath() == "/path/to");
+
+    fs::Path dir1("/path/to/dir");
+    REQUIRE(dir.filename() == "dir");
+    REQUIRE(dir.extension() == "");
+    REQUIRE(dir.parentPath() == "/path/to");
 
     fs::Path root("/");
-    REQUIRE(root.filename().string() == "");
-    REQUIRE(root.extension().string() == "");
-    REQUIRE(root.parentPath().string() == "/");
+    REQUIRE(root.filename() == "");
+    REQUIRE(root.extension() == "");
+    REQUIRE(root.parentPath() == "");
     
     fs::Path p1("/path/to");
     p1.append(fs::Path("dir/file.txt"));
@@ -116,17 +132,25 @@ TEST_CASE("fs::Path tests", "[engine]") {
     REQUIRE(p4.string() == "");
     REQUIRE(fs::Path().empty() == true);
 
-    REQUIRE(fs::Path("/valid/path").valid() == true);
-    REQUIRE(fs::Path("relative/path").valid() == false);
-    REQUIRE(fs::Path("").valid() == false);
-    REQUIRE(fs::Path("//double//slash").valid() == false);
-
     fs::Path to_split("/path/to/file.txt");
-    std::vector<fs::Path> components = to_split.split();
-    REQUIRE(components.size() == 3);
-    REQUIRE(components[0].string() == "path");
-    REQUIRE(components[1].string() == "to");
-    REQUIRE(components[2].string() == "file.txt");
+    auto components1 = to_split.split();
+    REQUIRE(components1.size() == 3);
+    REQUIRE(components1[0] == "path");
+    REQUIRE(components1[1] == "to");
+    REQUIRE(components1[2] == "file.txt");
+
+    fs::Path to_split_dir("path/to/directory/");
+    auto components2 = to_split_dir.split();
+    REQUIRE(components2.size() == 3);
+    REQUIRE(components2[0] == "path");
+    REQUIRE(components2[1] == "to");
+    REQUIRE(components2[2] == "directory");
+
+    REQUIRE(fs::Path("/a/b/c/d").makeRelative("/a/b/e/f") == fs::Path("../../c/d"));
+    REQUIRE(fs::Path("/a/b/c/d").makeRelative("/a/b/e/f/g") == fs::Path("../../../c/d"));
+
+    REQUIRE(fs::Path("../a/b/../../c").makeAbsolute("") == fs::Path("/../c"));
+    REQUIRE(fs::Path("a/b/../c../d/e/../f").makeAbsolute("") == fs::Path("/a/c../d/f"));
 }
 TEST_CASE("fs::NativeFilesystem tests", "[engine]") {
     std::unique_ptr<fs::IFilesystem> filesystem(new fs::NativeFilesystem());

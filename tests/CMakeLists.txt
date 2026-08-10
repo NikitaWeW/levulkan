@@ -16,6 +16,7 @@ FetchContent_MakeAvailable(Catch2)
 
 set(TESTS_SOURCES
     "filesystem.cpp"
+    "main.cpp"
 )
 
 add_executable(tests ${TESTS_SOURCES})

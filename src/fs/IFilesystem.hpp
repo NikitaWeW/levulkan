@@ -30,6 +30,7 @@ class IFilesystem;
 class Path {
 private:
     std::string mPath;
+    void removeStuff();
 public:
     Path();
     Path(Path const &);
@@ -38,6 +39,8 @@ public:
     Path(std::string &&path);
     Path(std::string_view path);
     Path(char const *path);
+    template<std::ranges::range T>
+    explicit Path(T const &components);
     
     Path &operator=(Path const &) = default;
     Path &operator=(Path &&) = default;
@@ -52,17 +55,20 @@ public:
     std::string const &string() const;
     
     // TODO: Doc
-    Path filename() const;
-    Path extension() const;
-    Path stem() const;
+    std::string filename() const;
+    std::string extension() const;
+    std::string stem() const;
     Path parentPath() const;
-    bool valid(IFilesystem *filesystem = nullptr) const;
     bool empty() const;
-    std::vector<Path> split() const;
+    std::vector<std::string> split() const;
     bool isAbsolute() const;
 
-    Path relativeTo(Path) const;
-    void makeAbsolute();
+    Path makeRelative(Path const &to) const;
+    Path makeAbsolute(Path const &to) const;
+
+    std::string removeFilename();
+    std::string removeExtension();
+    Path        removeParentPath();
     
     Path &append(Path const &rhs);
     Path &concat(Path const &rhs);
@@ -166,3 +172,11 @@ public:
 };
 
 }; // namespace fs
+
+template<std::ranges::range T>
+inline fs::Path::Path(T const &components) {
+    for(auto it = components.begin(); it != components.end(); ++it) {
+        mPath.append("/").append(*it);
+    }
+    removeStuff();
+}

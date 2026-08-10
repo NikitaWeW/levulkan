@@ -232,4 +232,7 @@ fs::IFile *fs::NativeFilesystem::open(Path const &path, FileOpenMode::Flags mode
 void fs::NativeFilesystem::setBasePath(Path const &path) {
     mBasePath = path;
 }
+fs::Path fs::NativeFilesystem::getBasePath() const {
+    return mBasePath;
+}
 

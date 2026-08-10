@@ -305,10 +305,10 @@ Entity RenderManager::addBufferResource(std::string_view name, uint32_t size, vo
 
     return res;
 }
-void RenderManager::addResource(RestrictedAnyEntity<vk::Image, vk::Buffer> eResource) {
-    auto name = eResource.has<vk::Image>() ? eResource.get<vk::Image>().name() : eResource.get<vk::Buffer>().name();
-    mRenderGraph.setResource(name, eResource);
-}
+// void RenderManager::addResource(RestrictedAnyEntity<vk::Image, vk::Buffer> eResource) {
+//     auto name = eResource.has<vk::Image>() ? eResource.get<vk::Image>().name() : eResource.get<vk::Buffer>().name();
+//     mRenderGraph.setResource(name, eResource);
+// }
 vk::Pipeline RenderManager::makePipeline(SimpleRenderPass const &pass, VkQueueFlagBits queue) {
     vk::PipelineLayoutCreateInfo layout{
         // .
@@ -323,25 +323,25 @@ vk::Pipeline RenderManager::makePipeline(SimpleRenderPass const &pass, VkQueueFl
     // }
     return {};
 }
-void RenderManager::addPass(SimpleRenderPass const &pass) {
-    vk::Shader shader = makeShader(pass.shader);
+// void RenderManager::addPass(SimpleRenderPass const &pass) {
+//     vk::Shader shader = makeShader(pass.shader);
 
-    if(!shader.valid || shader.binDescriptors.empty()) {
-        LOG_ERROR("Failed to compile shader {}", pass.shader);
-    }
+//     if(!shader.valid || shader.binDescriptors.empty()) {
+//         LOG_ERROR("Failed to compile shader {}", pass.shader);
+//     }
 
-    auto queue = shaderStageToQueue(shader.binDescriptors[0].stage);
+//     auto queue = shaderStageToQueue(shader.binDescriptors[0].stage);
 
-    mRenderGraph.addPass(vk::RenderPass{
-        .name     = pass.name,
-        .reads    = pass.reads,
-        .writes   = pass.writes,
-        .queue    = queue,
-        .callback = pass.callback,
-        .shader   = std::move(shader),
-        .pipeline = makePipeline(pass, queue),
-    });
-}
+//     mRenderGraph.addPass(vk::RenderPass{
+//         .name     = pass.name,
+//         .reads    = pass.reads,
+//         .writes   = pass.writes,
+//         .queue    = queue,
+//         .callback = pass.callback,
+//         .shader   = std::move(shader),
+//         .pipeline = makePipeline(pass, queue),
+//     });
+// }
 
 
 Entity RenderManager::addImageResource(std::string_view name, glm::uvec2 size, vk::ImageCreateInfo ci) {
@@ -396,4 +396,3 @@ vk::Shader RenderManager::makeShader(std::string_view name) {
 
     return vk::makeShader(ci);
 }
-
