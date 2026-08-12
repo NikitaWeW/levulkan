@@ -44,7 +44,7 @@ static void testFilesystem(fs::IFilesystem *filesystem) {
         file->seekp(0);
         file->read(buff.data(), buff.size());
         for(uint i = 0; i < NUM; ++i) {
-            REQUIRE(buff[i] == 'a' + i);
+            REQUIRE(buff[i] == static_cast<char>('a' + i));
         }
 
         file->close();
@@ -77,7 +77,8 @@ TEST_CASE("fs::Path tests", "[engine]") {
         REQUIRE(fs::Path("/char").string() == "/char");
 
         std::vector<std::string> strs = { "path", "to", "file" };
-        REQUIRE(fs::Path(strs) == "/path/to/file");
+        REQUIRE(fs::Path(strs, true) == "/path/to/file");
+        REQUIRE(fs::Path(strs, false) == "path/to/file");
     }
 
     {
@@ -105,14 +106,14 @@ TEST_CASE("fs::Path tests", "[engine]") {
     REQUIRE(dir.parentPath() == "/path/to");
 
     fs::Path dir1("/path/to/dir");
-    REQUIRE(dir.filename() == "dir");
-    REQUIRE(dir.extension() == "");
-    REQUIRE(dir.parentPath() == "/path/to");
+    REQUIRE(dir1.filename() == "dir");
+    REQUIRE(dir1.extension() == "");
+    REQUIRE(dir1.parentPath() == "/path/to");
 
     fs::Path dir2("/a/b/c");
-    REQUIRE(dir.filename() == "c");
-    REQUIRE(dir.extension() == "");
-    REQUIRE(dir.parentPath() == "/a/b");
+    REQUIRE(dir2.filename() == "c");
+    REQUIRE(dir2.extension() == "");
+    REQUIRE(dir2.parentPath() == "/a/b");
 
     fs::Path root("/");
     REQUIRE(root.filename() == "");
@@ -155,7 +156,11 @@ TEST_CASE("fs::Path tests", "[engine]") {
     REQUIRE(fs::Path("/a/b/c/d").makeRelative("/a/b/e/f/g") == fs::Path("../../../c/d"));
 
     REQUIRE(fs::Path("../a/b/../../c").makeAbsolute("") == fs::Path("/../c"));
+    REQUIRE(fs::Path("a/b/../../../c").makeAbsolute("") == fs::Path("/../c"));
     REQUIRE(fs::Path("a/b/../c../d/e/../f").makeAbsolute("") == fs::Path("/a/c../d/f"));
+
+    REQUIRE(fs::Path("../../../c/d").makeAbsolute("/a/b/e/f/g") == fs::Path("/a/b/c/d"));
+    REQUIRE(fs::Path("../../c/d").makeAbsolute("/a/b/e/f") == fs::Path("/a/b/c/d"));
 }
 TEST_CASE("fs::NativeFilesystem tests", "[engine]") {
     std::unique_ptr<fs::IFilesystem> filesystem(new fs::NativeFilesystem());

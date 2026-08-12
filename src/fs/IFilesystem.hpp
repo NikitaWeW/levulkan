@@ -40,7 +40,7 @@ public:
     Path(std::string_view path);
     Path(char const *path);
     template<std::ranges::range T>
-    explicit Path(T const &components);
+    explicit Path(T const &components, bool absolute = true);
     
     Path &operator=(Path const &) = default;
     Path &operator=(Path &&) = default;
@@ -174,9 +174,11 @@ public:
 }; // namespace fs
 
 template<std::ranges::range T>
-inline fs::Path::Path(T const &components) {
+inline fs::Path::Path(T const &components, bool absolute) {
     for(auto it = components.begin(); it != components.end(); ++it) {
         mPath.append("/").append(*it);
     }
+    if(!absolute && !mPath.empty())
+        mPath.erase(0, 1);
     removeStuff();
 }
