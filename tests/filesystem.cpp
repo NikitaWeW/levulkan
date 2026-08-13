@@ -169,10 +169,3 @@ TEST_CASE("fs::NativeFilesystem tests", "[engine]") {
         testFilesystem(filesystem.get());
     }
 }
-TEST_CASE("fs::ArchiveFilesystem tests", "[engine]") {
-    for(uint i = 0; i < 2; ++i) {
-        std::unique_ptr<fs::IFilesystem> filesystem(new fs::ArchiveFilesystem());
-        filesystem->setBasePath("./tmp/test_data");
-        testFilesystem(filesystem.get());
-    }
-}

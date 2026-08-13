@@ -22,12 +22,6 @@ set(ASSIMP_BUILD_TESTS OFF)
 set(ASSIMP_INSTALL OFF)
 set(ASSIMP_WARNINGS_AS_ERRORS OF)
 
-set(ENABLE_COMMONCRYPTO OFF)
-set(ENABLE_GNUTLS OFF)
-set(ENABLE_WINDOWS_CRYPTO OFF)
-set(LIBZIP_DO_INSTALL OFF)
-set(ENABLE_ZSTD OFF)
-
 CPMAddPackage(
     NAME assimp
     VERSION 6.0.2
@@ -49,7 +43,10 @@ CPMAddPackage("gh:KhronosGroup/Spirv-Reflect#vulkan-sdk-1.4.341.0")
 CPMAddPackage("gh:jeremy-rifkin/cpptrace#v1.0.4")
 CPMAddPackage("gh:nlohmann/json#v3.12.0")
 CPMAddPackage("gh:KhronosGroup/Spirv-Headers#vulkan-sdk-1.4.341.0")
-CPMAddPackage("gh:nih-at/libzip#4cd7310")
+
+# CPMAddPackage(URI "gh:facebook/zstd#82d322c" FORCE ON)
+# add_library(zstd::libzstd_static ALIAS libzstd_static)
+# CPMAddPackage(URI "gh:nih-at/libzip#492b347" FORCE ON)
 
 find_package(SPIRV-Tools)
 if(NOT SPIRV-Tools_FOUND)
@@ -80,7 +77,7 @@ set(ENGINE_SOURCE
     "src/fs/Path.cpp"
     "src/fs/File.cpp"
     "src/fs/NativeFilesystem.cpp"
-    "src/fs/ArchiveFilesystem.cpp"
+    # "src/fs/ArchiveFilesystem.cpp"
 
     "src/vk/Init.cpp"
     "src/vk/Pipeline.cpp"
