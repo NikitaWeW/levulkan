@@ -21,7 +21,6 @@ protected:
 public:
     bool isOpen() const override;
     void close() override;
-    FileOpenMode::Flags getMode() const override;
 
     void seekg(intmax_t position) override;
     void seekg(intmax_t offset, SeekDir dir) override;
@@ -41,12 +40,12 @@ public:
 
 class NativeFilesystem : public IFilesystem {
 protected:
-    struct FileHandle {
+    struct Handle {
         Path path;
         std::unique_ptr<NativeFile> file;
         uint id = 0;
     };
-    SparseSet<FileHandle> mFiles;
+    SparseSet<Handle> mFiles;
     uint mNextId = 1;
     Path mBasePath = ".";
 
@@ -75,7 +74,7 @@ public:
     bool isDirectory(Path const &path) const override;
     bool isRegularFile(Path const &path) const override;
     bool isEmpty(Path const &path) const override;
-    IFile *open(Path const &path, FileOpenMode::Flags mode = 0) override;
+    FileHandle open(Path const &path, FileOpenMode::Flags mode = 0) override;
     std::chrono::file_clock::time_point lastTimeWrite(Path const &path) const override;
 };
 

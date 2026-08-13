@@ -1,20 +1,19 @@
 #include "IFilesystem.hpp"
-#include "Logging.hpp"
 #include <cassert>
 
 using namespace fs;
 
 constexpr std::string_view SEPARATOR = "/";
 
-static void replaceAll(std::string &str, std::string_view from, std::string_view to) {
+static void replaceAll(std::string &str, std::string_view from, std::string_view to, bool onePass = true) {
     size_t pos = str.find(from);
     while (pos != std::string::npos) {
         str.replace(pos, from.size(), to);
-        pos = str.find(from, pos + to.size());
+        pos = str.find(from, onePass ? pos + to.size() : 0);
     }
 }
 void fs::Path::removeStuff() {
-    replaceAll(mPath, "//", "/");
+    replaceAll(mPath, "//", "/", false);
     // replaceAll(mPath, "/./", "/");
 }
 
@@ -88,7 +87,7 @@ bool fs::Path::isAbsolute() const {
     return !mPath.empty() && mPath.compare(0, SEPARATOR.size(), SEPARATOR) == 0;
 }
 bool Path::empty() const {
-    return mPath.empty() || mPath == "/" || mPath == ".";
+    return mPath.empty();
 }
 std::string Path::removeFilename() {
     if(empty())
@@ -172,7 +171,10 @@ std::vector<std::string> Path::split() const {
     return res;
 }
 Path &Path::append(Path const &rhs) {
-    mPath.append(SEPARATOR).append(rhs.mPath);
+    if(!empty())
+        mPath.append(SEPARATOR);
+
+    mPath.append(rhs.mPath);
     removeStuff();
     return *this;
 }

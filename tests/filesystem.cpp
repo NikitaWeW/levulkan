@@ -15,13 +15,13 @@ static void testFilesystem(fs::IFilesystem *filesystem) {
     for(uint i = 0; i < NUM; ++i) {
         for(auto const &path : files) {
             filesystem->createDirectories(fs::Path(path).parentPath());
-            auto *file = filesystem->open(path, fs::FileOpenMode::Append);
+            auto file = filesystem->open(path, fs::FileOpenMode::Append);
             REQUIRE(filesystem->exists(path));
             REQUIRE(filesystem->isRegularFile(path));
-            REQUIRE(file->isOpen());
+            REQUIRE(file.isOpen());
             REQUIRE(file->tellp() == file->size());
 
-            file->seekg(0, fs::SeekDir::End);
+            file->seekg(0, SeekDir::End);
             REQUIRE(file->tellg() == file->size());
 
             auto sizeBefore = file->size();
@@ -29,8 +29,8 @@ static void testFilesystem(fs::IFilesystem *filesystem) {
             file->write(&character, 1);
             REQUIRE(file->size() == sizeBefore + 1);
 
-            file->close();
-            REQUIRE(!file->isOpen());
+            file.close();
+            REQUIRE(!file.isOpen());
         }
     }
 
@@ -38,7 +38,7 @@ static void testFilesystem(fs::IFilesystem *filesystem) {
 
     for(auto const &path : files) {
         REQUIRE(filesystem->exists(path));
-        auto *file = filesystem->open(path);
+        auto file = filesystem->open(path);
         REQUIRE(file->size() == NUM);
         std::vector<char> buff(file->size());
         file->seekp(0);
@@ -47,7 +47,7 @@ static void testFilesystem(fs::IFilesystem *filesystem) {
             REQUIRE(buff[i] == static_cast<char>('a' + i));
         }
 
-        file->close();
+        file.close();
     }
 
     filesystem->copy("/a.txt", "/dir1/b.txt");
@@ -122,15 +122,15 @@ TEST_CASE("fs::Path tests", "[engine]") {
     
     fs::Path p1("/path/to");
     p1.append(fs::Path("dir/file.txt"));
-    REQUIRE(p1.string() == "/path/to/dir/file.txt");
+    REQUIRE(p1 == "/path/to/dir/file.txt");
 
-    fs::Path p2("/path/to/");
-    p2 /= fs::Path("dir");
-    REQUIRE(p2.string() == "/path/to/dir");
+    fs::Path p2("./path/to/");
+    p2 /= fs::Path("/dir");
+    REQUIRE(p2 == "./path/to/dir");
 
     fs::Path p3("/path/to/file");
     p3 += fs::Path(".txt");
-    REQUIRE(p3.string() == "/path/to/file.txt");
+    REQUIRE(p3 == "/path/to/file.txt");
 
     fs::Path p4("/path");
     p4.clear();
@@ -163,12 +163,16 @@ TEST_CASE("fs::Path tests", "[engine]") {
     REQUIRE(fs::Path("../../c/d").makeAbsolute("/a/b/e/f") == fs::Path("/a/b/c/d"));
 }
 TEST_CASE("fs::NativeFilesystem tests", "[engine]") {
-    std::unique_ptr<fs::IFilesystem> filesystem(new fs::NativeFilesystem());
-    filesystem->setBasePath("./tmp/test.d/");
-    testFilesystem(filesystem.get());
+    for(uint i = 0; i < 2; ++i) {
+        std::unique_ptr<fs::IFilesystem> filesystem(new fs::NativeFilesystem());
+        filesystem->setBasePath("./tmp/test.d/");
+        testFilesystem(filesystem.get());
+    }
 }
 TEST_CASE("fs::ArchiveFilesystem tests", "[engine]") {
-    std::unique_ptr<fs::IFilesystem> filesystem(new fs::ArchiveFilesystem());
-    filesystem->setBasePath("./tmp/test_data");
-    testFilesystem(filesystem.get());
+    for(uint i = 0; i < 2; ++i) {
+        std::unique_ptr<fs::IFilesystem> filesystem(new fs::ArchiveFilesystem());
+        filesystem->setBasePath("./tmp/test_data");
+        testFilesystem(filesystem.get());
+    }
 }

@@ -43,14 +43,13 @@ void fs::ArchiveFile::open(Path path, FileOpenMode::Flags mode, uint id, zip_t *
         LOG_ERROR("Failed to open {} from {}: {}", path.string(), mParent->getBasePath().string(), zip_error_strerror(err));
     }
 
-    if(mode & FileOpenMode::Append) {
-        seekp(0, SeekDir::End);
-    }
 
     // Not to override old file data with zeros
     mData.reserve(size() * 1.5);
     mData.resize(size());
-    read(mData.data(), mData.size());
+    if(!(mode & FileOpenMode::Truncate)) {
+        read(mData.data(), mData.size());
+    }
 }
 void fs::ArchiveFile::setParent(ArchiveFilesystem *parent) {
     mParent = parent;
@@ -71,13 +70,15 @@ void fs::ArchiveFile::_close() {
 }
 void fs::ArchiveFile::close() {
     _close();
-    if(mParent)
+    if(mParent) {
         mParent->close(mHandleId);
+    }
 }
 fs::FileOpenMode::Flags fs::ArchiveFile::getMode() const {
     return mMode;
 }
 void fs::ArchiveFile::seekg(intmax_t position) {
+    assert(isOpen());
     auto res = zip_fseek(mFile, position, 0);
     if(res != 0) {
         zip_error *err = zip_file_get_error(mFile);
@@ -85,6 +86,7 @@ void fs::ArchiveFile::seekg(intmax_t position) {
     }
 }
 void fs::ArchiveFile::seekg(intmax_t offset, SeekDir dir) {
+    assert(isOpen());
     int direction;
     switch(dir) {
     case SeekDir::Beg: direction = SEEK_SET; break;
@@ -107,12 +109,15 @@ void fs::ArchiveFile::seekg(intmax_t offset, SeekDir dir) {
     }
 }
 uintmax_t fs::ArchiveFile::tellg() {
+    assert(isOpen());
     return zip_ftell(mFile);
 }
 void fs::ArchiveFile::seekp(intmax_t position) {
+    assert(isOpen());
     mWriteHead = position;
 }
 void fs::ArchiveFile::seekp(intmax_t offset, SeekDir dir) {
+    assert(isOpen());
     switch(dir) {
     case SeekDir::Beg: 
         mWriteHead = offset; 
@@ -128,12 +133,15 @@ void fs::ArchiveFile::seekp(intmax_t offset, SeekDir dir) {
     }
 }
 uintmax_t fs::ArchiveFile::tellp() {
+    assert(isOpen());
     return mWriteHead;
 }
 uintmax_t fs::ArchiveFile::size() {
+    assert(isOpen());
     return getStat(mZip, mFileId).size;
 }
 void fs::ArchiveFile::read(void *dst, uintmax_t size) {
+    assert(isOpen());
     auto res = zip_fread(mFile, dst, size);
     if(res != 0) {
         zip_error *err = zip_file_get_error(mFile);
@@ -141,9 +149,14 @@ void fs::ArchiveFile::read(void *dst, uintmax_t size) {
     }
 }
 void fs::ArchiveFile::sync() {
+    assert(isOpen());
     mParent->sync();
 }
 void fs::ArchiveFile::write(void const *src, uintmax_t size) {
+    if(mMode & FileOpenMode::Append) {
+        seekp(0, SeekDir::End);
+    }
+    assert(isOpen());
     auto newSize = tellp() + size;
     if(newSize < mData.size())
         mData.resize(newSize);
@@ -151,34 +164,39 @@ void fs::ArchiveFile::write(void const *src, uintmax_t size) {
     std::memcpy(mData.data() + tellp(), src, size);
 }
 void fs::ArchiveFile::flush() {
+    assert(isOpen());
     zip_source_t *source = zip_source_buffer(mZip, mData.data(), mData.size(), 0);
     zip_file_replace(mZip, mFileId, source, 0);
 }
 
 void fs::ArchiveFilesystem::sync() {
-    auto basePathWriteTime = std::filesystem::last_write_time(getBasePath().string()).time_since_epoch().count();
-    if(!mBasePathChanged && mBasePathLastWrite >= basePathWriteTime) {
-        return;
+    uintmax_t basePathWriteTime = 0;
+    bool existed = std::filesystem::exists(getBasePath().string());
+    if(existed) {
+        basePathWriteTime = std::filesystem::last_write_time(getBasePath().string()).time_since_epoch().count();
     }
-
-    if(!std::filesystem::exists(getBasePath().string()) || !std::filesystem::is_regular_file(getBasePath().string())) {
-        LOG_ERROR("Invalid fs::ArchiveFilesystem base path: {}", getBasePath().string());
+    if(!mBasePathChanged && mBasePathLastWrite >= static_cast<uintmax_t>(basePathWriteTime)) {
         return;
-    }
-
-    for(auto &handle : mOpenedFiles.range()) {
-        handle.file->flush();
     }
     
     close();
 
     int errorCode = 0;
-    mZip = zip_open(getBasePath().string().c_str(), ZIP_CREATE, &errorCode);
+    int flags = ZIP_CREATE;
+    if(!existed) {
+        flags |= ZIP_TRUNCATE;
+        std::ofstream(getBasePath().string());
+    }
+    mZip = zip_open(getBasePath().string().c_str(), flags, &errorCode);
     if(!mZip) {
         zip_error_t error;
         zip_error_init_with_code(&error, errorCode);
         LOG_ERROR("Failed to open zip archive {}: {}", getBasePath().string(), zip_error_strerror(&error));
+        if(errorCode == 0)
+            LOG_ERROR("Errno: {}", strerror(errno));
         zip_error_fini(&error);
+        assert(mZip);
+        return;
     }
 
     for(auto &handle : mOpenedFiles.range()) {
@@ -187,9 +205,12 @@ void fs::ArchiveFilesystem::sync() {
 
     mBasePathLastWrite = basePathWriteTime;
     mBasePathChanged = false;
-    assert(mZip);
 }
 void fs::ArchiveFilesystem::close() {
+    for(auto &handle : mOpenedFiles.range()) {
+        handle.file->close();
+    }
+
     if(mZip) {
         zip_close(mZip);
         mZip = nullptr;
@@ -203,7 +224,6 @@ void fs::ArchiveFilesystem::discard() {
 }
 void fs::ArchiveFilesystem::close(uint id) {
     assert(mOpenedFiles.contains(id));
-    auto path = mOpenedFiles.at(id).path;
     auto &file = mOpenedFiles.at(id).file;
     
     if(file->isOpen())
@@ -213,12 +233,9 @@ void fs::ArchiveFilesystem::close(uint id) {
 }
 fs::ArchiveFilesystem::ArchiveFilesystem() = default;
 fs::ArchiveFilesystem::~ArchiveFilesystem() {
-    for(auto id : mOpenedFiles.sparse()) {
-        close(id);
-    }
     close();
 }
-fs::Path fs::ArchiveFilesystem::getFullPath(Path const &path) {
+fs::Path fs::ArchiveFilesystem::getFullPath(Path const &path) const {
     return mBasePath / path;
 }
 fs::ArchiveFilesystem &fs::ArchiveFilesystem::operator=(ArchiveFilesystem &&rhs) {
@@ -239,6 +256,8 @@ fs::ArchiveFilesystem::ArchiveFilesystem(ArchiveFilesystem &&rhs) {
     *this = std::move(rhs);
 }
 void fs::ArchiveFilesystem::setBasePath(Path const &path) {
+    std::filesystem::create_directories(path.parentPath().string());
+
     mBasePath = path;
     mBasePathChanged = true;
     sync();
@@ -270,16 +289,29 @@ void fs::ArchiveFilesystem::copy(Path const &from, Path const &to) {
         return;
     }
 
-    zip_file_add(mZip, dstName.string().c_str(), source, 0);
+    auto res = zip_file_add(mZip, dstName.string().c_str(), source, 0);
+    if(res != 0) {
+        auto *err = zip_get_error(mZip);
+        LOG_ERROR("Failed to copy \"{}\" to \"{}\" in archive \"{}\": {}", from.string(), to.string(), getBasePath().string(), zip_error_strerror(err));
+    }
+
     zip_source_free(source);
 }
 void fs::ArchiveFilesystem::move(Path const &from, Path const &to) {
     assert(mZip && "You need to call setBasePath first!");
-
+    auto res = zip_file_rename(mZip, getStat(mZip, from).index, to.string().c_str(), 0);
+    if(res != 0) {
+        auto *err = zip_get_error(mZip);
+        LOG_ERROR("Failed to move \"{}\" to \"{}\" in archive \"{}\": {}", from.string(), to.string(), getBasePath().string(), zip_error_strerror(err));
+    }
 }
 void fs::ArchiveFilesystem::createDirectory(Path const &path) {
     assert(mZip && "You need to call setBasePath first!");
-    zip_dir_add(mZip, path.string().c_str(), 0);
+    auto res = zip_dir_add(mZip, getFullPath(path).string().c_str(), 0);
+    if(res != 0) {
+        auto *err = zip_get_error(mZip);
+        LOG_ERROR("Failed to create directory \"{}\" in archive \"{}\": {}", path.string(), getBasePath().string(), zip_error_strerror(err));
+    }
 }
 void fs::ArchiveFilesystem::createDirectories(Path const &path) {
     assert(mZip && "You need to call setBasePath first!");
@@ -309,12 +341,19 @@ void fs::ArchiveFilesystem::remove(Path const &path) {
     }
 
     auto index = zip_name_locate(mZip, path.string().c_str(), 0);
-    zip_delete(mZip, index);
+    auto res = zip_delete(mZip, index);
+
+    if(res != 0) {
+        auto *err = zip_get_error(mZip);
+        LOG_ERROR("Failed to remove \"{}\" in archive \"{}\": {}", path.string(), getBasePath().string(), zip_error_strerror(err));
+    }
 }
 void fs::ArchiveFilesystem::removeAll(Path const &path) {
     remove(path);
 }
 std::vector<fs::Path> fs::ArchiveFilesystem::getContents(Path const &path, bool recursive) const {
+    auto fullPath = getFullPath(path);
+
     if(!exists(path)) {
         LOG_ERROR("fs::ArchiveFilesystem: path \"{}\" doesent exist!", path.string());
         return {};
@@ -349,10 +388,12 @@ std::vector<fs::Path> fs::ArchiveFilesystem::getContents(Path const &path, bool 
     return contents;
 }
 bool fs::ArchiveFilesystem::isDirectory(Path const &path) const {
-    if(!exists(path))
+    auto fullPath = getFullPath(path);
+    if(!exists(path)) {
         return false;
+    }
     
-    zip_stat_t stat = getStat(mZip, path);
+    zip_stat_t stat = getStat(mZip, fullPath);
 
     return std::string_view(stat.name).back() == '/';
 }
@@ -363,19 +404,20 @@ bool fs::ArchiveFilesystem::isEmpty(Path const &path) const {
     return fileSize(path) == 0;
 }
 std::chrono::file_clock::time_point fs::ArchiveFilesystem::lastTimeWrite(Path const &path) const {
-    if(!exists(path)) {
-        LOG_ERROR("fs::ArchiveFilesystem: path \"{}\" doesent exist!", path.string());
+    auto fullPath = getFullPath(path);
+    if(!exists(fullPath)) {
+        LOG_ERROR("Path \"{}\" doesent exist in archive \"{}\"!", path.string(), getBasePath().string());
         return std::chrono::file_clock::now();
     }
 
-    time_t time = getStat(mZip, path).mtime;
+    time_t time = getStat(mZip, fullPath).mtime;
     return std::chrono::file_clock::from_sys(std::chrono::system_clock::from_time_t(time));
 }
-fs::IFile *fs::ArchiveFilesystem::open(Path const &path, FileOpenMode::Flags mode) {
+fs::FileHandle fs::ArchiveFilesystem::open(Path const &path, FileOpenMode::Flags mode) {
     auto fullPath = getFullPath(path);
 
     uint id = mNextId++;
-    mOpenedFiles.emplace(id, FileHandle{
+    mOpenedFiles.emplace(id, Handle{
         .path = fullPath,
         .file = std::unique_ptr<ArchiveFile>(new ArchiveFile),
         .id = id
@@ -385,7 +427,7 @@ fs::IFile *fs::ArchiveFilesystem::open(Path const &path, FileOpenMode::Flags mod
     handle.file->setPassword(mPassword);
     handle.file->open(handle.path.string(), mode, id, mZip, mCompress);
 
-    return handle.file.get();
+    return FileHandle(handle.file.get());
 }
 void fs::ArchiveFilesystem::setPassword(std::string_view password) {
     mPassword = password;

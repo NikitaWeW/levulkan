@@ -33,7 +33,7 @@ protected:
 public:
     bool isOpen() const override;
     void close() override;
-    FileOpenMode::Flags getMode() const override;
+    FileOpenMode::Flags getMode() const;
 
     void seekg(intmax_t position) override;
     void seekg(intmax_t offset, SeekDir dir) override;
@@ -53,13 +53,13 @@ public:
 
 class ArchiveFilesystem : public IFilesystem {
 protected:
-    struct FileHandle {
+    struct Handle {
         Path path;
         std::unique_ptr<ArchiveFile> file;
         uint id = 0;
     };
     zip_t *mZip = nullptr;
-    SparseSet<FileHandle> mOpenedFiles;
+    SparseSet<Handle> mOpenedFiles;
     uint mNextId = 1;
     bool mBasePathChanged = true;
     Path mBasePath = ".";
@@ -73,7 +73,7 @@ protected:
     friend ArchiveFile;
 
     void close(uint id);
-    Path getFullPath(Path const &path);
+    Path getFullPath(Path const &path) const;
 public:
     ~ArchiveFilesystem();
     ArchiveFilesystem();
@@ -96,7 +96,7 @@ public:
     bool isDirectory(Path const &path) const override;
     bool isRegularFile(Path const &path) const override;
     bool isEmpty(Path const &path) const override;
-    IFile *open(Path const &path, FileOpenMode::Flags mode = 0) override;
+    fs::FileHandle open(Path const &path, FileOpenMode::Flags mode = 0) override;
     std::chrono::file_clock::time_point lastTimeWrite(Path const &path) const override;
 
     /// @brief Closes the previous archive.

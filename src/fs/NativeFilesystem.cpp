@@ -20,9 +20,11 @@ void fs::NativeFile::setParent(NativeFilesystem *parent) {
     mParent = parent;
 }
 void fs::NativeFile::seekg(intmax_t position) {
+    assert(isOpen());
     mFile.seekg(position);
 }
 void fs::NativeFile::seekg(intmax_t offset, SeekDir dir) {
+    assert(isOpen());
     std::ios::seekdir direction;
     switch(dir) {
     case SeekDir::Beg: direction = std::ios::beg; break;
@@ -34,12 +36,15 @@ void fs::NativeFile::seekg(intmax_t offset, SeekDir dir) {
     mFile.seekg(offset, direction);
 }
 uintmax_t fs::NativeFile::tellg() {
+    assert(isOpen());
     return mFile.tellg();
 }
 void fs::NativeFile::seekp(intmax_t position) {
+    assert(isOpen());
     mFile.seekp(position);
 }
 void fs::NativeFile::seekp(intmax_t offset, SeekDir dir) {
+    assert(isOpen());
     std::ios::seekdir direction;
     switch(dir) {
     case SeekDir::Beg: direction = std::ios::beg; break;
@@ -51,20 +56,20 @@ void fs::NativeFile::seekp(intmax_t offset, SeekDir dir) {
     mFile.seekp(offset, direction);
 }
 uintmax_t fs::NativeFile::tellp() {
+    assert(isOpen());
     return mFile.tellp();
 }
 bool fs::NativeFile::isOpen() const {
     return mFile.is_open();
 }
 void fs::NativeFile::close() {
+    assert(isOpen());
     mFile.close();
     if(mParent)
         mParent->close(mId);
 }
-fs::FileOpenMode::Flags fs::NativeFile::getMode() const {
-    return mMode;
-}
 uintmax_t fs::NativeFile::size() {
+    assert(isOpen());
     auto pos = mFile.tellg();
     mFile.seekg(0, std::ios_base::end);
     auto size = mFile.tellg();
@@ -72,15 +77,19 @@ uintmax_t fs::NativeFile::size() {
     return size;
 }
 void fs::NativeFile::read(void *dst, uintmax_t size) {
+    assert(isOpen());
     mFile.read(static_cast<char *>(dst), size);
 }
 void fs::NativeFile::sync() {
+    assert(isOpen());
     mFile.sync();
 }
 void fs::NativeFile::write(void const *src, uintmax_t size) {
+    assert(isOpen());
     mFile.write(static_cast<char const *>(src), size);
 }
 void fs::NativeFile::flush() {
+    assert(isOpen());
     mFile.flush();
 }
 std::fstream &fs::NativeFile::getFileHandle() {
@@ -101,7 +110,8 @@ void fs::NativeFilesystem::close(uint id) {
     if(file->isOpen())
         file->close();
 
-    mFiles.erase(id);
+    // FIXME: File might still be used after closing (e.g. checking isClosed())
+    // mFiles.erase(id);
 }
 fs::NativeFilesystem::NativeFilesystem() = default;
 fs::NativeFilesystem::~NativeFilesystem() {
@@ -180,11 +190,11 @@ std::vector<fs::Path> fs::NativeFilesystem::getContents(Path const &path, bool r
 
     if(recursive) {
         for(auto entry : std::filesystem::recursive_directory_iterator(getFullPath(path).string())) {
-            res.emplace_back(entry.path().string());
+            res.emplace_back(fs::Path(entry.path().string()).makeRelative(mBasePath));
         }
     } else {
         for(auto entry : std::filesystem::directory_iterator(getFullPath(path).string())) {
-            res.emplace_back(entry.path().string());
+            res.emplace_back(fs::Path(entry.path().string()).makeRelative(mBasePath));
         }
     }
 
@@ -215,11 +225,11 @@ std::chrono::file_clock::time_point fs::NativeFilesystem::lastTimeWrite(Path con
     checkErr(err);
     return res;
 };
-fs::IFile *fs::NativeFilesystem::open(Path const &path, FileOpenMode::Flags mode) {
+fs::FileHandle fs::NativeFilesystem::open(Path const &path, FileOpenMode::Flags mode) {
     auto fullPath = getFullPath(path);
 
     uint id = mNextId++;
-    mFiles.emplace(id, FileHandle{
+    mFiles.emplace(id, Handle{
         .path = fullPath,
         .file = std::unique_ptr<NativeFile>(new NativeFile(fullPath, mode, id)),
         .id = id
@@ -227,9 +237,10 @@ fs::IFile *fs::NativeFilesystem::open(Path const &path, FileOpenMode::Flags mode
     auto &handle = mFiles.at(id);
     handle.file->setParent(this);
 
-    return handle.file.get();
+    return FileHandle(handle.file.get());
 }
 void fs::NativeFilesystem::setBasePath(Path const &path) {
+    std::filesystem::create_directories(path.string());
     mBasePath = path;
 }
 fs::Path fs::NativeFilesystem::getBasePath() const {

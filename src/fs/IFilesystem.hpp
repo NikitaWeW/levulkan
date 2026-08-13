@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include "IStream.hpp"
+
 namespace fs {
 
 namespace FileOpenMode {
@@ -14,11 +16,6 @@ namespace FileOpenMode {
         Truncate  = (1 << 1),
     };
     using Flags = std::underlying_type_t<FileOpenModeEnum>;
-};
-enum class SeekDir : uint8_t {
-    Beg,
-    End,
-    Cur
 };
 
 class IFilesystem;
@@ -80,51 +77,43 @@ public:
 Path operator/(Path const &lhs, Path const &rhs);
 Path operator+(Path const &lhs, Path const &rhs);
 
-class IFile {
+class IFile : public IStream {
 public:
     virtual ~IFile() = default;
 
     IFile() = default;
+
+    // Pointers to IFIle must be persistent.
     IFile(IFile const &) = delete;
     IFile &operator=(IFile const &) = delete;
-    IFile(IFile &&) = default;
-    IFile &operator=(IFile &&) = default;
+    IFile(IFile &&) = delete;
+    IFile &operator=(IFile &&) = delete;
 
     /// @brief Checks if the file is opened successfully.
     virtual bool isOpen() const = 0;
     /// @brief Closes the file.
-    /// After closing, the file handle may become invalid at any point in time.
+    /// After closing, the file handle (pointer) may become invalid.
     virtual void close() = 0;
-    virtual FileOpenMode::Flags getMode() const = 0;
+};
 
-    
-    // Read
+/// @brief RAII IFile wrapper. 
+/// Ensures the safe memory access to the file handle.
+class FileHandle {
+private:
+    IFile *mFile = nullptr;
+public:
+    FileHandle() = default;
+    explicit FileHandle(IFile *file);
+    ~FileHandle();
 
-    /// @brief Sets read position indicator.
-    virtual void seekg(intmax_t position) = 0;
-    /// @brief Sets read position indicator relative to @p dir.
-    virtual void seekg(intmax_t offset, SeekDir dir) = 0;
-    /// @brief Returns read position indicator.
-    virtual uintmax_t tellg() = 0;
-    /// @brief Returns the size of the file in bytes.
-    virtual uintmax_t size() = 0;
-    /// @brief Extracts block of data.
-    virtual void read(void *dst, uintmax_t size) = 0;
-    /// @brief Synchronizes with the underlying storage device.
-    virtual void sync() = 0;
+    [[nodiscard]] IFile *release();
+    IFile const *get() const;
+    IFile *get();
+    void close();
+    bool isOpen() const;
 
-    // Write
-
-    /// @brief Sets write position indicator.
-    virtual void seekp(intmax_t position) = 0;
-    /// @brief Sets write position indicator relative to @p dir.
-    virtual void seekp(intmax_t offset, SeekDir dir) = 0;
-    /// @brief Returns write position indicator.
-    virtual uintmax_t tellp() = 0;
-    /// @brief Inserts block of data.
-    virtual void write(void const *src, uintmax_t size) = 0;
-    /// @brief Synchronizes with the underlying storage device.
-    virtual void flush() = 0;
+    IStream const *operator->() const;
+    IStream *operator->();
 };
 
 class IFilesystem {
@@ -134,9 +123,13 @@ public:
     IFilesystem() = default;
     IFilesystem(IFilesystem const &) = delete;
     IFilesystem &operator=(IFilesystem const &) = delete;
+    // IMPORTANT: Invalidates all the file handles
     IFilesystem(IFilesystem &&) = default;
     IFilesystem &operator=(IFilesystem &&) = default;
 
+    /// @brief Sets the (physical) base / root path.
+    /// Might flush the filesystem and load a new one.
+    /// Creates directories if they dont exist.
     virtual void setBasePath(Path const &path) = 0;
     virtual Path getBasePath() const = 0;
 
@@ -168,7 +161,7 @@ public:
     virtual std::chrono::file_clock::time_point lastTimeWrite(Path const &path) const = 0;
 
     /// @brief Opens a file. Creates a new file if it doesent exist.
-    virtual IFile *open(Path const &path, FileOpenMode::Flags mode = 0) = 0;
+    virtual FileHandle open(Path const &path, FileOpenMode::Flags mode = 0) = 0;
 };
 
 }; // namespace fs

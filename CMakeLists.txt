@@ -78,6 +78,7 @@ set(ENGINE_SOURCE
     "src/resource/TextureLoader.cpp"
 
     "src/fs/Path.cpp"
+    "src/fs/File.cpp"
     "src/fs/NativeFilesystem.cpp"
     "src/fs/ArchiveFilesystem.cpp"
 
