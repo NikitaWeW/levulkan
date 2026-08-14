@@ -87,7 +87,7 @@ bool fs::Path::isAbsolute() const {
     return !mPath.empty() && mPath.compare(0, SEPARATOR.size(), SEPARATOR) == 0;
 }
 bool Path::empty() const {
-    return mPath.empty();
+    return mPath.empty() || mPath == "." || mPath == "/";
 }
 std::string Path::removeFilename() {
     if(empty())

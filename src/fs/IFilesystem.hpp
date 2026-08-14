@@ -106,14 +106,24 @@ public:
     explicit FileHandle(IFile *file);
     ~FileHandle();
 
+    FileHandle(FileHandle const &) = delete;
+    FileHandle &operator=(FileHandle const &) = delete;
+    FileHandle(FileHandle &&) = default;
+    FileHandle &operator=(FileHandle &&) = default;
+
     [[nodiscard]] IFile *release();
-    IFile const *get() const;
-    IFile *get();
+    IStream const *get() const;
+    IStream *get();
     void close();
     bool isOpen() const;
 
     IStream const *operator->() const;
     IStream *operator->();
+};
+
+struct Error {
+    bool failed = false;
+    std::string message;
 };
 
 class IFilesystem {
@@ -123,45 +133,36 @@ public:
     IFilesystem() = default;
     IFilesystem(IFilesystem const &) = delete;
     IFilesystem &operator=(IFilesystem const &) = delete;
-    // IMPORTANT: Invalidates all the file handles
     IFilesystem(IFilesystem &&) = default;
     IFilesystem &operator=(IFilesystem &&) = default;
 
-    /// @brief Sets the (physical) base / root path.
-    /// Might flush the filesystem and load a new one.
-    /// Creates directories if they dont exist.
-    virtual void setBasePath(Path const &path) = 0;
-    virtual Path getBasePath() const = 0;
-
     /// @brief Copies files or directories.
-    virtual void copy(Path const &from, Path const &to) = 0;
+    virtual void copy(Path const &src, Path const &dst, Error *err = nullptr) = 0;
     /// @brief Copies files or directories.
-    virtual void move(Path const &from, Path const &to) = 0;
+    virtual void move(Path const &src, Path const &dst, Error *err = nullptr) = 0;
     /// @brief Creates new directory.
-    virtual void createDirectory(Path const &path) = 0;
+    virtual void createDirectory(Path const &path, Error *err = nullptr) = 0;
     /// @brief Creates new directory recursively.
-    virtual void createDirectories(Path const &path) = 0;
+    virtual void createDirectories(Path const &path, Error *err = nullptr) = 0;
     /// @brief Checks whether path refers to existing file system object.
-    virtual bool exists(Path const &path) const = 0;
+    virtual bool exists(Path const &path, Error *err = nullptr) const = 0;
     /// @brief Returns the size of a file in bytes.
-    virtual uintmax_t fileSize(Path const &path) const = 0;
-    /// @brief Removes a file or empty directory.
-    virtual void remove(Path const &path) = 0;
-    /// @brief Removes a file or directory and all its contents, recursively.
-    virtual void removeAll(Path const &path) = 0;
+    virtual uintmax_t fileSize(Path const &path, Error *err = nullptr) const = 0;
+    /// @brief Removes a file or a directory and all its contents, recursively.
+    virtual void remove(Path const &path, Error *err = nullptr) = 0;
     /// @brief Iterates over all elements in a directory, recursively or not.
-    virtual std::vector<Path> getContents(Path const &path, bool recursive = false) const = 0;
+    virtual std::vector<Path> getContents(Path const &path, bool recursive = false, Error *err = nullptr) const = 0;
     /// @brief Checks whether the given path refers to a directory.
-    virtual bool isDirectory(Path const &path) const = 0;
+    virtual bool isDirectory(Path const &path, Error *err = nullptr) const = 0;
     /// @brief Checks whether the argument refers to a regular file.
-    virtual bool isRegularFile(Path const &path) const = 0;
+    virtual bool isRegularFile(Path const &path, Error *err = nullptr) const = 0;
     /// @brief Checks whether the given path refers to an empty file or directory.
-    virtual bool isEmpty(Path const &path) const = 0;
+    virtual bool isEmpty(Path const &path, Error *err = nullptr) const = 0;
     /// @brief Returns the last time of data modification
-    virtual std::chrono::file_clock::time_point lastTimeWrite(Path const &path) const = 0;
+    virtual std::chrono::file_clock::time_point lastTimeWrite(Path const &path, Error *err = nullptr) const = 0;
 
     /// @brief Opens a file. Creates a new file if it doesent exist.
-    virtual FileHandle open(Path const &path, FileOpenMode::Flags mode = 0) = 0;
+    virtual FileHandle open(Path const &path, FileOpenMode::Flags mode = 0, Error *err = nullptr) = 0;
 };
 
 }; // namespace fs

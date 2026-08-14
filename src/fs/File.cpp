@@ -13,10 +13,10 @@ fs::IFile *fs::FileHandle::release() {
     mFile = nullptr;
     return file;
 }
-fs::IFile const *fs::FileHandle::get() const {
+IStream const *fs::FileHandle::get() const {
     return mFile;
 }
-fs::IFile *fs::FileHandle::get() {
+IStream *fs::FileHandle::get() {
     return mFile;
 }
 void fs::FileHandle::close() {

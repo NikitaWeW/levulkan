@@ -96,11 +96,20 @@ std::fstream &fs::NativeFile::getFileHandle() {
     return mFile;
 }
 
-void fs::NativeFilesystem::checkErr(std::error_code err) const {
+void fs::NativeFilesystem::checkErr(std::error_code err, Error *outErr) const {
     if(err) {
-        LOG_ERROR("Native filesystem {} error: {}", err.category().name(), err.message());
+        auto msg = fmt::format("Native filesystem {} error: {}", err.category().name(), err.message());
+        if(outErr) {
+            *outErr = {
+                .failed = true,
+                .message = msg
+            };
+        } else {
+            LOG_ERROR(msg);
+            assert(false && "Filesystem error");
+        }
     }
-    assert(!err);
+
 }
 void fs::NativeFilesystem::close(uint id) {
     assert(mFiles.contains(id));
@@ -110,8 +119,10 @@ void fs::NativeFilesystem::close(uint id) {
     if(file->isOpen())
         file->close();
 
-    // FIXME: File might still be used after closing (e.g. checking isClosed())
-    // mFiles.erase(id);
+    mFiles.erase(id);
+}
+fs::NativeFilesystem::NativeFilesystem(Path basePath) {
+    setBasePath(basePath);
 }
 fs::NativeFilesystem::NativeFilesystem() = default;
 fs::NativeFilesystem::~NativeFilesystem() {
@@ -138,94 +149,96 @@ fs::NativeFilesystem &fs::NativeFilesystem::operator=(NativeFilesystem &&rhs) {
 fs::NativeFilesystem::NativeFilesystem(NativeFilesystem &&rhs) {
     *this = std::move(rhs);
 }
-void fs::NativeFilesystem::copy(Path const &from, Path const &to) {
+void fs::NativeFilesystem::copy(Path const &from, Path const &to, Error *outErr) {
     std::filesystem::copy_options copyOptions = std::filesystem::copy_options::none;
     if(isDirectory(from))
         copyOptions = std::filesystem::copy_options::recursive;
 
     std::error_code err;
     std::filesystem::copy(getFullPath(from).string(), getFullPath(to).string(), copyOptions, err);
-    checkErr(err);
+    checkErr(err, outErr);
 }
-void fs::NativeFilesystem::move(Path const &from, Path const &to) {
+void fs::NativeFilesystem::move(Path const &from, Path const &to, Error *outErr) {
     std::error_code err;
     std::filesystem::rename(getFullPath(from).string(), getFullPath(to).string(), err);
-    checkErr(err);
+    checkErr(err, outErr);
 }
 
-void fs::NativeFilesystem::createDirectory(Path const &path) {
+void fs::NativeFilesystem::createDirectory(Path const &path, Error *outErr) {
     std::error_code err;
     std::filesystem::create_directory(getFullPath(path).string(), err);
-    checkErr(err);
+    checkErr(err, outErr);
 }
-void fs::NativeFilesystem::createDirectories(Path const &path) {
+void fs::NativeFilesystem::createDirectories(Path const &path, Error *outErr) {
     std::error_code err;
     std::filesystem::create_directories(getFullPath(path).string(), err);
-    checkErr(err);
+    checkErr(err, outErr);
 }
-bool fs::NativeFilesystem::exists(Path const &path) const {
+bool fs::NativeFilesystem::exists(Path const &path, Error *outErr) const {
     std::error_code err;
     auto res = std::filesystem::exists(getFullPath(path).string(), err);
-    checkErr(err);
+    checkErr(err, outErr);
     return res;
 }
-uintmax_t fs::NativeFilesystem::fileSize(Path const &path) const {
+uintmax_t fs::NativeFilesystem::fileSize(Path const &path, Error *outErr) const {
     std::error_code err;
     auto res = std::filesystem::file_size(getFullPath(path).string(), err);
-    checkErr(err);
+    checkErr(err, outErr);
     return res;
 }
-void fs::NativeFilesystem::remove(Path const &path) {
+void fs::NativeFilesystem::remove(Path const &path, Error *outErr) {
     std::error_code err;
-    std::filesystem::remove(getFullPath(path).string(), err);
-    checkErr(err);
+    if(isDirectory(path, outErr)) {
+        std::filesystem::remove_all(getFullPath(path).string(), err);
+    } else {
+        std::filesystem::remove(getFullPath(path).string(), err);
+    }
+    checkErr(err, outErr);
 }
-void fs::NativeFilesystem::removeAll(Path const &path) {
-    std::error_code err;
-    std::filesystem::remove_all(getFullPath(path).string(), err);
-    checkErr(err);
-}
-std::vector<fs::Path> fs::NativeFilesystem::getContents(Path const &path, bool recursive) const {
+std::vector<fs::Path> fs::NativeFilesystem::getContents(Path const &path, bool recursive, Error *outErr) const {
     std::vector<Path> res;
 
+    std::error_code err;
     if(recursive) {
-        for(auto entry : std::filesystem::recursive_directory_iterator(getFullPath(path).string())) {
+        for(auto entry : std::filesystem::recursive_directory_iterator(getFullPath(path).string(), err)) {
             res.emplace_back(fs::Path(entry.path().string()).makeRelative(mBasePath));
         }
     } else {
-        for(auto entry : std::filesystem::directory_iterator(getFullPath(path).string())) {
+        for(auto entry : std::filesystem::directory_iterator(getFullPath(path).string(), err)) {
             res.emplace_back(fs::Path(entry.path().string()).makeRelative(mBasePath));
         }
     }
 
+    checkErr(err, outErr);
+
     return res;
 }
-bool fs::NativeFilesystem::isDirectory(Path const &path) const {
+bool fs::NativeFilesystem::isDirectory(Path const &path, Error *outErr) const {
     std::error_code err;
     auto res = std::filesystem::is_directory(getFullPath(path).string(), err);
-    checkErr(err);
+    checkErr(err, outErr);
     return res;
 
 }
-bool fs::NativeFilesystem::isRegularFile(Path const &path) const {
+bool fs::NativeFilesystem::isRegularFile(Path const &path, Error *outErr) const {
     std::error_code err;
     auto res = std::filesystem::is_regular_file(getFullPath(path).string(), err);
-    checkErr(err);
+    checkErr(err, outErr);
     return res;
 }
-bool fs::NativeFilesystem::isEmpty(Path const &path) const {
+bool fs::NativeFilesystem::isEmpty(Path const &path, Error *outErr) const {
     std::error_code err;
     auto res = std::filesystem::is_empty(getFullPath(path).string(), err);
-    checkErr(err);
+    checkErr(err, outErr);
     return res;
 }
-std::chrono::file_clock::time_point fs::NativeFilesystem::lastTimeWrite(Path const &path) const {
+std::chrono::file_clock::time_point fs::NativeFilesystem::lastTimeWrite(Path const &path, Error *outErr) const {
     std::error_code err;
     auto res = std::filesystem::last_write_time(getFullPath(path).string(), err);
-    checkErr(err);
+    checkErr(err, outErr);
     return res;
 };
-fs::FileHandle fs::NativeFilesystem::open(Path const &path, FileOpenMode::Flags mode) {
+fs::FileHandle fs::NativeFilesystem::open(Path const &path, FileOpenMode::Flags mode, Error *outErr) {
     auto fullPath = getFullPath(path);
 
     uint id = mNextId++;
@@ -236,6 +249,11 @@ fs::FileHandle fs::NativeFilesystem::open(Path const &path, FileOpenMode::Flags 
     });
     auto &handle = mFiles.at(id);
     handle.file->setParent(this);
+
+    if(outErr && !handle.file->isOpen()) {
+        outErr->failed = true;
+        outErr->message = fmt::format("Failed to open a native file {}!", fullPath.string());
+    }
 
     return FileHandle(handle.file.get());
 }

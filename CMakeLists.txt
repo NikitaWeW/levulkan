@@ -77,6 +77,7 @@ set(ENGINE_SOURCE
     "src/fs/Path.cpp"
     "src/fs/File.cpp"
     "src/fs/NativeFilesystem.cpp"
+    "src/fs/VirtualFilesystem.cpp"
     # "src/fs/ArchiveFilesystem.cpp"
 
     "src/vk/Init.cpp"

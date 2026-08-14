@@ -51,31 +51,35 @@ protected:
 
     friend NativeFile;
 
-    void checkErr(std::error_code err) const;
+    void checkErr(std::error_code err, Error *outErr) const;
     void close(uint id);
     Path getFullPath(Path const &path) const;
 public:
     NativeFilesystem();
+    NativeFilesystem(Path basePath);
     ~NativeFilesystem();
     NativeFilesystem &operator=(NativeFilesystem &&rhs);
     NativeFilesystem(NativeFilesystem &&rhs);
-    void setBasePath(Path const &path) override;
-    Path getBasePath() const override;
 
-    void copy(Path const &from, Path const &to) override;
-    void move(Path const &from, Path const &to) override;
-    void createDirectory(Path const &path) override;
-    void createDirectories(Path const &path) override;
-    bool exists(Path const &path) const override;
-    uintmax_t fileSize(Path const &path) const override;
-    void remove(Path const &path) override;
-    void removeAll(Path const &path) override;
-    std::vector<Path> getContents(Path const &path, bool recursive = false) const override;
-    bool isDirectory(Path const &path) const override;
-    bool isRegularFile(Path const &path) const override;
-    bool isEmpty(Path const &path) const override;
-    FileHandle open(Path const &path, FileOpenMode::Flags mode = 0) override;
-    std::chrono::file_clock::time_point lastTimeWrite(Path const &path) const override;
+    /// @brief Sets the (physical) base / root path.
+    /// Might flush the filesystem and load a new one.
+    /// Creates directories if they dont exist.
+    void setBasePath(Path const &path);
+    Path getBasePath() const;
+
+    void copy(Path const &src, Path const &dst, Error *err = nullptr) override;
+    void move(Path const &src, Path const &dst, Error *err = nullptr) override;
+    void createDirectory(Path const &path, Error *err = nullptr) override;
+    void createDirectories(Path const &path, Error *err = nullptr) override;
+    bool exists(Path const &path, Error *err = nullptr) const override;
+    uintmax_t fileSize(Path const &path, Error *err = nullptr) const override;
+    void remove(Path const &path, Error *err = nullptr) override;
+    std::vector<Path> getContents(Path const &path, bool recursive = false, Error *err = nullptr) const override;
+    bool isDirectory(Path const &path, Error *err = nullptr) const override;
+    bool isRegularFile(Path const &path, Error *err = nullptr) const override;
+    bool isEmpty(Path const &path, Error *err = nullptr) const override;
+    std::chrono::file_clock::time_point lastTimeWrite(Path const &path, Error *err = nullptr) const override;
+    FileHandle open(Path const &path, FileOpenMode::Flags mode = 0, Error *err = nullptr) override;
 };
 
 };
