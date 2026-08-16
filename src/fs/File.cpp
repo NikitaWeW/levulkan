@@ -7,6 +7,13 @@ fs::FileHandle::FileHandle(IFile *file) {
 fs::FileHandle::~FileHandle() {
     close();
 }
+fs::FileHandle::FileHandle(FileHandle &&rhs) {
+    *this = std::move(rhs);
+}
+fs::FileHandle &fs::FileHandle::operator=(FileHandle &&rhs) {
+    std::swap(mFile, rhs.mFile);
+    return *this;
+}
 
 fs::IFile *fs::FileHandle::release() {
     auto file = mFile;
@@ -20,7 +27,7 @@ IStream *fs::FileHandle::get() {
     return mFile;
 }
 void fs::FileHandle::close() {
-    if(mFile) {
+    if(isOpen()) {
         mFile->close();
         mFile = nullptr;
     }

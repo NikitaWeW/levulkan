@@ -19,6 +19,7 @@ protected:
     NativeFile(Path path, FileOpenMode::Flags mode, uint id);
     void setParent(NativeFilesystem *parent);
 public:
+    ~NativeFile();
     bool isOpen() const override;
     void close() override;
 
@@ -51,7 +52,7 @@ protected:
 
     friend NativeFile;
 
-    void checkErr(std::error_code err, Error *outErr) const;
+    void checkErr(std::error_code err, Error *outErr, std::string path) const;
     void close(uint id);
     Path getFullPath(Path const &path) const;
 public:

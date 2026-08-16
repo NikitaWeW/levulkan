@@ -1,6 +1,8 @@
 #include "VirtualFilesystem.hpp"
 #include "Logging.hpp"
 
+#define CHECK_ERR(e) if(static_cast<bool>(e) && (e)->failed) { return; }
+
 void fs::VirtualFilesystem::unmount(Path dir, Error *err) {
     auto path = dir.makeAbsolute("").string();
     if(!mMount.contains(path)) {
@@ -40,21 +42,32 @@ void fs::VirtualFilesystem::mount(IFilesystem *filesystem, Path dir, Error *err)
 
 fs::VirtualFilesystem::Mount fs::VirtualFilesystem::getMount(Path path, Error *err) const {
     path = path.makeAbsolute("");
+    auto pathComponents = path.split();
     // Find the mount that matches the most components
 
     uint biggestMatch = 0;
     std::string dir;
 
     for(auto &[mountPath, mountFs] : mMount) {
-        if (mountPath.size() <= path.string().size() && 
-            mountPath.size() > biggestMatch && 
-            (path.string().compare(0, mountPath.size(), mountPath) == 0)) 
-        {
-            if(!dir.empty()) {
-                LOG_WARN("Mount conflict at \"{}\"!", path.string());
-            }
+        if(fs::Path(mountPath).empty() && biggestMatch < 1) {
+            biggestMatch = 1;
             dir = mountPath;
-            biggestMatch = mountPath.size();
+        } else {
+            auto mountComponents = fs::Path(mountPath).split();
+            if(mountComponents.size() > pathComponents.size() || mountComponents.size() <= biggestMatch) {
+                continue;
+            }
+            
+            bool matches = true;
+            for(uint i = 0; i < mountComponents.size(); ++i) {
+                if(mountComponents[i] != pathComponents[i])
+                    matches = false;
+            }
+    
+            if(matches) {
+                dir = mountPath;
+                biggestMatch = mountComponents.size();
+            }
         }
     }
 
@@ -81,100 +94,112 @@ fs::VirtualFilesystem::Mount fs::VirtualFilesystem::getMount(Path path, Error *e
     return res;
 }
 
-void fs::VirtualFilesystem::copy(Path const &src, Path const &dst, Error *err) {
-    auto srcMount = getMount(src, err);
-    if(err && err->failed)
-        return;
-    auto dstMount = getMount(dst, err);
-    if(err && err->failed)
-        return;
+void fs::VirtualFilesystem::transfer(Mount src, Mount dst, Error *err, bool move) {
+    assert(src.fs && dst.fs);
 
-    assert(srcMount.fs && dstMount.fs);
-
-    if(srcMount.fs->isDirectory(src) && !dstMount.fs->isDirectory(dst)) {
-        auto msg = fmt::format("Cannot copy directory {} to {} (file)", src.string(), dst.string());
+    if(!src.fs->exists(src.relativePath)) {
+        auto msg = fmt::format("Cannot {} directory {} to {}: no such file or directory", move ? "move" : "copy", src.absolutePath.string(), dst.absolutePath.string());
         if(err) {
             err->failed = true;
             err->message = msg;
+            err->path = fmt::format("src: {}, dst: {}", src.absolutePath.string(), dst.absolutePath.string());
+        } else {
+            LOG_ERROR(msg);
+        }
+        return;
+    }
+    if(!dst.relativePath.parentPath().empty() && !dst.fs->exists(dst.relativePath.parentPath())) {
+        auto msg = fmt::format("Cannot {} directory {} to {}: no such file or directory", move ? "move" : "copy", src.absolutePath.string(), dst.absolutePath.string());
+        if(err) {
+            err->failed = true;
+            err->message = msg;
+            err->path = fmt::format("src: {}, dst: {}", src.absolutePath.string(), dst.absolutePath.string());
+        } else {
+            LOG_ERROR(msg);
+        }
+        return;
+    }
+    if(src.fs->isDirectory(src.relativePath) && dst.fs->exists(dst.relativePath) && !dst.fs->isDirectory(dst.relativePath)) {
+        auto msg = fmt::format("Cannot {} directory {} to {} (an existing file)", move ? "move" : "copy", src.absolutePath.string(), dst.absolutePath.string());
+        if(err) {
+            err->failed = true;
+            err->message = msg;
+            err->path = fmt::format("src: {}, dst: {}", src.absolutePath.string(), dst.absolutePath.string());
         } else {
             LOG_ERROR(msg);
         }
         return;
     }
 
-    if(srcMount.fs != dstMount.fs) {
+    if(src.fs != dst.fs) {
         std::vector<Path> paths;
-        if(srcMount.fs->isDirectory(srcMount.relativePath))
-            paths = srcMount.fs->getContents(srcMount.relativePath, true);
-        else 
-            paths = {src};
+        if(src.fs->isDirectory(src.relativePath, err)) {
+            paths = src.fs->getContents(src.relativePath, true, err);
+        } else {
+            paths = {src.relativePath};
+        }
+        if(err && err->failed)
+            return;
         for(auto const &path : paths) {
-            auto file = srcMount.fs->open(srcMount.relativePath, 0, err);
-            if(err && err->failed)
-                return;
+            auto srcPath = src.relativePath/path.makeRelative(src.relativePath);
+            if(src.fs->isDirectory(srcPath))
+                continue;
+
+            auto file = src.fs->open(srcPath, 0, err);
+            CHECK_ERR(err);
+
             std::vector<std::byte> buff(file->size());
+            file->seekg(0);
             file->read(buff.data(), buff.size());
-            file->flush();
             file.close();
 
-            file = dstMount.fs->open(dstMount.relativePath, FileOpenMode::Truncate, err);
-            if(err && err->failed)
-                return;
+            if(move) {
+                src.fs->remove(srcPath, err);
+                CHECK_ERR(err);
+            }
+            
+            auto dstPath = dst.relativePath/path.makeRelative(src.relativePath);
+            if(!dstPath.parentPath().empty()) {
+                dst.fs->createDirectories(dstPath.parentPath());
+            }
+            file = dst.fs->open(dstPath, FileOpenMode::Truncate, err);
+            CHECK_ERR(err);
+            
             file->write(buff.data(), buff.size());
             file->flush();
             file.close();
         }
     } else {
-        srcMount.fs->copy(srcMount.relativePath, dstMount.relativePath, err);
+        if(move) {
+            src.fs->move(src.relativePath, dst.relativePath, err);
+        } else {
+            src.fs->copy(src.relativePath, dst.relativePath, err);
+        }
     }
 }
-void fs::VirtualFilesystem::move(Path const &src, Path const &dst, Error *err) {
+void fs::VirtualFilesystem::copy(Path const &from, Path const &to, Error *err) {
+    auto src = getMount(from, err);
+    if(err && err->failed)
+        return;
+    auto dst = getMount(to, err);
+    if(err && err->failed)
+        return;
+
+    transfer(src, dst, err, false);
+}
+void fs::VirtualFilesystem::move(Path const &from, Path const &to, Error *err) {
     // error: it seems like you've fallen asleep and hit your keyboard
     // zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz ...
     // ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ you fell asleep here
     // = help: try improving your sleep schedule or reducing your hours
-    auto srcMount = getMount(src, err);
+    auto src = getMount(from, err);
     if(err && err->failed)
         return;
-    auto dstMount = getMount(dst, err);
+    auto dst = getMount(to, err);
     if(err && err->failed)
         return;
 
-    assert(srcMount.fs && dstMount.fs);
-
-    if(srcMount.fs->isDirectory(src) && !dstMount.fs->isDirectory(dst)) {
-        auto msg = fmt::format("Cannot copy directory {} to {} (file)", src.string(), dst.string());
-        if(err) {
-            err->failed = true;
-            err->message = msg;
-        } else {
-            LOG_ERROR(msg);
-        }
-        return;
-    }
-
-    if(srcMount.fs != dstMount.fs) {
-        for(auto const &path : srcMount.fs->isDirectory(srcMount.relativePath) ? srcMount.fs->getContents(srcMount.relativePath, true) : std::vector<Path>{srcMount.relativePath}) {
-            auto file = srcMount.fs->open(srcMount.relativePath, 0, err);
-            if(err && err->failed)
-                return;
-            std::vector<std::byte> buff(file->size());
-            file->read(buff.data(), buff.size());
-            file.close();
-
-            srcMount.fs->remove(srcMount.relativePath, err);
-            if(err && err->failed)
-                return;
-
-            file = dstMount.fs->open(dstMount.relativePath, FileOpenMode::Truncate, err);
-            if(err && err->failed)
-                return;
-            file->write(buff.data(), buff.size());
-            file.close();
-        }
-    } else {
-        srcMount.fs->move(srcMount.relativePath, dstMount.relativePath, err);
-    }
+    transfer(src, dst, err, true);
 }
 void fs::VirtualFilesystem::createDirectory(Path const &path, Error *err) {
     auto mount = getMount(path, err);
@@ -261,7 +286,15 @@ std::chrono::file_clock::time_point fs::VirtualFilesystem::lastTimeWrite(Path co
 
 
 
-fs::SubFilesystem::SubFilesystem(IFilesystem *parent, Path prefix) : mParent(parent), mPrefix(prefix) {}
+fs::SubFilesystem::SubFilesystem(IFilesystem *parent, Path prefix) : mParent(parent), mPrefix(prefix) {
+    assert(mParent);
+    Error err;
+    mParent->createDirectories(mPrefix, &err);
+    if(err.failed) {
+        LOG_ERROR("{}\nat {}", err.message, err.path);
+    }
+    assert(!err.failed);
+}
 
 void fs::SubFilesystem::copy(Path const &src, Path const &dst, Error *err) {
     assert(mParent && "Invalid SubFilesystem!");
@@ -293,7 +326,13 @@ void fs::SubFilesystem::remove(Path const &path, Error *err) {
 }
 std::vector<fs::Path> fs::SubFilesystem::getContents(Path const &path, bool recursive, Error *err) const {
     assert(mParent && "Invalid SubFilesystem!");
-    return mParent->getContents(mPrefix/path, err);
+    auto contents = mParent->getContents(mPrefix/path, recursive, err);
+
+    for(auto &entry : contents) {
+        entry = entry.makeRelative(mPrefix);
+    }
+
+    return contents;
 }
 bool fs::SubFilesystem::isDirectory(Path const &path, Error *err) const {
     assert(mParent && "Invalid SubFilesystem!");

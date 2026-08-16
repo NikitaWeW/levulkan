@@ -108,8 +108,8 @@ public:
 
     FileHandle(FileHandle const &) = delete;
     FileHandle &operator=(FileHandle const &) = delete;
-    FileHandle(FileHandle &&) = default;
-    FileHandle &operator=(FileHandle &&) = default;
+    FileHandle(FileHandle &&);
+    FileHandle &operator=(FileHandle &&);
 
     [[nodiscard]] IFile *release();
     IStream const *get() const;
@@ -124,6 +124,7 @@ public:
 struct Error {
     bool failed = false;
     std::string message;
+    std::string path;
 };
 
 class IFilesystem {

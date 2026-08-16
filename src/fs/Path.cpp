@@ -1,4 +1,5 @@
 #include "IFilesystem.hpp"
+#include "Logging.hpp"
 #include <cassert>
 
 using namespace fs;
@@ -119,13 +120,17 @@ fs::Path fs::Path::makeRelative(Path const &path) const {
         if(i >= thisComponents.size()) {
             relativePath.insert(0, "../");
         } else if(i >= otherComponents.size()) {
-            relativePath.insert(relativePath.size(), thisComponents[i]);
+            relativePath.insert(relativePath.size(), thisComponents[i] + "/");
         } else {
             if(thisComponents[i] != otherComponents[i]) {
                 relativePath.insert(0, "../");
                 relativePath.insert(relativePath.size(), thisComponents[i] + "/");
             }
         }
+    }
+
+    if(!relativePath.empty() && !mPath.empty() && mPath.back() != '/') {
+        relativePath.erase(relativePath.size() - 1, 1);
     }
 
     return Path(relativePath);

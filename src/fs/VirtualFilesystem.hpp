@@ -15,6 +15,7 @@ protected:
         Path absolutePath;
     };
     Mount getMount(Path path, Error *err) const;
+    void transfer(Mount src, Mount dst, Error *err, bool move);
 public:
     void mount(IFilesystem *filesystem, Path dir, Error *err = nullptr);
     void unmount(Path dir, Error *err = nullptr);
