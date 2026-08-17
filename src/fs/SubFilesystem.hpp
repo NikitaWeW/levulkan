@@ -1,24 +1,15 @@
 #pragma once
 #include "IFilesystem.hpp"
-#include <unordered_map>
 
 namespace fs {
 
-class VirtualFilesystem : public IFilesystem {
+class SubFilesystem : public IFilesystem {
 protected:
-    std::unordered_map<std::string, IFilesystem *> mMount;
-
-    struct Mount {
-        IFilesystem *fs = nullptr;
-        std::string dir;
-        Path relativePath;
-        Path absolutePath;
-    };
-    Mount getMount(Path path, Error *err) const;
-    void transfer(Mount src, Mount dst, Error *err, bool move);
+    IFilesystem *mParent = nullptr;
+    Path mPrefix;
 public:
-    void mount(IFilesystem *filesystem, Path dir, Error *err = nullptr);
-    void unmount(Path dir, Error *err = nullptr);
+    SubFilesystem() = default;
+    SubFilesystem(IFilesystem *parent, Path prefix);
 
     void copy(Path const &src, Path const &dst, Error *err = nullptr) override;
     void move(Path const &src, Path const &dst, Error *err = nullptr) override;
@@ -35,5 +26,4 @@ public:
     FileHandle open(Path const &path, FileOpenMode::Flags mode = 0, Error *err = nullptr) override;
 };
 
-
-};
+} // namespace fs

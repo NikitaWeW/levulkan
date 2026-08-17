@@ -1,39 +1,32 @@
 #pragma once
 #include "ECS.hpp"
 #include "IFilesystem.hpp"
-#include "zip.h"
+#include <unordered_set>
 
 namespace fs {
 
-class ArchiveFilesystem;
+class MemoryFilesystem;
 
-class ArchiveFile : public IFile {
+class MemoryFile : public IFile {
 protected:
-    ArchiveFilesystem *mParent = nullptr;
-    zip_t *mZip = nullptr;
-    zip_file_t *mFile;
-
-    uint mHandleId = 0;
-    uint mFileId = 0;
-
     FileOpenMode::Flags mMode;
-    Path mPath;
-    std::string mPassword;
-
+    uint mOpenId = 0;
+    uint mFileId = 0;
+    MemoryFilesystem *mParent = nullptr;
+    std::vector<std::byte> mBuffer;
+    bool mOpen = false;
     uintmax_t mWriteHead = 0;
-    std::vector<std::byte> mData;
+    uintmax_t mReadHead = 0;
 
-    friend ArchiveFilesystem;
+    friend MemoryFilesystem;
 
-    void open(Path path, FileOpenMode::Flags mode, uint id, zip_t *zip, bool compression);
-    void _close();
-
-    void setParent(ArchiveFilesystem *parent);
-    void setPassword(std::string_view password);
+    MemoryFile(FileOpenMode::Flags mode, uint fileId);
+    void setParent(MemoryFilesystem *parent);
+    void open(uint openId);
 public:
+    ~MemoryFile();
     bool isOpen() const override;
     void close() override;
-    FileOpenMode::Flags getMode() const;
 
     void seekg(intmax_t position) override;
     void seekg(intmax_t offset, SeekDir dir) override;
@@ -46,35 +39,49 @@ public:
     void seekp(intmax_t offset, SeekDir dir) override;
     uintmax_t tellp() override;
     void write(void const *src, uintmax_t size) override;
-
-    // IMPORTANT: Doesent flush the archive
     void flush() override;
 };
 
-class ArchiveFilesystem : public IFilesystem {
+class MemoryFilesystem : public IFilesystem {
 protected:
     struct Handle {
         Path path;
-        std::unique_ptr<ArchiveFile> file;
-        uint id = 0;
+        std::unique_ptr<MemoryFile> file;
+        uint openId = 0;
+        uint fileId = 0;
     };
-    zip_t *mZip = nullptr;
-    SparseSet<Handle> mOpenedFiles;
+    enum class DescriptorType {
+        File, Directory
+    };
+    struct Descriptor {
+        DescriptorType type;
+        Path path;
+        // Index into #mFileContents
+        uint id = 0;
+        std::chrono::file_clock::time_point modificationTime;
+    };
+
     uint mNextId = 1;
+    SparseSet<Handle> mFiles;
+    SparseSet<Descriptor> mDescriptors;
+    SparseSet<std::vector<std::byte>> mFileContents;
+    std::unordered_map<std::string, uint> mPathToDescIndex;
 
-    friend ArchiveFile;
+    friend MemoryFile;
 
+    void setErr(Error *outErr, std::string msg, std::string path) const;
     void close(uint id);
-    Path getFullPath(Path const &path) const;
+    uint getFileIndex(fs::Path path) const;
+    Descriptor &getDesc(fs::Path path, DescriptorType defaultType); // Create a descriptor if doesent exist
+    bool checkBeforeTransfer(fs::Path src, fs::Path dst, Error *err, std::string_view op) const;
 public:
-    ~ArchiveFilesystem();
-    ArchiveFilesystem();
-    ArchiveFilesystem &operator=(ArchiveFilesystem &&rhs);
-    ArchiveFilesystem(ArchiveFilesystem &&rhs);
+    MemoryFilesystem();
+    ~MemoryFilesystem();
+    MemoryFilesystem &operator=(MemoryFilesystem &&rhs);
+    MemoryFilesystem(MemoryFilesystem &&rhs);
 
-    void sync();
-    void close();
-    void discard();
+    void deserialize(void const *data, uintmax_t size);
+    std::vector<std::byte> serialize() const;
 
     void copy(Path const &src, Path const &dst, Error *err = nullptr) override;
     void move(Path const &src, Path const &dst, Error *err = nullptr) override;

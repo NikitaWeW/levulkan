@@ -5,6 +5,7 @@
 
 fs::NativeFile::NativeFile(Path path, FileOpenMode::Flags mode, uint id) {
     mId = id;
+    mMode = mode;
     std::ios::openmode iosMode = std::ios::in | std::ios::out | std::ios::binary;
 
     if(mode & FileOpenMode::Append)
@@ -153,17 +154,20 @@ fs::NativeFilesystem::NativeFilesystem(NativeFilesystem &&rhs) {
 }
 void fs::NativeFilesystem::copy(Path const &from, Path const &to, Error *outErr) {
     std::filesystem::copy_options copyOptions = std::filesystem::copy_options::none;
-    if(isDirectory(from))
-        copyOptions = std::filesystem::copy_options::recursive;
+
+    if(exists(to, outErr) && isRegularFile(to, outErr))
+        remove(to, outErr);
+    if(outErr && outErr->failed)
+        return;
 
     std::error_code err;
-    std::filesystem::copy(getFullPath(from).string(), getFullPath(to).string(), copyOptions, err);
-    checkErr(err, outErr, fmt::format("src: {}, dst: {}", from.string(), to.string()));
+    std::filesystem::copy(getFullPath(from).string(), getFullPath(to).string(), std::filesystem::copy_options::recursive, err);
+    checkErr(err, outErr, fmt::format("(src: {}, dst: {})", from.string(), to.string()));
 }
 void fs::NativeFilesystem::move(Path const &from, Path const &to, Error *outErr) {
     std::error_code err;
     std::filesystem::rename(getFullPath(from).string(), getFullPath(to).string(), err);
-    checkErr(err, outErr, fmt::format("src: {}, dst: {}", from.string(), to.string()));
+    checkErr(err, outErr, fmt::format("(src: {}, dst: {})", from.string(), to.string()));
 }
 
 void fs::NativeFilesystem::createDirectory(Path const &path, Error *outErr) {

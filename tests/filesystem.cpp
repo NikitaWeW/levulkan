@@ -1,35 +1,36 @@
 #include "catch2/catch_test_macros.hpp"
 #include "fs/IFilesystem.hpp"
 #include "fs/NativeFilesystem.hpp"
-#include "fs/ArchiveFilesystem.hpp"
+#include "fs/MemoryFilesystem.hpp"
 #include "fs/VirtualFilesystem.hpp"
+#include "fs/SubFilesystem.hpp"
 
 #define CHECK_ERR(e) \
     if(e.failed) { \
         LOG_ERROR("{}\nat {}", e.message, e.path); \
+        REQUIRE_FALSE(e.failed); \
     } \
-    REQUIRE_FALSE(e.failed);
 
 static void testFilesystem(fs::IFilesystem *filesystem) {
     fs::Error err;
-    for(auto const &path : filesystem->getContents("/", false, &err)) {
+    for(auto const &path : filesystem->getContents("/", false)) {
         CHECK_ERR(err);
-        REQUIRE(filesystem->exists(path, &err));
-        filesystem->remove(path, &err);
-        REQUIRE_FALSE(filesystem->exists(path, &err));
+        REQUIRE(filesystem->exists(path));
+        filesystem->remove(path);
+        REQUIRE_FALSE(filesystem->exists(path));
         CHECK_ERR(err);
     }
 
     auto files = {"/a.txt", "b.a", "/c.a.x", "./file0", "file1", "/dir1/dir2/dir3/directory.d/file"};
-    constexpr uint NUM = 10;
+    constexpr uint NUM = 26;
     for(uint i = 0; i < NUM; ++i) {
         for(auto const &path : files) {
             filesystem->createDirectories(fs::Path(path).parentPath());
             CHECK_ERR(err);
-            auto file = filesystem->open(path, fs::FileOpenMode::Append, &err);
+            auto file = filesystem->open(path, fs::FileOpenMode::Append);
             CHECK_ERR(err);
-            REQUIRE(filesystem->exists(path, &err));
-            REQUIRE(filesystem->isRegularFile(path, &err));
+            REQUIRE(filesystem->exists(path));
+            REQUIRE(filesystem->isRegularFile(path));
             CHECK_ERR(err);
             REQUIRE(file.isOpen());
 
@@ -46,13 +47,13 @@ static void testFilesystem(fs::IFilesystem *filesystem) {
         }
     }
 
-    REQUIRE(filesystem->getContents("/", true, &err).size() == 10);
+    REQUIRE(filesystem->getContents("/", true).size() == 10);
     CHECK_ERR(err);
 
     for(auto const &path : files) {
-        REQUIRE(filesystem->exists(path, &err));
+        REQUIRE(filesystem->exists(path));
         CHECK_ERR(err);
-        auto file = filesystem->open(path, 0, &err);
+        auto file = filesystem->open(path, 0);
         CHECK_ERR(err);
         REQUIRE(file->size() == NUM);
         std::vector<char> buff(file->size());
@@ -65,27 +66,89 @@ static void testFilesystem(fs::IFilesystem *filesystem) {
         file.close();
     }
 
-    filesystem->copy("/a.txt", "/dir1/b.txt", &err);
+    filesystem->copy("/a.txt", "/dir1/b.txt");
     CHECK_ERR(err);
-    REQUIRE(filesystem->exists("/dir1/b.txt", &err));
-    REQUIRE(filesystem->isRegularFile("/dir1/b.txt", &err));
-    CHECK_ERR(err);
-
-    filesystem->copy("/dir1", "/dirCopy", &err);
-    CHECK_ERR(err);
-    REQUIRE(filesystem->exists("/dirCopy/", &err));
-    REQUIRE(filesystem->isDirectory("/dirCopy/", &err));
-    REQUIRE(filesystem->exists("/dirCopy/b.txt", &err));
-    REQUIRE(filesystem->isRegularFile("/dirCopy/b.txt", &err));
+    REQUIRE(filesystem->exists("/dir1/b.txt"));
+    REQUIRE(filesystem->isRegularFile("/dir1/b.txt"));
     CHECK_ERR(err);
 
-    filesystem->move("/dirCopy", "/dirMoved", &err);
+    filesystem->copy("/dir1", "/dirCopy");
     CHECK_ERR(err);
-    REQUIRE(filesystem->exists("/dir1/b.txt", &err));
-    REQUIRE(filesystem->isRegularFile("/dir1/b.txt", &err));
+    REQUIRE(filesystem->exists("/dirCopy/"));
+    REQUIRE(filesystem->isDirectory("/dirCopy/"));
+    REQUIRE(filesystem->exists("/dirCopy/b.txt"));
+    REQUIRE(filesystem->isRegularFile("/dirCopy/b.txt"));
+    REQUIRE(filesystem->exists("/dirCopy/dir2/dir3/directory.d"));
+    REQUIRE(filesystem->isDirectory("/dirCopy/dir2/dir3/directory.d"));
+    REQUIRE(filesystem->exists("/dirCopy/dir2/dir3/directory.d/file"));
+    REQUIRE(filesystem->isRegularFile("/dirCopy/dir2/dir3/directory.d/file"));
     CHECK_ERR(err);
 
-    filesystem->fileSize("/definitely/doesent/exist", &err);
+    filesystem->move("/dirCopy", "/dirMoved");
+    CHECK_ERR(err);
+    REQUIRE(filesystem->exists("/dirMoved/"));
+    REQUIRE(filesystem->isDirectory("/dirMoved/"));
+    REQUIRE(filesystem->exists("/dirMoved/b.txt"));
+    REQUIRE(filesystem->isRegularFile("/dirMoved/b.txt"));
+    REQUIRE(filesystem->exists("/dirMoved/dir2/dir3/directory.d"));
+    REQUIRE(filesystem->isDirectory("/dirMoved/dir2/dir3/directory.d"));
+    REQUIRE(filesystem->exists("/dirMoved/dir2/dir3/directory.d/file"));
+    REQUIRE(filesystem->isRegularFile("/dirMoved/dir2/dir3/directory.d/file"));
+    CHECK_ERR(err);
+
+    filesystem->copy("/file0", "/dir1/file0_copy");
+    CHECK_ERR(err);
+    REQUIRE(filesystem->exists("/dir1/file0_copy"));
+    REQUIRE(filesystem->isRegularFile("/dir1/file0_copy"));
+    CHECK_ERR(err);
+
+    filesystem->copy("/file0", "/dir1");
+    CHECK_ERR(err);
+    REQUIRE(filesystem->exists("/dir1/file0"));
+    REQUIRE(filesystem->isRegularFile("/dir1/file0"));
+    CHECK_ERR(err);
+
+    filesystem->copy("/file0", "/dir1/file0_copy");
+    CHECK_ERR(err);
+    REQUIRE(filesystem->exists("/dir1/file0_copy"));
+    REQUIRE(filesystem->isRegularFile("/dir1/file0_copy"));
+    CHECK_ERR(err);
+    
+    filesystem->move("/file0", "/dir1");
+    CHECK_ERR(err);
+    REQUIRE(filesystem->exists("/dir1/file0"));
+    REQUIRE(filesystem->isRegularFile("/dir1/file0"));
+    REQUIRE_FALSE(filesystem->exists("/file0"));
+    CHECK_ERR(err);
+
+    filesystem->move("/file1", "/dir1/file0_moved");
+    CHECK_ERR(err);
+    REQUIRE(filesystem->exists("/dir1/file0_moved"));
+    REQUIRE(filesystem->isRegularFile("/dir1/file0_moved"));
+    REQUIRE_FALSE(filesystem->exists("/file1"));
+    CHECK_ERR(err);
+
+
+    for(auto const &path : filesystem->getContents("/", true)) {
+        CHECK_ERR(err);
+        REQUIRE(filesystem->exists(path));
+        if(filesystem->isDirectory(path))
+            continue;
+        REQUIRE(filesystem->isRegularFile(path));
+        auto file = filesystem->open(path, 0);
+        CHECK_ERR(err);
+        REQUIRE(file->size() == NUM);
+        std::vector<char> buff(file->size());
+        file->seekp(0);
+        file->read(buff.data(), buff.size());
+        for(uint i = 0; i < NUM; ++i) {
+            REQUIRE(buff[i] == static_cast<char>('a' + i));
+        }
+
+        file.close();
+    }
+
+    filesystem->fileSize("/definitely/does/not/exist");
     REQUIRE(err.failed);
 }
 
@@ -179,9 +242,9 @@ TEST_CASE("fs::Path tests", "[engine]") {
     REQUIRE(fs::Path("/a/b/c/d").makeRelative("/a/b/e/f") == fs::Path("../../c/d"));
     REQUIRE(fs::Path("/a/b/c/d").makeRelative("/a/b/e/f/g") == fs::Path("../../../c/d"));
 
-    REQUIRE(fs::Path("../a/b/../../c").makeAbsolute("") == fs::Path("/../c"));
-    REQUIRE(fs::Path("a/b/../../../c").makeAbsolute("") == fs::Path("/../c"));
-    REQUIRE(fs::Path("a/b/../c../d/e/../f").makeAbsolute("") == fs::Path("/a/c../d/f"));
+    REQUIRE(fs::Path("../a/b/./.././../c/.").makeAbsolute("") == fs::Path("/../c"));
+    REQUIRE(fs::Path("./a/b/../.././../c").makeAbsolute("") == fs::Path("/../c"));
+    REQUIRE(fs::Path("././a/b/../c../d/e/../f").makeAbsolute("") == fs::Path("/a/c../d/f"));
 
     REQUIRE(fs::Path("../../../c/d").makeAbsolute("/a/b/e/f/g") == fs::Path("/a/b/c/d"));
     REQUIRE(fs::Path("../../c/d").makeAbsolute("/a/b/e/f") == fs::Path("/a/b/c/d"));
@@ -209,22 +272,22 @@ TEST_CASE("fs::VirtualFilesystem tests", "[engine]") {
         REQUIRE(filesystem->exists("/res"));
         REQUIRE(filesystem->exists("/shaders"));
 
-        if(filesystem->exists("/res-copy", &err)) {
-            filesystem->remove("/res-copy", &err);
+        if(filesystem->exists("/res-copy")) {
+            filesystem->remove("/res-copy");
         }
 
-        REQUIRE_FALSE(filesystem->exists("/res-copy", &err));
+        REQUIRE_FALSE(filesystem->exists("/res-copy"));
         
-        filesystem->createDirectory("/res-copy", &err);
+        filesystem->createDirectory("/res-copy");
         CHECK_ERR(err);
         for(auto entry : filesystem->getContents("/res")) {
-            filesystem->copy(entry, entry.makeRelative("/res").makeAbsolute("/res-copy"), &err);
+            filesystem->copy(entry, entry.makeRelative("/res").makeAbsolute("/res-copy"));
             CHECK_ERR(err);
-            REQUIRE(filesystem->exists(entry.makeRelative("/res").makeAbsolute("/res-copy"), &err));
+            REQUIRE(filesystem->exists(entry.makeRelative("/res").makeAbsolute("/res-copy")));
             CHECK_ERR(err);
         }
 
-        filesystem->move("/res-copy", "/tmp/trash", &err);
+        filesystem->move("/res-copy", "/tmp/trash");
         CHECK_ERR(err);
         
         filesystem->unmount("/res");
@@ -232,5 +295,11 @@ TEST_CASE("fs::VirtualFilesystem tests", "[engine]") {
 
         fs::SubFilesystem testFs(filesystem.get(), "/test");
         testFilesystem(&testFs);
+    }
+}
+TEST_CASE("fs::MemoryFilesystem tests", "[engine]") {
+    for(uint i = 0; i < 2; ++i) {
+        std::unique_ptr<fs::MemoryFilesystem> filesystem(new fs::MemoryFilesystem());
+        testFilesystem(filesystem.get());
     }
 }

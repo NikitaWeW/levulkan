@@ -151,6 +151,9 @@ fs::Path fs::Path::makeAbsolute(Path const &relative) const {
         if(components[i] == ".." && i > 0 && components[i - 1] != "..") {
             components.erase(components.begin() + i - 1, components.begin() + i + 1);
             i -= 2;
+        } else if(components[i] == ".") {
+            components.erase(components.begin() + i, components.begin() + i + 1);
+            i -= 1;
         }
     }
 
