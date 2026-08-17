@@ -8,13 +8,13 @@ A lot of stuff is going to be merged into my engine once I finish with this.
 
 ## How to use
 
-![image](https://tenor.com/view/cat-excited-happy-excited-cat-jumping-cat-gif-7705945280075292097)
+![image](https://media1.tenor.com/m/avEEZ4V8XcEAAAAd/cat-excited.gif)
 
 - Probably don't
 
 ## Features
 
-![image](https://tenor.com/view/komik-gif-9952062423559099432)
+![image](https://media.tenor.com/ihzUC8LA1CgAAAAj/komik.gif)
 
 - Device, swapchain and other stuff initialization. (src/vk/Init.hpp)
 - GLSL Shader compilation and binary management with custom #stage parser/splitter. (src/vk/Shader.hpp)
@@ -26,7 +26,7 @@ A lot of stuff is going to be merged into my engine once I finish with this.
 
 ## Building 
 
-![image](https://tenor.com/view/cat-vibe-cat-dancing-cat-cat-meme-gif-15870698214896676686)
+![image](https://media1.tenor.com/m/3EAL8JxXr04AAAAd/cat-vibe-cat.gif)
 
 ```shell
 cd levulkan
