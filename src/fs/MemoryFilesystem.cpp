@@ -2,6 +2,8 @@
 #include "Logging.hpp"
 #include "nlohmann/json.hpp"
 
+using nlohmann::json;
+
 fs::MemoryFile::MemoryFile(FileOpenMode::Flags mode, uint fileId) {
     mFileId = fileId;
     mMode = mode;
@@ -21,7 +23,10 @@ void fs::MemoryFile::open(uint openId) {
 }
 fs::MemoryFile::~MemoryFile() {
 }
-void fs::MemoryFile::setParent(MemoryFilesystem *parent) {
+void fs::MemoryFile::setFileHandle(FileHandle *handle) {
+    mHandle = handle;
+}
+void fs::MemoryFile::setParentFilesystem(MemoryFilesystem *parent) {
     mParent = parent;
 }
 void fs::MemoryFile::seekg(intmax_t position) {
@@ -68,6 +73,8 @@ void fs::MemoryFile::close() {
     flush();
     // LOG_TRACE("{}: Close", mOpenId);
     mOpen = false;
+    if(mHandle)
+        mHandle->close();
     if(mParent)
         mParent->close(mOpenId);
 }
@@ -159,7 +166,19 @@ void fs::MemoryFilesystem::close(uint id) {
     if(file->isOpen())
         file->close();
 
-    mFiles.erase(id);
+    if(mFiles.contains(id))
+        mFiles.erase(id);
+}
+void fs::MemoryFilesystem::closeAll(uint id) {
+    std::vector<uint> toClose;
+    toClose.reserve(4);
+    for(auto const &handle : mFiles.dense()) {
+        if(handle.fileId == id)
+            toClose.emplace_back(handle.openId);
+    }
+    for(auto const &id : toClose) {
+        close(id);
+    }
 }
 fs::MemoryFilesystem::MemoryFilesystem() = default;
 fs::MemoryFilesystem::~MemoryFilesystem() {
@@ -175,7 +194,7 @@ fs::MemoryFilesystem &fs::MemoryFilesystem::operator=(MemoryFilesystem &&rhs) {
     mNextId = rhs.mNextId;
     
     for(auto &handle : mFiles.dense()) {
-        handle.file->setParent(this);
+        handle.file->setParentFilesystem(this);
     }
 
     return *this;
@@ -183,26 +202,31 @@ fs::MemoryFilesystem &fs::MemoryFilesystem::operator=(MemoryFilesystem &&rhs) {
 fs::MemoryFilesystem::MemoryFilesystem(MemoryFilesystem &&rhs) {
     *this = std::move(rhs);
 }
-bool fs::MemoryFilesystem::isInUse(Path const &path) const {
-    if(!exists(path))
-        return false;
+void fs::MemoryFilesystem::closeIfInUse(fs::Path const &path) {
+    if(!exists(path)) 
+        return;
+
 
     std::unordered_set<std::string> paths;
     if(isDirectory(path)) {
-        for(auto const &path : getContents(path)) {
+        for(auto const &path : getContents(path, true)) {
             if(isRegularFile(path)) {
                 paths.emplace(path.string());
             }
         }
     } else {
-        paths.emplace(path.string());
+        paths.emplace(path.makeAbsolute("").removeDirSeparator().string());
     }
+    std::vector<uint> toClose;
     for(auto const &file : mFiles.dense()) {
-        if(paths.contains(file.path.string()))
-            return true;
+        if(paths.contains(file.path.string())) {
+            toClose.emplace_back(file.openId);
+        }
     }
 
-    return false;
+    for(auto const &id : toClose) {
+        close(id);
+    }
 }
 bool fs::MemoryFilesystem::checkBeforeTransfer(fs::Path src, fs::Path dst, Error *err, std::string_view op) const {
     if(!exists(src)) {
@@ -231,14 +255,7 @@ void fs::MemoryFilesystem::copy(Path const &src, Path const &dst, Error *err) {
     if(!checkBeforeTransfer(src, dst, err, "copy"))
         return;
 
-    if(isInUse(dst)) {
-        if(err) {
-            err->failed = true;
-            err->message = fmt::format("Cannot copy to file \"{}\": is in use!", dst.string());
-            err->path = dst.string();
-        }
-        return;
-    }
+    closeIfInUse(dst);
 
     auto srcDesc = mDescriptors.at(getFileIndex(src));
     
@@ -271,14 +288,8 @@ void fs::MemoryFilesystem::copy(Path const &src, Path const &dst, Error *err) {
 void fs::MemoryFilesystem::move(Path const &src, Path const &dst, Error *err) {
     if(!checkBeforeTransfer(src, dst, err, "move"))
         return;
-    if(isInUse(src)) {
-        setErr(err, fmt::format("Cannot move from file \"{}\": is in use!", src.string()), src.string());
-        return;
-    }
-    if(isInUse(dst)) {
-        setErr(err, fmt::format("Cannot move to file \"{}\": is in use!", src.string()), src.string());
-        return;
-    }
+    closeIfInUse(src);
+    closeIfInUse(dst);
 
     auto &srcDesc = mDescriptors.at(getFileIndex(src));
 
@@ -355,10 +366,8 @@ uintmax_t fs::MemoryFilesystem::fileSize(Path const &path, Error *err) const {
 void fs::MemoryFilesystem::remove(Path const &path, Error *err) {
     if(!exists(path))
         setErr(err, fmt::format("Cannot remove path: no such file or directory!"), path.string());
-    if(isInUse(path)) {
-        setErr(err, fmt::format("Cannot remove path: is in use!"), path.string());
-        return;
-    }
+
+    closeIfInUse(path);
 
     auto index = getFileIndex(path);
 
@@ -373,6 +382,7 @@ void fs::MemoryFilesystem::remove(Path const &path, Error *err) {
     }
 
     mDescriptors.erase(index);
+    mPathToDescIndex.erase(path.makeAbsolute("").removeDirSeparator().string());
 }
 std::vector<fs::Path> fs::MemoryFilesystem::getContents(Path const &path, bool recursive, Error *err) const {
     if(!exists(path))
@@ -445,7 +455,7 @@ fs::FileHandle fs::MemoryFilesystem::open(Path const &path, FileOpenMode::Flags 
         .fileId = fileId
     });
     auto &handle = mFiles.at(openId);
-    handle.file->setParent(this);
+    handle.file->setParentFilesystem(this);
     handle.file->open(handle.openId);
 
     if(err && !handle.file->isOpen()) {
@@ -455,4 +465,113 @@ fs::FileHandle fs::MemoryFilesystem::open(Path const &path, FileOpenMode::Flags 
     }
 
     return FileHandle(handle.file.get());
+}
+
+/*
+uint32 <-- json descriptors size
+[ <-- json file descriptors
+{
+    "type": <-- descriptor type ("directory" / "file")
+    "path": <-- virtual path
+    "mtime": <-- modification time (nanoseconds since epoch)
+    "offset": <-- offset of the file data relative to the start of the binary blob ("file" only)
+    "size": <-- size of the file data ("file" only)
+},
+]
+01011101 01010010... <-- binary file data (the rest of the file)
+*/
+
+std::vector<std::byte> fs::MemoryFilesystem::serialize() const {
+    struct ByteRange {
+        void const *data;
+        uintmax_t size;
+    };
+    std::vector<ByteRange> ranges;
+    ranges.reserve(mDescriptors.size());
+    uintmax_t binOffset = 0;
+
+    json descriptors;
+    for(auto const &desc : mDescriptors.dense()) {
+        json &jsonDesc = descriptors.emplace_back();
+        jsonDesc["type"] = desc.type == DescriptorType::Directory ? "directory" : "file";
+        jsonDesc["path"] = desc.path.string();
+        jsonDesc["mtime"] = std::chrono::duration_cast<std::chrono::nanoseconds>(desc.modificationTime.time_since_epoch()).count();
+        if(desc.type == DescriptorType::File) {
+            auto const &contents = mFileContents.at(desc.id);
+            jsonDesc["offset"] = binOffset;
+            jsonDesc["size"] = contents.size();
+            binOffset += contents.size();
+            ranges.emplace_back(contents.data(), contents.size());
+        }
+    }
+
+    std::string descRes = descriptors.dump(-1);
+    std::vector<std::byte> result(sizeof(uint32_t) + binOffset + descRes.size());
+    *reinterpret_cast<uint32_t *>(result.data()) = descRes.size();
+        
+    std::memcpy(result.data(), descRes.data(), descRes.size());
+    
+    uintmax_t offset = sizeof(uint32_t) + descRes.size();
+    for(auto const &[data, size] : ranges) {
+        std::memcpy(result.data() + offset, data, size);
+        offset += size;
+    }
+
+    assert(offset == result.size());
+
+    return result;
+}
+void fs::MemoryFilesystem::deserialize(void const *data, uintmax_t fileSize) {
+    if(fileSize <= sizeof(uint32_t)) {
+        LOG_ERROR("fs::MemoryFilesystem::deserialize: size {} is too small!", fileSize);
+        return;
+    }
+
+    uint32_t jsonSize = *reinterpret_cast<uint32_t const *>(data);
+
+    if(jsonSize == 0) {
+        LOG_ERROR("fs::MemoryFilesystem::deserialize: header size {} is 0!", jsonSize);
+        return;
+    }
+    if(jsonSize + sizeof(uint32_t) > fileSize) {
+        LOG_ERROR("fs::MemoryFilesystem::deserialize: header size {} is too big for size {}!", jsonSize, fileSize);
+        return;
+    }
+    
+
+    auto jsonRange = std::ranges::subrange(static_cast<std::byte const *>(data) + sizeof(uint32_t), static_cast<std::byte const *>(data) + sizeof(uint32_t) + jsonSize);
+    json descriptors = json::parse(jsonRange);
+
+    closeIfInUse("/");
+    mNextId = 1;
+    mDescriptors.clear();
+    mFileContents.clear();
+    mPathToDescIndex.clear();
+
+    for(json const &jsonDesc : descriptors) {
+        assert(jsonDesc.contains("path"));
+        assert(jsonDesc.contains("type"));
+        assert(jsonDesc.contains("mTime"));
+        std::string path = jsonDesc["path"].get<std::string>();
+        DescriptorType type = jsonDesc["type"].get<std::string>() == "file" ? DescriptorType::File : DescriptorType::Directory;
+        intmax_t modificationTime = jsonDesc["mTime"].get<intmax_t>();
+        uint index = mPathToDescIndex[path] = mNextId++;
+        mDescriptors[index] = {
+            .type = type,
+            .path = path,
+            .id = index,
+            .modificationTime = std::chrono::file_clock::time_point(std::chrono::nanoseconds(modificationTime))
+        };
+        mPathToDescIndex[path] = index;
+        if(type == DescriptorType::File) {
+            assert(jsonDesc.contains("offset"));
+            assert(jsonDesc.contains("size"));
+            uintmax_t offset = jsonDesc["offset"].get<uintmax_t>();
+            uintmax_t size = jsonDesc["size"].get<uintmax_t>();
+
+            assert(offset + size < fileSize && "Invalid descriptor!");
+
+            mFileContents.emplace(index, jsonRange.end() + offset, jsonRange.end() + offset + size);
+        }
+    }
 }

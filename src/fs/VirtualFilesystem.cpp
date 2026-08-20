@@ -18,7 +18,7 @@ void fs::VirtualFilesystem::unmount(Path dir, Error *err) {
     mMount.erase(path);
 }
 void fs::VirtualFilesystem::mount(IFilesystem *filesystem, Path dir, Error *err) {
-    auto path = dir.makeAbsolute("").string();
+    auto path = dir.makeAbsolute("").removeDirSeparator().string();
 
     std::string msg;
     if(mMount.contains(path)) {
@@ -88,8 +88,21 @@ fs::VirtualFilesystem::Mount fs::VirtualFilesystem::getMount(Path path, Error *e
         .relativePath = Path(path).makeRelative(dir),
         .absolutePath = Path(path).makeAbsolute(""),
     };
+
     if(res.relativePath.empty())
         res.relativePath = "/";
+
+    auto components = res.relativePath.makeAbsolute("").split();
+    if(!components.empty() && components[0] == "..") {
+        auto msg = fmt::format("Path \"{}\" cannot escape filesystem!", path.string());
+        if(err) {
+            err->failed = true;
+            err->message = msg;
+        } else {
+            LOG_ERROR(msg);
+        }
+        return {};
+    }
 
     return res;
 }

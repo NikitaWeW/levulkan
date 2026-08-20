@@ -10,6 +10,7 @@
         LOG_ERROR("{}\nat {}\nat {}:{}", e.message, e.path, __FILE__, __LINE__); \
         REQUIRE_FALSE(e.failed); \
     }
+constexpr uint NUM = 26;
 
 static void testFilesystem(fs::IFilesystem *filesystem) {
     fs::Error err;
@@ -53,24 +54,28 @@ static void testFilesystem(fs::IFilesystem *filesystem) {
     REQUIRE(file->size() == file->tellg());
 
     filesystem->remove("/test_stream", &err);
-    REQUIRE(err.failed);
-    err.failed = false;
+    REQUIRE_FALSE(file.isOpen());
+    file = filesystem->open("/test_stream", fs::FileOpenMode::Append, &err);
     filesystem->move("/test_stream", "/test_stream1", &err);
-    REQUIRE(err.failed);
-    err.failed = false;
+    REQUIRE_FALSE(file.isOpen());
+    file = filesystem->open("/test_stream", fs::FileOpenMode::Append, &err);
 
     filesystem->open("/test1");
     filesystem->copy("/test1", "/test_stream", &err);
-    REQUIRE(err.failed);
-    err.failed = false;
-
-    file.close();
-    filesystem->remove("/test_stream", &err);
+    REQUIRE_FALSE(file.isOpen());
     filesystem->remove("/test1", &err);
     CHECK_ERR(err);
 
+    filesystem->createDirectories("/test1/test2", &err);
+    file = filesystem->open("/test1/test2/test_file", 0, &err);
+    CHECK_ERR(err);
+    filesystem->remove("/test1", &err);
+    filesystem->remove("/test_stream", &err);
+    filesystem->remove("/test_stream1", &err);
+    CHECK_ERR(err);
+    REQUIRE_FALSE(file.isOpen());
+
     auto files = {"/a.txt", "b.a", "/c.a.x", "./file0", "file1", "/dir1/dir2/dir3/directory.d/file"};
-    constexpr uint NUM = 26;
     for(uint i = 0; i < NUM; ++i) {
         for(auto const &path : files) {
             filesystem->createDirectories(fs::Path(path).parentPath(), &err);
@@ -91,7 +96,7 @@ static void testFilesystem(fs::IFilesystem *filesystem) {
             REQUIRE(file->size() == sizeBefore + 1);
 
             file.close();
-            REQUIRE(!file.isOpen());
+            REQUIRE_FALSE(file.isOpen());
         }
     }
 
@@ -351,8 +356,38 @@ TEST_CASE("fs::VirtualFilesystem tests", "[engine]") {
     }
 }
 TEST_CASE("fs::MemoryFilesystem tests", "[engine]") {
+    std::vector<std::byte> data;
+    std::vector<fs::Path> contents;
     for(uint i = 0; i < 2; ++i) {
         std::unique_ptr<fs::MemoryFilesystem> filesystem(new fs::MemoryFilesystem());
+        if(!data.empty())
+            filesystem->deserialize(data.data(), data.size());
         testFilesystem(filesystem.get());
+        data = filesystem->serialize();
+        contents = filesystem->getContents("/", true);
+    }
+
+    REQUIRE_FALSE(data.empty());
+    std::unique_ptr<fs::MemoryFilesystem> filesystem(new fs::MemoryFilesystem());
+    filesystem->deserialize(data.data(), data.size());
+
+    for(auto const &entry : contents) {
+        REQUIRE(filesystem->exists(entry));
+        if(!filesystem->isRegularFile(entry)) {
+            continue;
+        }
+
+        REQUIRE(filesystem->isRegularFile(entry));
+        REQUIRE(filesystem->fileSize(entry) == NUM);
+        auto file = filesystem->open(entry, 0);
+        REQUIRE(file->size() == NUM);
+        std::vector<char> buff(file->size());
+        file->seekp(0);
+        file->read(buff.data(), buff.size());
+        for(uint i = 0; i < NUM; ++i) {
+            REQUIRE(buff[i] == static_cast<char>('a' + i));
+        }
+
+        file.close();
     }
 }

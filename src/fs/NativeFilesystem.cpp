@@ -23,7 +23,10 @@ fs::NativeFile::NativeFile(Path path, FileOpenMode::Flags mode, uint id) {
 }
 fs::NativeFile::~NativeFile() {
 }
-void fs::NativeFile::setParent(NativeFilesystem *parent) {
+void fs::NativeFile::setFileHandle(FileHandle *handle) {
+    mHandle = handle;
+}
+void fs::NativeFile::setParentFilesystem(NativeFilesystem *parent) {
     mParent = parent;
 }
 void fs::NativeFile::seekg(intmax_t position) {
@@ -72,6 +75,8 @@ bool fs::NativeFile::isOpen() const {
 void fs::NativeFile::close() {
     assert(isOpen());
     mFile.close();
+    if(mHandle)
+        mHandle->close();
     if(mParent)
         mParent->close(mId);
 }
@@ -127,7 +132,10 @@ void fs::NativeFilesystem::close(uint id) {
     if(file->isOpen())
         file->close();
 
-    mFiles.erase(id);
+    // Because this piece of junk is so bad,
+    // The fs::NativeFilesystem::close is called twice from fs::NativeFile::close
+    if(mFiles.contains(id))
+        mFiles.erase(id);
 }
 fs::NativeFilesystem::NativeFilesystem(Path basePath) {
     setBasePath(basePath);
@@ -141,26 +149,31 @@ fs::NativeFilesystem::~NativeFilesystem() {
 fs::Path fs::NativeFilesystem::getFullPath(Path const &path) const {
     return mBasePath / path.makeAbsolute("");
 }
-bool fs::NativeFilesystem::isInUse(Path const &path) const {
-    if(!exists(path))
-        return false;
+void fs::NativeFilesystem::closeIfInUse(fs::Path const &path) {
+    if(!exists(path)) 
+        return;
+
 
     std::unordered_set<std::string> paths;
     if(isDirectory(path)) {
-        for(auto const &path : getContents(path)) {
+        for(auto const &path : getContents(path, true)) {
             if(isRegularFile(path)) {
                 paths.emplace(path.string());
             }
         }
     } else {
-        paths.emplace(path.makeAbsolute("").string());
+        paths.emplace(path.makeAbsolute("").removeDirSeparator().string());
     }
+    std::vector<uint> toClose;
     for(auto const &file : mFiles.dense()) {
-        if(paths.contains(file.path.string()))
-            return true;
+        if(paths.contains(file.path.string())) {
+            toClose.emplace_back(file.openId);
+        }
     }
 
-    return false;
+    for(auto const &id : toClose) {
+        close(id);
+    }
 }
 fs::NativeFilesystem &fs::NativeFilesystem::operator=(NativeFilesystem &&rhs) {
     if(this == &rhs)
@@ -170,7 +183,7 @@ fs::NativeFilesystem &fs::NativeFilesystem::operator=(NativeFilesystem &&rhs) {
     mNextId = rhs.mNextId;
     
     for(auto &handle : mFiles.dense()) {
-        handle.file->setParent(this);
+        handle.file->setParentFilesystem(this);
     }
 
     return *this;
@@ -186,45 +199,15 @@ void fs::NativeFilesystem::copy(Path const &from, Path const &to, Error *outErr)
     if(outErr && outErr->failed)
         return;
 
-    if(isInUse(to)) {
-        auto msg = fmt::format("Cannot copy to file \"{}\": is in use!", to.string());
-        if(outErr) {
-            outErr->failed = true;
-            outErr->message = msg;
-            outErr->path = to.string();
-        } else {
-            LOG_ERROR(msg);
-        }
-        return;
-    }
+    closeIfInUse(to);
 
     std::error_code err;
     std::filesystem::copy(getFullPath(from).string(), getFullPath(to).string(), std::filesystem::copy_options::recursive, err);
     checkErr(err, outErr, fmt::format("(src: {}, dst: {})", from.string(), to.string()));
 }
 void fs::NativeFilesystem::move(Path const &from, Path const &to, Error *outErr) {
-    if(isInUse(from)) {
-        auto msg = fmt::format("Cannot move from file \"{}\": is in use!", to.string());
-        if(outErr) {
-            outErr->failed = true;
-            outErr->message = msg;
-            outErr->path = to.string();
-        } else {
-            LOG_ERROR(msg);
-        }
-        return;
-    }
-    if(isInUse(to)) {
-        auto msg = fmt::format("Cannot move to file \"{}\": is in use!", to.string());
-        if(outErr) {
-            outErr->failed = true;
-            outErr->message = msg;
-            outErr->path = to.string();
-        } else {
-            LOG_ERROR(msg);
-        }
-        return;
-    }
+    closeIfInUse(from);
+    closeIfInUse(to);
 
     std::error_code err;
     std::filesystem::rename(getFullPath(from).string(), exists(to) && isDirectory(to) ? getFullPath(to/from.filename()).string() : getFullPath(to).string(), err);
@@ -254,22 +237,13 @@ uintmax_t fs::NativeFilesystem::fileSize(Path const &path, Error *outErr) const 
     return res;
 }
 void fs::NativeFilesystem::remove(Path const &path, Error *outErr) {
-    std::error_code err;
     bool isDir = isDirectory(path, outErr);
     if(outErr && outErr->failed)
         return;
 
-    if(isInUse(path)) {
-        auto msg = fmt::format("Cannot remove file \"{}\": is in use!", path.string());
-        if(outErr) {
-            outErr->failed = true;
-            outErr->message = msg;
-            outErr->path = path.string();
-        } else {
-            LOG_ERROR(msg);
-        }
-        return;
-    }
+    closeIfInUse(path);
+
+    std::error_code err;
     if(isDir) {
         std::filesystem::remove_all(getFullPath(path).string(), err);
     } else {
@@ -283,11 +257,11 @@ std::vector<fs::Path> fs::NativeFilesystem::getContents(Path const &path, bool r
     std::error_code err;
     if(recursive) {
         for(auto entry : std::filesystem::recursive_directory_iterator(getFullPath(path).string(), err)) {
-            res.emplace_back(fs::Path(entry.path().string()).makeRelative(mBasePath));
+            res.emplace_back(fs::Path(entry.path().string()).makeRelative(mBasePath).makeAbsolute("").removeDirSeparator());
         }
     } else {
         for(auto entry : std::filesystem::directory_iterator(getFullPath(path).string(), err)) {
-            res.emplace_back(fs::Path(entry.path().string()).makeRelative(mBasePath));
+            res.emplace_back(fs::Path(entry.path().string()).makeRelative(mBasePath).makeAbsolute("").removeDirSeparator());
         }
     }
 
@@ -327,10 +301,10 @@ fs::FileHandle fs::NativeFilesystem::open(Path const &path, FileOpenMode::Flags 
     mFiles.emplace(id, Handle{
         .path = path.makeAbsolute(""),
         .file = std::unique_ptr<NativeFile>(new NativeFile(fullPath, mode, id)),
-        .id = id
+        .openId = id,
     });
     auto &handle = mFiles.at(id);
-    handle.file->setParent(this);
+    handle.file->setParentFilesystem(this);
 
     if(outErr && !handle.file->isOpen()) {
         outErr->failed = true;

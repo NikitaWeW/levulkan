@@ -13,15 +13,17 @@ protected:
     FileOpenMode::Flags mMode;
     uint mId = 0;
     NativeFilesystem *mParent = nullptr;
+    FileHandle *mHandle = nullptr;
 
     friend NativeFilesystem;
 
     NativeFile(Path path, FileOpenMode::Flags mode, uint id);
-    void setParent(NativeFilesystem *parent);
 public:
     ~NativeFile();
     bool isOpen() const override;
     void close() override;
+    void setFileHandle(FileHandle *handle) override;
+    void setParentFilesystem(NativeFilesystem *parent);
 
     void seekg(intmax_t position) override;
     void seekg(intmax_t offset, SeekDir dir) override;
@@ -44,7 +46,7 @@ protected:
     struct Handle {
         Path path;
         std::unique_ptr<NativeFile> file;
-        uint id = 0;
+        uint openId = 0;
     };
     SparseSet<Handle> mFiles;
     uint mNextId = 1;
@@ -53,9 +55,9 @@ protected:
     friend NativeFile;
 
     void checkErr(std::error_code err, Error *outErr, std::string path) const;
-    void close(uint id);
     Path getFullPath(Path const &path) const;
-    bool isInUse(Path const &path) const;
+    void close(uint id); // open id
+    void closeIfInUse(fs::Path const &path);
 public:
     NativeFilesystem();
     NativeFilesystem(Path basePath);

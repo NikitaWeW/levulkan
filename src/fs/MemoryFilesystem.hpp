@@ -13,6 +13,7 @@ protected:
     uint mOpenId = 0;
     uint mFileId = 0;
     MemoryFilesystem *mParent = nullptr;
+    FileHandle *mHandle = nullptr;
     std::vector<std::byte> mBuffer;
     bool mOpen = false;
     uintmax_t mWriteHead = 0;
@@ -21,12 +22,13 @@ protected:
     friend MemoryFilesystem;
 
     MemoryFile(FileOpenMode::Flags mode, uint fileId);
-    void setParent(MemoryFilesystem *parent);
     void open(uint openId);
 public:
     ~MemoryFile();
     bool isOpen() const override;
     void close() override;
+    void setFileHandle(FileHandle *handle) override;
+    void setParentFilesystem(MemoryFilesystem *parent);
 
     void seekg(intmax_t position) override;
     void seekg(intmax_t offset, SeekDir dir) override;
@@ -70,19 +72,20 @@ protected:
     friend MemoryFile;
 
     void setErr(Error *outErr, std::string msg, std::string path) const;
-    void close(uint id);
-    uint getFileIndex(fs::Path path) const;
-    Descriptor &getDesc(fs::Path path, DescriptorType defaultType); // Create a descriptor if doesent exist
     bool checkBeforeTransfer(fs::Path src, fs::Path dst, Error *err, std::string_view op) const;
-    bool isInUse(fs::Path const &path) const;
+    Descriptor &getDesc(fs::Path path, DescriptorType defaultType); // Create a descriptor if doesent exist
+    uint getFileIndex(fs::Path path) const;
+    void close(uint id); // open id
+    void closeAll(uint id); // file id
+    void closeIfInUse(fs::Path const &path);
 public:
     MemoryFilesystem();
     ~MemoryFilesystem();
     MemoryFilesystem &operator=(MemoryFilesystem &&rhs);
     MemoryFilesystem(MemoryFilesystem &&rhs);
 
-    void deserialize(void const *data, uintmax_t size);
     std::vector<std::byte> serialize() const;
+    void deserialize(void const *data, uintmax_t size);
 
     void copy(Path const &src, Path const &dst, Error *err = nullptr) override;
     void move(Path const &src, Path const &dst, Error *err = nullptr) override;

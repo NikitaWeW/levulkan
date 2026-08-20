@@ -3,6 +3,8 @@
 
 fs::FileHandle::FileHandle(IFile *file) {
     mFile = file;
+    if(mFile)
+        mFile->setFileHandle(this);
 }
 fs::FileHandle::~FileHandle() {
     close();
@@ -12,6 +14,8 @@ fs::FileHandle::FileHandle(FileHandle &&rhs) {
 }
 fs::FileHandle &fs::FileHandle::operator=(FileHandle &&rhs) {
     std::swap(mFile, rhs.mFile);
+    if(mFile)
+        mFile->setFileHandle(this);
     return *this;
 }
 
@@ -29,8 +33,8 @@ IStream *fs::FileHandle::get() {
 void fs::FileHandle::close() {
     if(isOpen()) {
         mFile->close();
-        mFile = nullptr;
     }
+    mFile = nullptr;
 }
 bool fs::FileHandle::isOpen() const {
     return mFile && mFile->isOpen();

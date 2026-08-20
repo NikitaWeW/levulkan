@@ -79,6 +79,8 @@ public:
 Path operator/(Path const &lhs, Path const &rhs);
 Path operator+(Path const &lhs, Path const &rhs);
 
+class FileHandle;
+
 class IFile : public IStream {
 public:
     virtual ~IFile() = default;
@@ -96,6 +98,9 @@ public:
     /// @brief Closes the file.
     /// After closing, the file handle (pointer) may become invalid.
     virtual void close() = 0;
+    /// @brief Set the handle that owns the file.
+    /// Used to signal the handle once the file is closed
+    virtual void setFileHandle(FileHandle *handle) = 0;
 };
 
 /// @brief RAII IFile wrapper. 
