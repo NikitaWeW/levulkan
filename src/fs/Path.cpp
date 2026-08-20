@@ -48,7 +48,7 @@ Path &Path::operator=(char const *path) {
 }
 
 bool Path::operator==(Path const &rhs) const {
-    return Path(mPath).makeAbsolute("").string() == Path(rhs.mPath).makeAbsolute("").string();
+    return Path(mPath).makeAbsolute("").removeDirSeparator().string() == Path(rhs.mPath).makeAbsolute("").removeDirSeparator().string();
 }
 bool Path::operator!=(Path const &rhs) const {
     return !this->operator==(rhs);
@@ -110,6 +110,12 @@ Path Path::removeParentPath() {
     auto path = parentPath();
     mPath.erase(0, path.string().size());
     return path;
+}
+Path Path::removeDirSeparator() const {
+    if(!empty() && mPath.back() == '/')
+        return mPath.substr(0, mPath.size() - 1);
+    else 
+        return mPath;
 }
 
 fs::Path fs::Path::makeRelative(Path const &path) const {

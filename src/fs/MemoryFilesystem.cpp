@@ -9,13 +9,14 @@ fs::MemoryFile::MemoryFile(FileOpenMode::Flags mode, uint fileId) {
 void fs::MemoryFile::open(uint openId) {
     mOpenId = openId;
     assert(mParent);
+    // LOG_TRACE("{}: Open {} {}", mOpenId, mFileId, mParent->mFiles.at(mOpenId).path.string());
     assert(mParent->mFileContents.contains(mFileId));
     mBuffer.reserve(mParent->mFileContents.at(mFileId).size() * 1.5);
-
-    if(!(mMode | FileOpenMode::Truncate)) {
+    
+    if(!(mMode & FileOpenMode::Truncate)) {
         sync();
     }
-
+    
     mOpen = true;
 }
 fs::MemoryFile::~MemoryFile() {
@@ -65,6 +66,7 @@ bool fs::MemoryFile::isOpen() const {
 }
 void fs::MemoryFile::close() {
     flush();
+    // LOG_TRACE("{}: Close", mOpenId);
     mOpen = false;
     if(mParent)
         mParent->close(mOpenId);
@@ -73,23 +75,32 @@ uintmax_t fs::MemoryFile::size() {
     return mBuffer.size();
 }
 void fs::MemoryFile::read(void *dst, uintmax_t size) {
+    // LOG_TRACE("{}: Read {} bytes offset {} buff size {}", mOpenId, size, mReadHead, this->size());
     std::memcpy(dst, mBuffer.data() + mReadHead, std::clamp<uintmax_t>(mReadHead + size, 0, this->size()) - mReadHead);
+    mReadHead += size;
 }
 void fs::MemoryFile::sync() {
     mBuffer = mParent->mFileContents.at(mFileId);
+    // LOG_TRACE("{}: Sync buff size {}", mOpenId, size());
 }
 void fs::MemoryFile::write(void const *src, uintmax_t size) {
-    if(mMode | FileOpenMode::Append) {
+    if(mMode & FileOpenMode::Append) {
         seekp(0, SeekDir::End);
     }
 
     if(mWriteHead + size >= this->size()) {
+        if(mWriteHead + size >= mBuffer.capacity()) 
+            mBuffer.reserve((mWriteHead + size) * 1.5);
         mBuffer.resize(mWriteHead + size);
     }
 
+    // LOG_TRACE("{}: Write {} bytes offset {} buff size {} (append {})", mOpenId, size, mReadHead, this->size(), mMode & FileOpenMode::Append);
     std::memcpy(mBuffer.data() + mWriteHead, src, std::clamp<uintmax_t>(mWriteHead + size, 0, this->size()) - mWriteHead);
+
+    mWriteHead += size;
 }
 void fs::MemoryFile::flush() {
+    // LOG_TRACE("{}: Flush", mOpenId);
     mParent->mFileContents.at(mFileId) = mBuffer;
     mParent->mDescriptors.at(mFileId).modificationTime = std::chrono::file_clock::now();
 }
@@ -111,7 +122,7 @@ void fs::MemoryFilesystem::setErr(Error *err, std::string msg, std::string path)
     }
 }
 uint fs::MemoryFilesystem::getFileIndex(fs::Path path) const {
-    path = path.makeAbsolute("");
+    path = path.makeAbsolute("").removeDirSeparator();
     if(mPathToDescIndex.contains(path.string())) {
         return mPathToDescIndex.at(path.string());
     } else {
@@ -119,7 +130,7 @@ uint fs::MemoryFilesystem::getFileIndex(fs::Path path) const {
     }
 }
 fs::MemoryFilesystem::Descriptor &fs::MemoryFilesystem::getDesc(fs::Path path, DescriptorType defaultType) {
-    path = path.makeAbsolute("");
+    path = path.makeAbsolute("").removeDirSeparator();
     uint index = getFileIndex(path);
     assert(exists(path.parentPath()));
     if(index == 0) {
@@ -172,6 +183,27 @@ fs::MemoryFilesystem &fs::MemoryFilesystem::operator=(MemoryFilesystem &&rhs) {
 fs::MemoryFilesystem::MemoryFilesystem(MemoryFilesystem &&rhs) {
     *this = std::move(rhs);
 }
+bool fs::MemoryFilesystem::isInUse(Path const &path) const {
+    if(!exists(path))
+        return false;
+
+    std::unordered_set<std::string> paths;
+    if(isDirectory(path)) {
+        for(auto const &path : getContents(path)) {
+            if(isRegularFile(path)) {
+                paths.emplace(path.string());
+            }
+        }
+    } else {
+        paths.emplace(path.string());
+    }
+    for(auto const &file : mFiles.dense()) {
+        if(paths.contains(file.path.string()))
+            return true;
+    }
+
+    return false;
+}
 bool fs::MemoryFilesystem::checkBeforeTransfer(fs::Path src, fs::Path dst, Error *err, std::string_view op) const {
     if(!exists(src)) {
         setErr(err, fmt::format("Cannot {} \"{}\" to \"{}\": no such file or directory!", op, src.string(), dst.string()), fmt::format("src: {}, dst: {}", src.string(), dst.string()));
@@ -199,7 +231,16 @@ void fs::MemoryFilesystem::copy(Path const &src, Path const &dst, Error *err) {
     if(!checkBeforeTransfer(src, dst, err, "copy"))
         return;
 
-    auto const &srcDesc = mDescriptors.at(getFileIndex(src));
+    if(isInUse(dst)) {
+        if(err) {
+            err->failed = true;
+            err->message = fmt::format("Cannot copy to file \"{}\": is in use!", dst.string());
+            err->path = dst.string();
+        }
+        return;
+    }
+
+    auto srcDesc = mDescriptors.at(getFileIndex(src));
     
     auto dstDesc = getDesc(dst, srcDesc.type);
     if(srcDesc.type == DescriptorType::File && dstDesc.type == DescriptorType::Directory) {
@@ -213,21 +254,31 @@ void fs::MemoryFilesystem::copy(Path const &src, Path const &dst, Error *err) {
         if(err && err->failed)
             return;
         for(auto path : contents) {
-            if(isDirectory(path)) 
-                continue;
-            
-            auto dstPath = dst/path.makeRelative(src);
-            createDirectories(dstPath, err);
-            if(err && err->failed)
-                continue;
-            auto const &desc = getDesc(dstPath, DescriptorType::File);
-            mFileContents.at(desc.id) = mFileContents.at(getFileIndex(path));
+            auto dstPath = (dst/path.makeRelative(src)).removeDirSeparator();
+            if(isDirectory(path)) {
+                if(!exists(dstPath))
+                    createDirectories(dstPath);
+            } else {
+                createDirectories(dstPath.parentPath(), err);
+                if(err && err->failed)
+                    continue;
+                auto const &desc = getDesc(dstPath, DescriptorType::File);
+                mFileContents.at(desc.id) = mFileContents.at(getFileIndex(path));
+            }
         }
     }
 }
 void fs::MemoryFilesystem::move(Path const &src, Path const &dst, Error *err) {
     if(!checkBeforeTransfer(src, dst, err, "move"))
         return;
+    if(isInUse(src)) {
+        setErr(err, fmt::format("Cannot move from file \"{}\": is in use!", src.string()), src.string());
+        return;
+    }
+    if(isInUse(dst)) {
+        setErr(err, fmt::format("Cannot move to file \"{}\": is in use!", src.string()), src.string());
+        return;
+    }
 
     auto &srcDesc = mDescriptors.at(getFileIndex(src));
 
@@ -235,19 +286,20 @@ void fs::MemoryFilesystem::move(Path const &src, Path const &dst, Error *err) {
     bool dstIsDirectory = dstId != 0 && mDescriptors.at(dstId).type == DescriptorType::Directory;
 
     if(srcDesc.type == DescriptorType::File) {
-        srcDesc.path = dstIsDirectory ? dst : dst/src.filename();
+        srcDesc.path = (dstIsDirectory ? dst/src.filename() : dst).removeDirSeparator();
+        mPathToDescIndex.erase(src.removeDirSeparator().string());
+        mPathToDescIndex[srcDesc.path.string()] = srcDesc.id;
     } else if(srcDesc.type == DescriptorType::Directory) {
         auto contents = getContents(src, true, err);
+        contents.emplace_back(src);
         if(err && err->failed)
             return;
         for(auto path : contents) {
-            if(isDirectory(path)) 
-                continue;
-
-            auto &desc = mDescriptors.at(getFileIndex(path));
-            auto dstPath = dst/path.makeRelative(src);
-            createDirectories(dstPath.parentPath());
-            desc.path = dstPath;
+            auto dstPath = (dst/path.makeRelative(src)).removeDirSeparator();
+            uint index = getFileIndex(path);
+            mDescriptors.at(index).path = dstPath;
+            mPathToDescIndex.erase(path.string());
+            mPathToDescIndex[dstPath.string()] = index;
         }
     }
 }
@@ -261,7 +313,7 @@ void fs::MemoryFilesystem::createDirectory(Path const &path, Error *err) {
         setErr(err, fmt::format("Cannot create a directory: no such file directory!"), path.string());
         return;
     }
-    if(!isRegularFile(path.parentPath())) {
+    if(isRegularFile(path.parentPath())) {
         setErr(err, fmt::format("Cannot create a directory: parent path is a file!"), path.string());
         return;
     }
@@ -281,7 +333,9 @@ void fs::MemoryFilesystem::createDirectories(Path const &path, Error *err) {
     std::reverse(toCreate.begin(), toCreate.end());
 
     for(auto const &path : toCreate) {
-        createDirectory(path);
+        createDirectory(path, err);
+        if(err && err->failed)
+            return;
     }
 }
 bool fs::MemoryFilesystem::exists(Path const &path, Error *err) const {
@@ -301,6 +355,10 @@ uintmax_t fs::MemoryFilesystem::fileSize(Path const &path, Error *err) const {
 void fs::MemoryFilesystem::remove(Path const &path, Error *err) {
     if(!exists(path))
         setErr(err, fmt::format("Cannot remove path: no such file or directory!"), path.string());
+    if(isInUse(path)) {
+        setErr(err, fmt::format("Cannot remove path: is in use!"), path.string());
+        return;
+    }
 
     auto index = getFileIndex(path);
 
@@ -329,9 +387,9 @@ std::vector<fs::Path> fs::MemoryFilesystem::getContents(Path const &path, bool r
             res.emplace_back(desc.path);
             continue;
         }
-            
+
         if(recursive) {
-            if(desc.path.makeAbsolute("").string().compare(0, prefix.size(), prefix) == 0)
+            if(desc.path.makeAbsolute("").string().compare(0, prefix.size(), prefix) == 0 && desc.path != path)
                 res.emplace_back(desc.path);
         } else {
             if(desc.path.parentPath() == path)

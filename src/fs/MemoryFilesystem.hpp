@@ -74,6 +74,7 @@ protected:
     uint getFileIndex(fs::Path path) const;
     Descriptor &getDesc(fs::Path path, DescriptorType defaultType); // Create a descriptor if doesent exist
     bool checkBeforeTransfer(fs::Path src, fs::Path dst, Error *err, std::string_view op) const;
+    bool isInUse(fs::Path const &path) const;
 public:
     MemoryFilesystem();
     ~MemoryFilesystem();

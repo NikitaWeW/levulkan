@@ -274,7 +274,7 @@ namespace std {
 template <typename T>
 class SparseSet : public ecs::sparse_set<T> {
 public:
-    inline SparseSet(std::size_t capacity = 10, std::uint32_t pageSize = 10) : ecs::sparse_set<T>(capacity, pageSize) {}
+    inline SparseSet(std::size_t capacity = 10, std::uint32_t pageSize = 64) : ecs::sparse_set<T>(capacity, pageSize) {}
 
     /// @brief Get a range of the dense data.
     inline std::ranges::subrange<T *> range() {

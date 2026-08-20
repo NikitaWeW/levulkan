@@ -55,6 +55,7 @@ protected:
     void checkErr(std::error_code err, Error *outErr, std::string path) const;
     void close(uint id);
     Path getFullPath(Path const &path) const;
+    bool isInUse(Path const &path) const;
 public:
     NativeFilesystem();
     NativeFilesystem(Path basePath);

@@ -2,6 +2,7 @@
 #include "Logging.hpp"
 
 #include <filesystem>
+#include <unordered_set>
 
 fs::NativeFile::NativeFile(Path path, FileOpenMode::Flags mode, uint id) {
     mId = id;
@@ -12,6 +13,11 @@ fs::NativeFile::NativeFile(Path path, FileOpenMode::Flags mode, uint id) {
         iosMode |= std::ios::app;
     if(mode & FileOpenMode::Truncate)
         iosMode |= std::ios::trunc;
+
+    if(!std::filesystem::exists(path.string())) {
+        std::ofstream createFileIfDoesentExistBecauseCppStdLibIsFuckingUnusable(path.string());
+        createFileIfDoesentExistBecauseCppStdLibIsFuckingUnusable.close();
+    }
 
     mFile.open(path.string(), iosMode);
 }
@@ -116,7 +122,6 @@ void fs::NativeFilesystem::checkErr(std::error_code err, Error *outErr, std::str
 }
 void fs::NativeFilesystem::close(uint id) {
     assert(mFiles.contains(id));
-    auto path = mFiles.at(id).path;
     auto &file = mFiles.at(id).file;
     
     if(file->isOpen())
@@ -134,7 +139,28 @@ fs::NativeFilesystem::~NativeFilesystem() {
     }
 }
 fs::Path fs::NativeFilesystem::getFullPath(Path const &path) const {
-    return mBasePath / path;
+    return mBasePath / path.makeAbsolute("");
+}
+bool fs::NativeFilesystem::isInUse(Path const &path) const {
+    if(!exists(path))
+        return false;
+
+    std::unordered_set<std::string> paths;
+    if(isDirectory(path)) {
+        for(auto const &path : getContents(path)) {
+            if(isRegularFile(path)) {
+                paths.emplace(path.string());
+            }
+        }
+    } else {
+        paths.emplace(path.makeAbsolute("").string());
+    }
+    for(auto const &file : mFiles.dense()) {
+        if(paths.contains(file.path.string()))
+            return true;
+    }
+
+    return false;
 }
 fs::NativeFilesystem &fs::NativeFilesystem::operator=(NativeFilesystem &&rhs) {
     if(this == &rhs)
@@ -160,13 +186,48 @@ void fs::NativeFilesystem::copy(Path const &from, Path const &to, Error *outErr)
     if(outErr && outErr->failed)
         return;
 
+    if(isInUse(to)) {
+        auto msg = fmt::format("Cannot copy to file \"{}\": is in use!", to.string());
+        if(outErr) {
+            outErr->failed = true;
+            outErr->message = msg;
+            outErr->path = to.string();
+        } else {
+            LOG_ERROR(msg);
+        }
+        return;
+    }
+
     std::error_code err;
     std::filesystem::copy(getFullPath(from).string(), getFullPath(to).string(), std::filesystem::copy_options::recursive, err);
     checkErr(err, outErr, fmt::format("(src: {}, dst: {})", from.string(), to.string()));
 }
 void fs::NativeFilesystem::move(Path const &from, Path const &to, Error *outErr) {
+    if(isInUse(from)) {
+        auto msg = fmt::format("Cannot move from file \"{}\": is in use!", to.string());
+        if(outErr) {
+            outErr->failed = true;
+            outErr->message = msg;
+            outErr->path = to.string();
+        } else {
+            LOG_ERROR(msg);
+        }
+        return;
+    }
+    if(isInUse(to)) {
+        auto msg = fmt::format("Cannot move to file \"{}\": is in use!", to.string());
+        if(outErr) {
+            outErr->failed = true;
+            outErr->message = msg;
+            outErr->path = to.string();
+        } else {
+            LOG_ERROR(msg);
+        }
+        return;
+    }
+
     std::error_code err;
-    std::filesystem::rename(getFullPath(from).string(), getFullPath(to).string(), err);
+    std::filesystem::rename(getFullPath(from).string(), exists(to) && isDirectory(to) ? getFullPath(to/from.filename()).string() : getFullPath(to).string(), err);
     checkErr(err, outErr, fmt::format("(src: {}, dst: {})", from.string(), to.string()));
 }
 
@@ -197,6 +258,18 @@ void fs::NativeFilesystem::remove(Path const &path, Error *outErr) {
     bool isDir = isDirectory(path, outErr);
     if(outErr && outErr->failed)
         return;
+
+    if(isInUse(path)) {
+        auto msg = fmt::format("Cannot remove file \"{}\": is in use!", path.string());
+        if(outErr) {
+            outErr->failed = true;
+            outErr->message = msg;
+            outErr->path = path.string();
+        } else {
+            LOG_ERROR(msg);
+        }
+        return;
+    }
     if(isDir) {
         std::filesystem::remove_all(getFullPath(path).string(), err);
     } else {
@@ -252,7 +325,7 @@ fs::FileHandle fs::NativeFilesystem::open(Path const &path, FileOpenMode::Flags 
 
     uint id = mNextId++;
     mFiles.emplace(id, Handle{
-        .path = fullPath,
+        .path = path.makeAbsolute(""),
         .file = std::unique_ptr<NativeFile>(new NativeFile(fullPath, mode, id)),
         .id = id
     });

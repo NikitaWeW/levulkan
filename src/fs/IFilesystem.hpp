@@ -59,6 +59,8 @@ public:
     bool empty() const;
     std::vector<std::string> split() const;
     bool isAbsolute() const;
+    [[nodiscard]] 
+    Path removeDirSeparator() const;
 
     Path makeRelative(Path const &to) const;
     Path makeAbsolute(Path const &to) const;
