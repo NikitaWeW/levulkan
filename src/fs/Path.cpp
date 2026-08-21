@@ -1,5 +1,4 @@
 #include "IFilesystem.hpp"
-#include "Logging.hpp"
 #include <cassert>
 
 using namespace fs;

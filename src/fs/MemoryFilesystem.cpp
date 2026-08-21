@@ -298,6 +298,8 @@ void fs::MemoryFilesystem::move(Path const &src, Path const &dst, Error *err) {
 
     if(srcDesc.type == DescriptorType::File) {
         srcDesc.path = (dstIsDirectory ? dst/src.filename() : dst).removeDirSeparator();
+        if(exists(srcDesc.path))
+            remove(srcDesc.path);
         mPathToDescIndex.erase(src.removeDirSeparator().string());
         mPathToDescIndex[srcDesc.path.string()] = srcDesc.id;
     } else if(srcDesc.type == DescriptorType::Directory) {
@@ -307,6 +309,8 @@ void fs::MemoryFilesystem::move(Path const &src, Path const &dst, Error *err) {
             return;
         for(auto path : contents) {
             auto dstPath = (dst/path.makeRelative(src)).removeDirSeparator();
+            if(exists(dstPath))
+                remove(dstPath);
             uint index = getFileIndex(path);
             mDescriptors.at(index).path = dstPath;
             mPathToDescIndex.erase(path.string());
@@ -374,8 +378,8 @@ void fs::MemoryFilesystem::remove(Path const &path, Error *err) {
     if(isRegularFile(path)) {
         mFileContents.erase(index);
     } else if(isDirectory(path)) {
-        for(auto const &path : getContents(path, false, err)) {
-            remove(path, err);
+        for(auto const &dirPath : getContents(path, false, err)) {
+            remove(dirPath, err);
             if(err && err->failed)
                 return;
         }
@@ -391,18 +395,13 @@ std::vector<fs::Path> fs::MemoryFilesystem::getContents(Path const &path, bool r
         setErr(err, fmt::format("Cannot get contents of a non-directory!"), path.string());
 
     std::vector<Path> res;
-    auto prefix = path.makeAbsolute("").string();
+    auto prefix = path.makeAbsolute("");
     for(auto const &desc : mDescriptors.dense()) {
-        if(prefix.empty()) {
-            res.emplace_back(desc.path);
-            continue;
-        }
-
         if(recursive) {
-            if(desc.path.makeAbsolute("").string().compare(0, prefix.size(), prefix) == 0 && desc.path != path)
+            if(prefix.empty() || desc.path.string().compare(0, prefix.string().size(), prefix.string()) == 0 && desc.path != path)
                 res.emplace_back(desc.path);
         } else {
-            if(desc.path.parentPath() == path)
+            if(desc.path.parentPath() == prefix)
                 res.emplace_back(desc.path);
         }
     }
@@ -505,12 +504,13 @@ std::vector<std::byte> fs::MemoryFilesystem::serialize() const {
         }
     }
 
-    std::string descRes = descriptors.dump(-1);
-    std::vector<std::byte> result(sizeof(uint32_t) + binOffset + descRes.size());
-    *reinterpret_cast<uint32_t *>(result.data()) = descRes.size();
-        
-    std::memcpy(result.data(), descRes.data(), descRes.size());
+    std::string descRes = descriptors.dump(2);
+    std::vector<std::byte> result(sizeof(uint32_t) + descRes.size() + binOffset);
     
+    uint32_t jsonSize = descRes.size();
+    std::memcpy(result.data(), &jsonSize, sizeof(uint32_t));
+    std::memcpy(result.data() + sizeof(uint32_t), descRes.data(), descRes.size());
+
     uintmax_t offset = sizeof(uint32_t) + descRes.size();
     for(auto const &[data, size] : ranges) {
         std::memcpy(result.data() + offset, data, size);
@@ -529,6 +529,9 @@ void fs::MemoryFilesystem::deserialize(void const *data, uintmax_t fileSize) {
 
     uint32_t jsonSize = *reinterpret_cast<uint32_t const *>(data);
 
+    // uint32_t jsonSize = 0;
+    // std::memcpy(&jsonSize, data, sizeof(uint32_t));
+
     if(jsonSize == 0) {
         LOG_ERROR("fs::MemoryFilesystem::deserialize: header size {} is 0!", jsonSize);
         return;
@@ -540,7 +543,9 @@ void fs::MemoryFilesystem::deserialize(void const *data, uintmax_t fileSize) {
     
 
     auto jsonRange = std::ranges::subrange(static_cast<std::byte const *>(data) + sizeof(uint32_t), static_cast<std::byte const *>(data) + sizeof(uint32_t) + jsonSize);
+    // printf("%.*s", static_cast<int>(&jsonRange.back() - &jsonRange.front() + 1), reinterpret_cast<char const *>(&jsonRange.front()));
     json descriptors = json::parse(jsonRange);
+    assert(descriptors.is_array());
 
     closeIfInUse("/");
     mNextId = 1;
@@ -549,12 +554,13 @@ void fs::MemoryFilesystem::deserialize(void const *data, uintmax_t fileSize) {
     mPathToDescIndex.clear();
 
     for(json const &jsonDesc : descriptors) {
+        assert(jsonDesc.is_object());
         assert(jsonDesc.contains("path"));
         assert(jsonDesc.contains("type"));
-        assert(jsonDesc.contains("mTime"));
+        assert(jsonDesc.contains("mtime"));
         std::string path = jsonDesc["path"].get<std::string>();
         DescriptorType type = jsonDesc["type"].get<std::string>() == "file" ? DescriptorType::File : DescriptorType::Directory;
-        intmax_t modificationTime = jsonDesc["mTime"].get<intmax_t>();
+        intmax_t modificationTime = jsonDesc["mtime"].get<intmax_t>();
         uint index = mPathToDescIndex[path] = mNextId++;
         mDescriptors[index] = {
             .type = type,

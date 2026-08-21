@@ -177,6 +177,8 @@ public:
 
 template<std::ranges::range T>
 inline fs::Path::Path(T const &components, bool absolute) {
+    if(components.end() - components.begin() == 0)
+        mPath = "/";
     for(auto it = components.begin(); it != components.end(); ++it) {
         mPath.append("/").append(*it);
     }

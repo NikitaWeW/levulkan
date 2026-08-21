@@ -74,6 +74,9 @@ static void testFilesystem(fs::IFilesystem *filesystem) {
     filesystem->remove("/test_stream1", &err);
     CHECK_ERR(err);
     REQUIRE_FALSE(file.isOpen());
+    REQUIRE_FALSE(filesystem->exists("/test1"));
+    REQUIRE_FALSE(filesystem->exists("/test1/test2"));
+    REQUIRE_FALSE(filesystem->exists("/test1/test2/test_file"));
 
     auto files = {"/a.txt", "b.a", "/c.a.x", "./file0", "file1", "/dir1/dir2/dir3/directory.d/file"};
     for(uint i = 0; i < NUM; ++i) {
@@ -364,6 +367,8 @@ TEST_CASE("fs::MemoryFilesystem tests", "[engine]") {
             filesystem->deserialize(data.data(), data.size());
         testFilesystem(filesystem.get());
         data = filesystem->serialize();
+        std::ofstream file("./tmp/mem_test", std::ios::out | std::ios::trunc | std::ios::binary);
+        file.write(reinterpret_cast<char const *>(data.data()), data.size());
         contents = filesystem->getContents("/", true);
     }
 
