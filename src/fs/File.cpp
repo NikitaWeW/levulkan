@@ -1,0 +1,50 @@
+#include "IFilesystem.hpp"
+#include <cassert>
+
+fs::FileHandle::FileHandle(IFile *file) {
+    mFile = file;
+    if(mFile)
+        mFile->setFileHandle(this);
+}
+fs::FileHandle::~FileHandle() {
+    close();
+}
+fs::FileHandle::FileHandle(FileHandle &&rhs) {
+    *this = std::move(rhs);
+}
+fs::FileHandle &fs::FileHandle::operator=(FileHandle &&rhs) {
+    std::swap(mFile, rhs.mFile);
+    if(mFile)
+        mFile->setFileHandle(this);
+    return *this;
+}
+
+fs::IFile *fs::FileHandle::release() {
+    auto file = mFile;
+    mFile = nullptr;
+    return file;
+}
+IStream const *fs::FileHandle::get() const {
+    return mFile;
+}
+IStream *fs::FileHandle::get() {
+    return mFile;
+}
+void fs::FileHandle::close() {
+    if(isOpen()) {
+        mFile->close();
+    }
+    mFile = nullptr;
+}
+bool fs::FileHandle::isOpen() const {
+    return mFile && mFile->isOpen();
+}
+
+IStream const *fs::FileHandle::operator->() const {
+    assert(isOpen());
+    return mFile;
+}
+IStream *fs::FileHandle::operator->() {
+    assert(isOpen());
+    return mFile;
+}

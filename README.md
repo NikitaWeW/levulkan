@@ -4,21 +4,29 @@
 
 Yeah...
 
-A lot of stuff is going to be merged into my engine.
+A lot of stuff is going to be merged into my engine once I finish with this.
 
 ## How to use
+
+![image](https://media1.tenor.com/m/avEEZ4V8XcEAAAAd/cat-excited.gif)
 
 - Probably don't
 
 ## Features
+
+![image](https://media.tenor.com/ihzUC8LA1CgAAAAj/komik.gif)
+
 - Device, swapchain and other stuff initialization. (src/vk/Init.hpp)
 - GLSL Shader compilation and binary management with custom #stage parser/splitter. (src/vk/Shader.hpp)
 - Pipeline and descriptor set management with shader reflection. (src/vk/Pipeline.hpp)
 - GPU ring buffer. Useful for frequently updated data. (src/vk/RingBuffer.hpp)
 - Vulkan render graph. (src/vk/RenderGraph.hpp)
+- A fucking virtual filesystem??
 - Probably something else but I forgot the project has a readme.
 
 ## Building 
+
+![image](https://media1.tenor.com/m/3EAL8JxXr04AAAAd/cat-vibe-cat.gif)
 
 ```shell
 cd levulkan

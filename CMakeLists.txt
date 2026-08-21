@@ -6,15 +6,16 @@ project(levulkan C CXX)
 
 include(cmake/cpm.cmake)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+set(BUILD_SHARED_LIBS OFF)
 
 foreach(LOADER GLTF)
     set(ASSIMP_BUILD_${LOADER}_IMPORTER ON)
 endforeach()
-set(BUILD_SHARED_LIBS OFF)
 
 set(SPIRV_REFLECT_STATIC_LIB ON)
 set(SPIRV_REFLECT_EXECUTABLE OFF)
 set(SPIRV_REFLECT_INSTALL OFF)
+
 set(ASSIMP_NO_EXPORT ON)
 set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF)
 set(ASSIMP_BUILD_TESTS OFF)
@@ -43,6 +44,10 @@ CPMAddPackage("gh:jeremy-rifkin/cpptrace#v1.0.4")
 CPMAddPackage("gh:nlohmann/json#v3.12.0")
 CPMAddPackage("gh:KhronosGroup/Spirv-Headers#vulkan-sdk-1.4.341.0")
 
+# CPMAddPackage(URI "gh:facebook/zstd#82d322c" FORCE ON)
+# add_library(zstd::libzstd_static ALIAS libzstd_static)
+# CPMAddPackage(URI "gh:nih-at/libzip#492b347" FORCE ON)
+
 find_package(SPIRV-Tools)
 if(NOT SPIRV-Tools_FOUND)
 CPMAddPackage("gh:KhronosGroup/Spirv-Tools@2026.1")
@@ -60,8 +65,7 @@ endif()
 find_package(slang)
 message(STATUS "Found slang: \"${slang_DIR}\"")
 
-set(LEVULKAN_SOURCE
-    "src/main.cpp"
+set(ENGINE_SOURCE
     "src/Renderer.cpp"
     "src/Controller.cpp"
     "src/libraries/stb.c"
@@ -69,6 +73,13 @@ set(LEVULKAN_SOURCE
 
     "src/resource/ModelLoader.cpp"
     "src/resource/TextureLoader.cpp"
+
+    "src/fs/Path.cpp"
+    "src/fs/File.cpp"
+    "src/fs/NativeFilesystem.cpp"
+    "src/fs/VirtualFilesystem.cpp"
+    "src/fs/SubFilesystem.cpp"
+    "src/fs/MemoryFilesystem.cpp"
 
     "src/vk/Init.cpp"
     "src/vk/Pipeline.cpp"
@@ -78,17 +89,23 @@ set(LEVULKAN_SOURCE
     "src/vk/Swapchain.cpp"
     "src/vk/RenderGraph.cpp"
 )
-
-add_executable(levulkan ${LEVULKAN_SOURCE})
-target_link_libraries(levulkan PRIVATE spdlog nicecs::ecs glm assimp meshoptimizer cpptrace::cpptrace nlohmann_json::nlohmann_json)
-target_link_libraries(levulkan PRIVATE glfw volk GPUOpen::VulkanMemoryAllocator)
-target_link_libraries(levulkan PRIVATE glslang::glslang glslang::glslang-default-resource-limits spirv-reflect-static SPIRV-Headers SPIRV-Tools slang::slang)
-target_include_directories(levulkan PRIVATE "src")
-target_compile_definitions(levulkan PRIVATE GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_ENABLE_EXPERIMENTAL)
+add_library(engine ${ENGINE_SOURCE})
+target_link_libraries(engine PUBLIC spdlog nicecs::ecs glm assimp meshoptimizer cpptrace::cpptrace nlohmann_json::nlohmann_json zip)
+target_link_libraries(engine PUBLIC glfw volk GPUOpen::VulkanMemoryAllocator)
+target_link_libraries(engine PUBLIC glslang::glslang glslang::glslang-default-resource-limits spirv-reflect-static SPIRV-Headers SPIRV-Tools slang::slang)
+target_compile_definitions(engine PUBLIC GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_ENABLE_EXPERIMENTAL)
+target_include_directories(engine PRIVATE "src")
 
 if(glslang_FOUND)
-target_compile_definitions(levulkan PRIVATE SHADER_ENABLE_GLSL)
+target_compile_definitions(engine PRIVATE SHADER_ENABLE_GLSL)
 endif()
 if(slang_FOUND)
-target_compile_definitions(levulkan PRIVATE SHADER_ENABLE_SLANG)
+target_compile_definitions(engine PRIVATE SHADER_ENABLE_SLANG)
 endif()
+
+add_executable(levulkan "src/main.cpp")
+target_link_libraries(levulkan PRIVATE engine)
+target_include_directories(levulkan PRIVATE "src")
+
+add_subdirectory(tests)
+

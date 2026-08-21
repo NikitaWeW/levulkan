@@ -1,7 +1,6 @@
 #include "Renderer.hpp"
 #include <filesystem>
 
-
 template<typename T>
 static VkFormat getBitmapFormat(Bitmap<T> const& bmp, bool srgb) {
     if constexpr (std::is_same_v<T, uint8_t>)
@@ -239,10 +238,10 @@ void ResourceAllocator::end() {
     CHECK_VK_RES(vkQueueSubmit(mQueue, 1, &submitInfo, mFence));
     CHECK_VK_RES(vkWaitForFences(mAllocInfo.device, 1, &mFence, true, UINT64_MAX));
 }
-RenderManager::RenderManager(vk::AllocationCreateInfo allocInfo, SimpleShaderCreateInfo shaderInfo, REntity<vk::Swapchain> swapchain, VkPhysicalDevice device) {
+RenderManager::RenderManager(vk::AllocationCreateInfo allocInfo, SimpleShaderCreateInfo shaderInfo, RestrictedEntity<vk::Swapchain> swapchain, VkPhysicalDevice device) {
     mAllocInfo  = allocInfo;
     mSwapchain  = swapchain;
-    mShaderInfo = shaderInfo;
+    mShaderCreateInfo = shaderInfo;
 
     std::vector<VkFormat> depthFormatList{ VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM_S8_UINT };
     for(VkFormat &format : depthFormatList) {
@@ -306,10 +305,10 @@ Entity RenderManager::addBufferResource(std::string_view name, uint32_t size, vo
 
     return res;
 }
-void RenderManager::addResource(RAnyEntity<vk::Image, vk::Buffer> eResource) {
-    auto name = eResource.has<vk::Image>() ? eResource.get<vk::Image>().name() : eResource.get<vk::Buffer>().name();
-    mRenderGraph.setResource(name, eResource);
-}
+// void RenderManager::addResource(RestrictedAnyEntity<vk::Image, vk::Buffer> eResource) {
+//     auto name = eResource.has<vk::Image>() ? eResource.get<vk::Image>().name() : eResource.get<vk::Buffer>().name();
+//     mRenderGraph.setResource(name, eResource);
+// }
 vk::Pipeline RenderManager::makePipeline(SimpleRenderPass const &pass, VkQueueFlagBits queue) {
     vk::PipelineLayoutCreateInfo layout{
         // .
@@ -324,25 +323,25 @@ vk::Pipeline RenderManager::makePipeline(SimpleRenderPass const &pass, VkQueueFl
     // }
     return {};
 }
-void RenderManager::addPass(SimpleRenderPass const &pass) {
-    vk::Shader shader = makeShader(pass.shader);
+// void RenderManager::addPass(SimpleRenderPass const &pass) {
+//     vk::Shader shader = makeShader(pass.shader);
 
-    if(!shader.valid || shader.binDescriptors.empty()) {
-        LOG_ERROR("Failed to compile shader {}", pass.shader);
-    }
+//     if(!shader.valid || shader.binDescriptors.empty()) {
+//         LOG_ERROR("Failed to compile shader {}", pass.shader);
+//     }
 
-    auto queue = shaderStageToQueue(shader.binDescriptors[0].stage);
+//     auto queue = shaderStageToQueue(shader.binDescriptors[0].stage);
 
-    mRenderGraph.addPass(vk::RenderPass{
-        .name     = pass.name,
-        .reads    = pass.reads,
-        .writes   = pass.writes,
-        .queue    = queue,
-        .callback = pass.callback,
-        .shader   = std::move(shader),
-        .pipeline = makePipeline(pass, queue),
-    });
-}
+//     mRenderGraph.addPass(vk::RenderPass{
+//         .name     = pass.name,
+//         .reads    = pass.reads,
+//         .writes   = pass.writes,
+//         .queue    = queue,
+//         .callback = pass.callback,
+//         .shader   = std::move(shader),
+//         .pipeline = makePipeline(pass, queue),
+//     });
+// }
 
 
 Entity RenderManager::addImageResource(std::string_view name, glm::uvec2 size, vk::ImageCreateInfo ci) {
@@ -365,7 +364,7 @@ Entity RenderManager::addImageResource(std::string_view name, glm::uvec2 size, v
 }
 namespace fs = std::filesystem;
 vk::Shader RenderManager::makeShader(std::string_view name) {
-    auto src = fs::path(mShaderInfo.srcPrefix)/name;
+    auto src = fs::path(mShaderCreateInfo.srcPrefix)/name;
     if(!fs::exists(src))
         LOG_ERROR("{} doesent exist!", src.string());
 
@@ -384,17 +383,16 @@ vk::Shader RenderManager::makeShader(std::string_view name) {
     vk::ShaderCreateInfo ci{
         .backend           = backend,
         .src               = src.string(),
-        .bin               = (fs::path(mShaderInfo.binPrefix)/name).string(),
+        .bin               = (fs::path(mShaderCreateInfo.binPrefix)/name).string(),
         .device            = mAllocInfo.device,
-        .targetVersion     = mShaderInfo.targetVersion,
-        .spirvVersion      = mShaderInfo.spirvVersion,
-        .includeDirs       = mShaderInfo.includeDirs,
-        .systemIncludeDirs = mShaderInfo.systemIncludeDirs,
-        .definitions       = mShaderInfo.definitions,
+        .targetVersion     = mShaderCreateInfo.targetVersion,
+        .spirvVersion      = mShaderCreateInfo.spirvVersion,
+        .includeDirs       = mShaderCreateInfo.includeDirs,
+        .systemIncludeDirs = mShaderCreateInfo.systemIncludeDirs,
+        .definitions       = mShaderCreateInfo.definitions,
         .debugInfo         = true,
         .optimize          = true,
     };
 
     return vk::makeShader(ci);
 }
-

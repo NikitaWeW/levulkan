@@ -266,7 +266,7 @@ static void writeBinaries(Shader &program, std::vector<std::string> const &inclu
     }
 
     writeFileString((fs::path(program.createInfo.bin)/METADATA_FILENAME).string(), metadata.dump(4));
-    fs::last_write_time(program.createInfo.bin, std::chrono::file_clock::now());
+    metadata["lastTimeWrite"] = std::chrono::file_clock::now().time_since_epoch().count();
 }
 static bool isOutdated(Shader &program, json const &metadata) {
     if(!fs::exists(program.createInfo.bin))
@@ -275,25 +275,25 @@ static bool isOutdated(Shader &program, json const &metadata) {
         return true;
 
     bool outdated = false; 
-    auto binWriteTime = std::filesystem::last_write_time(program.createInfo.bin).time_since_epoch();
+    auto binWriteTime = metadata["lastTimeWrite"];
     if(fs::exists(program.createInfo.src) && fs::exists(program.createInfo.bin))
     {
         if(metadata["src"].get<std::string>() != program.createInfo.src)
             return true;
 
-        outdated = (std::filesystem::last_write_time(program.createInfo.src).time_since_epoch() > binWriteTime);
+        outdated = (std::filesystem::last_write_time(program.createInfo.src).time_since_epoch().count() > binWriteTime);
         for(auto include : metadata["includes"])
         {
             if(outdated)
                 return true;
-            outdated = (std::filesystem::last_write_time(include.get<std::string>()).time_since_epoch() > binWriteTime);
+            outdated = (std::filesystem::last_write_time(include.get<std::string>()).time_since_epoch().count() > binWriteTime);
         }
 
         if(fs::is_directory(program.createInfo.src)) {
             for(auto dirEntry : fs::recursive_directory_iterator(program.createInfo.src)) {
                 if(outdated)
                     return true;
-                outdated = dirEntry.last_write_time().time_since_epoch() > binWriteTime;
+                outdated = dirEntry.last_write_time().time_since_epoch().count() > binWriteTime;
             }
         }
     }
@@ -439,7 +439,7 @@ static void rtrim(std::string &s) {
     }).base(), s.end());
 }
 // Thanks to https://stackoverflow.com/a/14266139
-std::vector<std::string> split(std::string s, std::string const &delimiter) {
+static std::vector<std::string> split(std::string s, std::string const &delimiter) {
     std::vector<std::string> tokens;
     size_t pos = 0;
     std::string token;

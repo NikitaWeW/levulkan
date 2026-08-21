@@ -1,4 +1,5 @@
 build
+tmp
 shaders-bin
 install
 .vscode
