@@ -504,7 +504,7 @@ std::vector<std::byte> fs::MemoryFilesystem::serialize() const {
         }
     }
 
-    std::string descRes = descriptors.dump(2);
+    std::string descRes = descriptors.dump(-1);
     std::vector<std::byte> result(sizeof(uint32_t) + descRes.size() + binOffset);
     
     uint32_t jsonSize = descRes.size();
