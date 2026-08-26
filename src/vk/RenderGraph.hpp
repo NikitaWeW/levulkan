@@ -76,8 +76,8 @@ struct RenderPass {
     std::vector<ResourceWrite>      writes;
     VkQueueFlagBits                 queue = VK_QUEUE_GRAPHICS_BIT;
     std::function<callback_t>       callback;
-    vk::Shader                      shader;
-    vk::Pipeline                    pipeline;
+    // vk::Shader                      shader;
+    // vk::Pipeline                    pipeline;
 };
 struct Barrier {
     struct Scope
@@ -99,8 +99,7 @@ struct Barrier {
     VkDeviceSize offset;
     VkDeviceSize size;
 
-    inline VkImageMemoryBarrier2 getImageBarrier(RestrictedEntity_T<std::logical_or<>, vk::Image, vk::Buffer> eResource) const {
-        assert(eResource.has<vk::Image>());
+    inline VkImageMemoryBarrier2 getImageBarrier(RestrictedEntity<vk::Image> eResource) const {
         auto const &image = eResource.get<vk::Image>();
         return {
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
@@ -116,8 +115,7 @@ struct Barrier {
             .subresourceRange = subresourceRange
         };
     }
-    inline VkBufferMemoryBarrier2 getBufferBarrier(RestrictedEntity_T<std::logical_or<>, vk::Image, vk::Buffer> eResource) const {
-        assert(eResource.has<vk::Buffer>());
+    inline VkBufferMemoryBarrier2 getBufferBarrier(RestrictedEntity<vk::Buffer> eResource) const {
         auto const &buffer = eResource.get<vk::Buffer>();
         return {
             .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
@@ -178,8 +176,6 @@ public:
     bool build();
     void clear();
 
-    /// @brief Generate a DOT graph.
-    /// @param indent If indent is nonnegative, then array elements and object members will be pretty-printed with that indent level. An indent level of 0 will only insert newlines. -1 (the default) selects the most compact representation.
     std::string dumpGraphviz(int indent = -1, GraphvizSettings settings = {}) const;
 
     bool isUpToDate() const;

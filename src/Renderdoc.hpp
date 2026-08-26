@@ -25,19 +25,16 @@ public:
         {
             pRENDERDOC_GetAPI RENDERDOC_GetAPI =
                 (pRENDERDOC_GetAPI)GetProcAddress(mod, "RENDERDOC_GetAPI");
-            int ret = RENDERDOC_GetAPI(eRENDERDOC_API_Version_1_6_0, (void **)&rdoc_api);
-            assert(ret == 1);
-        }
 #else
         // At init, on linux/android.
         // For android replace librenderdoc.so with libVkLayer_GLES_RenderDoc.so
         if(void *mod = dlopen("librenderdoc.so", RTLD_NOW | RTLD_NOLOAD))
         {
             pRENDERDOC_GetAPI RENDERDOC_GetAPI = (pRENDERDOC_GetAPI)dlsym(mod, "RENDERDOC_GetAPI");
+#endif
             int ret = RENDERDOC_GetAPI(eRENDERDOC_API_Version_1_6_0, (void **)&mApi);
             assert(ret == 1);
         }
-#endif
 #endif // #ifdef ENABLE_RENDERDOC
     }
 

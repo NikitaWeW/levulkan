@@ -320,8 +320,8 @@ TEST_CASE("fs::VirtualFilesystem tests", "[engine]") {
     for(uint i = 0; i < 2; ++i) {
         std::unique_ptr<fs::VirtualFilesystem> filesystem(new fs::VirtualFilesystem());
         std::unique_ptr<fs::IFilesystem> root(new fs::NativeFilesystem("tmp/virtual_tests/root"));
-        std::unique_ptr<fs::IFilesystem> tmp(new fs::NativeFilesystem("tmp/virtual_tests/tmp"));
-        std::unique_ptr<fs::IFilesystem> res(new fs::NativeFilesystem("assets"));
+        std::unique_ptr<fs::IFilesystem> tmp(new fs::MemoryFilesystem());
+        std::unique_ptr<fs::IFilesystem> res(new fs::NativeFilesystem("./assets"));
         std::unique_ptr<fs::IFilesystem> shaders(new fs::NativeFilesystem("shaders"));
         filesystem->mount(root.get(), "/");
         filesystem->mount(tmp.get(), "/tmp");

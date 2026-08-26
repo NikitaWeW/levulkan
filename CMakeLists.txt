@@ -66,7 +66,6 @@ find_package(slang)
 message(STATUS "Found slang: \"${slang_DIR}\"")
 
 set(ENGINE_SOURCE
-    "src/Renderer.cpp"
     "src/Controller.cpp"
     "src/libraries/stb.c"
     "src/libraries/vk_mem_alloc.cpp"
@@ -81,6 +80,8 @@ set(ENGINE_SOURCE
     "src/fs/SubFilesystem.cpp"
     "src/fs/MemoryFilesystem.cpp"
 
+    "src/Renderer.cpp"
+    "src/ResourceAllocator.cpp"
     "src/vk/Init.cpp"
     "src/vk/Pipeline.cpp"
     "src/vk/Resource.cpp"

@@ -140,7 +140,7 @@ public:
 };
 
 /// @brief Entity handle that requires specified components
-template<typename Op = std::logical_and<bool>, typename... Components>
+template<typename Op, typename... Components>
 class RestrictedEntity_T : public Entity {
 private:
     class OpWrapper {
@@ -183,6 +183,18 @@ using RestrictedAllEntity = RestrictedEntity_T<std::logical_and<>, Components...
 
 template<typename... Components>
 using RestrictedAnyEntity = RestrictedEntity_T<std::logical_or<>, Components...>;
+
+template<typename Component>
+class DirectEntity : public RestrictedEntity<Component> {
+public:
+    using RestrictedEntity<Component>::RestrictedEntity;
+
+    inline Component const &getc() const { return Entity::get<Component>(); }
+    inline Component &getc() { return Entity::get<Component>(); }
+
+    inline Component const *operator->() const { return &getc(); };
+    inline Component *operator->() { return &getc(); };
+};
 
 inline Registry::Registry(Registry const &o) { *this = o; }
 inline Registry::Registry(Registry &&o) { *this = std::move(o); }

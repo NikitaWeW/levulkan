@@ -21,12 +21,12 @@ static void writeImage(Image &image, ImageCreateInfo const &ci) {
             .allocFlags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT
         },
         .data = ci.data,
-        .size = ci.dimensions.width * 
-                ci.dimensions.height * 
-                ci.dimensions.depth * 
-                ci.dimensions.arrayLayers * 
-                ci.dimensions.samples * 
-                vkuGetFormatInfo(ci.format).texel_block_size,
+        .size = ci.image.dimensions.width * 
+                ci.image.dimensions.height * 
+                ci.image.dimensions.depth * 
+                ci.image.dimensions.arrayLayers * 
+                ci.image.dimensions.samples * 
+                vkuGetFormatInfo(ci.image.format).texel_block_size,
     });
 
     VkBufferImageCopy2 bufferCopyRegion = {
@@ -36,10 +36,10 @@ static void writeImage(Image &image, ImageCreateInfo const &ci) {
             .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
             .mipLevel = 0,
             .baseArrayLayer = 0,
-            .layerCount = image.createInfo.dimensions.arrayLayers,
+            .layerCount = image.createInfo.image.dimensions.arrayLayers,
         },
         .imageOffset = {0, 0, 0},
-        .imageExtent = {image.createInfo.dimensions.width, image.createInfo.dimensions.height, 1}
+        .imageExtent = {image.createInfo.image.dimensions.width, image.createInfo.image.dimensions.height, 1}
     };
     VkCopyBufferToImageInfo2 copyInfo{
         .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2,
@@ -57,7 +57,7 @@ static void writeImage(Image &image, ImageCreateInfo const &ci) {
         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         VK_PIPELINE_STAGE_NONE,
         VK_PIPELINE_STAGE_TRANSFER_BIT,
-        {VK_IMAGE_ASPECT_COLOR_BIT, 0, image.createInfo.dimensions.mipLevels, 0, 1}
+        {VK_IMAGE_ASPECT_COLOR_BIT, 0, image.createInfo.image.dimensions.mipLevels, 0, 1}
     );
     
     vkCmdCopyBufferToImage2(ci.commandBuffer, &copyInfo);
@@ -72,7 +72,7 @@ static void writeImage(Image &image, ImageCreateInfo const &ci) {
         {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
     );
 
-    for(uint32_t i = 1; i < image.createInfo.dimensions.mipLevels; i++)
+    for(uint32_t i = 1; i < image.createInfo.image.dimensions.mipLevels; i++)
     {
         VkImageBlit2 imageBlit{
             .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
@@ -83,7 +83,7 @@ static void writeImage(Image &image, ImageCreateInfo const &ci) {
             },
             .srcOffsets = {
                 { 0, 0, 0 },
-                { int32_t(image.createInfo.dimensions.width >> (i - 1)), int32_t(image.createInfo.dimensions.height >> (i - 1)), 1 }
+                { int32_t(image.createInfo.image.dimensions.width >> (i - 1)), int32_t(image.createInfo.image.dimensions.height >> (i - 1)), 1 }
             },
             .dstSubresource = {
                 .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -92,7 +92,7 @@ static void writeImage(Image &image, ImageCreateInfo const &ci) {
             },
             .dstOffsets = {
                 { 0, 0, 0 },
-                { int32_t(image.createInfo.dimensions.width >> i), int32_t(image.createInfo.dimensions.height >> i), 1 }
+                { int32_t(image.createInfo.image.dimensions.width >> i), int32_t(image.createInfo.image.dimensions.height >> i), 1 }
             }
         };
         VkBlitImageInfo2 imageBlitInfo{
@@ -130,7 +130,7 @@ Image vk::makeImage(ImageCreateInfo const &ci) {
         LOG_ERROR("ImageCreateInfo::usage is not set!");
         return {};
     }
-    if(ci.format == VK_FORMAT_UNDEFINED)
+    if(ci.image.format == VK_FORMAT_UNDEFINED)
     {
         LOG_ERROR("ImageCreateInfo::format is VK_FORMAT_UNDEFINED!");
         return {};
@@ -162,32 +162,32 @@ Image vk::makeImage(ImageCreateInfo const &ci) {
         VkSamplerCustomBorderColorCreateInfoEXT customBorder{
             .sType = VK_STRUCTURE_TYPE_SAMPLER_CUSTOM_BORDER_COLOR_CREATE_INFO_EXT,
             .customBorderColor = {
-                .float32 = {image.createInfo.sampler.customBorderColor.r, image.createInfo.sampler.customBorderColor.g, image.createInfo.sampler.customBorderColor.b, image.createInfo.sampler.customBorderColor.a},
+                .float32 = {image.createInfo.image.sampler.customBorderColor.r, image.createInfo.image.sampler.customBorderColor.g, image.createInfo.image.sampler.customBorderColor.b, image.createInfo.image.sampler.customBorderColor.a},
             },
-            .format = image.createInfo.format
+            .format = image.createInfo.image.format
         };
         VkSamplerCreateInfo samplerCreateInfo = image.createInfo.getSamplerCreateInfo();
-        if(image.createInfo.sampler.borderColor == VK_BORDER_COLOR_FLOAT_CUSTOM_EXT)
+        if(image.createInfo.image.sampler.borderColor == VK_BORDER_COLOR_FLOAT_CUSTOM_EXT)
             samplerCreateInfo.pNext = &customBorder;
-        if(image.createInfo.sampler.borderColor == VK_BORDER_COLOR_INT_CUSTOM_EXT)
+        if(image.createInfo.image.sampler.borderColor == VK_BORDER_COLOR_INT_CUSTOM_EXT)
             LOG_ERROR("vk::ImageCreateInfo::sampler::borderColor=VK_BORDER_COLOR_INT_CUSTOM_EXT is not supported. Use VK_BORDER_COLOR_FLOAT_CUSTOM_EXT.");
 
         CHECK_VK_RES(vkCreateSampler(image.createInfo.allocInfo.device, &samplerCreateInfo, nullptr, &image.sampler));
     }
 
-    if(image.createInfo.view.aspectMask != VK_IMAGE_ASPECT_NONE)
+    if(image.createInfo.image.view.aspectMask != VK_IMAGE_ASPECT_NONE)
     {
         VkImageViewCreateInfo viewCI{
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
             .image = image.image,
-            .viewType = image.createInfo.view.viewType,
-            .format = image.createInfo.format,
+            .viewType = image.createInfo.image.view.viewType,
+            .format = image.createInfo.image.format,
             .subresourceRange = {
-                .aspectMask = image.createInfo.view.aspectMask,
+                .aspectMask = image.createInfo.image.view.aspectMask,
                 .baseMipLevel = 0,
-                .levelCount = image.createInfo.dimensions.mipLevels,
+                .levelCount = image.createInfo.image.dimensions.mipLevels,
                 .baseArrayLayer = 0,
-                .layerCount = image.createInfo.dimensions.arrayLayers,
+                .layerCount = image.createInfo.image.dimensions.arrayLayers,
             }
         };
         CHECK_VK_RES(vkCreateImageView(image.createInfo.allocInfo.device, &viewCI, nullptr, &image.view));

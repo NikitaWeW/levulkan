@@ -9,6 +9,7 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
     \_/    \__|  \__|  The vulkan ring buffer.
 */
 #pragma once
+#include "ECS.hpp"
 #include "Resource.hpp"
 #include <map>
 
@@ -23,7 +24,7 @@ private:
         uint32_t size = 0;
     };
     BufferCreateInfo mCreateInfo;
-    Buffer mBuffer;
+    Entity mBuffer;
     std::map<uint32_t, Allocation> mAllocations;
     uint32_t mHead = 0;
     uint32_t mTail = 0;
@@ -31,7 +32,7 @@ public:
     /// @brief Construct an invalid ring buffer.
     RingBuffer() = default;
     /// @brief Construct a valid ring buffer.
-    RingBuffer(BufferCreateInfo createInfo);
+    RingBuffer(Registry reg, BufferCreateInfo createInfo);
     ~RingBuffer();
     RingBuffer(RingBuffer &&) = default;
     RingBuffer &operator=(RingBuffer &&) = default;
@@ -39,8 +40,8 @@ public:
     RingBuffer &operator=(RingBuffer const &) = delete;
 
     inline bool valid() const { return mBuffer.valid(); }
-    inline Buffer &getBuffer() { return mBuffer; }
-    inline Buffer const &getBuffer() const { return mBuffer; }
+    inline Entity &getBuffer() { return mBuffer; }
+    inline Entity const &getBuffer() const { return mBuffer; }
     inline uint32_t getHead() const { return mHead; }
     inline uint32_t getTail() const { return mTail; }
 

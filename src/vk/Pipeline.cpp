@@ -303,12 +303,18 @@ Pipeline vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout,
         .dynamicStateCount = (uint32_t) ci.dynamicState.size(),
         .pDynamicStates = ci.dynamicState.data()
     };
+
+    std::vector<VkPipelineColorBlendAttachmentState> blendingAttachments;
+    if(ci.blending.attachments.size() == 1)
+        blendingAttachments = std::vector<VkPipelineColorBlendAttachmentState>(ci.attachments.color.size(), ci.blending.attachments[0]);
+    else
+        blendingAttachments = ci.blending.attachments;
     VkPipelineColorBlendStateCreateInfo blendState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
         .logicOpEnable = ci.blending.logicOpEnable,
         .logicOp = ci.blending.logicOp,
-        .attachmentCount = (uint32_t) ci.blending.attachments.size(),
-        .pAttachments = ci.blending.attachments.data(),
+        .attachmentCount = (uint32_t) blendingAttachments.size(),
+        .pAttachments = blendingAttachments.data(),
         .blendConstants = {ci.blending.constant.r, ci.blending.constant.g, ci.blending.constant.b, ci.blending.constant.a}
     };
     VkPipelineRasterizationStateCreateInfo rasterization{

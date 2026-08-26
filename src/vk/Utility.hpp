@@ -10,6 +10,7 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 */
 // FIXME: Why do I keep hearing wine booms when reading this code?
 #pragma once
+#include "vk/Resource.hpp"
 #include "vulkan.h"
 
 #ifndef DONT_CHECK_VK_RESULT

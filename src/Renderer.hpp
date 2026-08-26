@@ -5,6 +5,7 @@
 #include "vk/vk.hpp"
 #include "ECS.hpp"
 
+// TODO: Move these somewhere idk
 
 struct Transform {
     glm::vec3 position{0};
@@ -53,21 +54,6 @@ struct VulkanModel {
     Entity eModel;
     std::vector<Mesh> meshes;
 };
-struct MatrixData {
-    struct CameraData {
-        glm::mat4 projMat;
-        glm::mat4 viewMat;
-    } camera;
-    struct ModelData {
-        glm::mat4 modelMat;
-        glm::mat4 normMat;
-    } model;
-};
-
-struct UniformBuffer {
-    VulkanMaterial uMaterial;
-    MatrixData uMatrixData;
-};
 struct ResizeToSwapchain {};
 
 /// Every processed image has this component.
@@ -101,72 +87,257 @@ public:
     void end();
 };
 
-// "Simple" means that some arguments are deduced automatically
-// E.g. more convenient
-
-struct SimpleShaderCreateInfo {
-    std::string srcPrefix = "shaders";
-    std::string binPrefix = "shaders-bin";
-    std::vector<std::string> includeDirs;
-    std::vector<std::string> systemIncludeDirs;
-    std::vector<std::pair<std::string, std::string>> definitions;
-
-    uint32_t targetVersion = VK_API_VERSION_1_3;
-    vk::SpirvVersion spirvVersion = vk::SpirvVersion::SpirvVersion_1_6;
+struct ResourceDirty {};
+class DescriptorManager {
+private:
+    std::map<std::pair<Entity, vk::DescriptorBinding>, std::vector<RestrictedAnyEntity<vk::Image, vk::Buffer>>> mResources;
+    std::map<std::pair<Entity, vk::DescriptorBinding>, VkImageLayout> mLayouts;
+public:
+    void addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, RestrictedAnyEntity<vk::Image, vk::Buffer> resource, VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED);
+    void addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, std::vector<RestrictedAnyEntity<vk::Image, vk::Buffer>> resources, VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED);
+    void addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, std::vector<Entity> resources, VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED);
+    void erase(Entity pipeline, vk::DescriptorBinding binding);
+    void update(uint frame = 0);
 };
-struct SimplePipelineCreateInfo {
+
+struct RenderGraphPipelineCreateInfo {
     vk::Pipeline::Type type = vk::Pipeline::Type::Invalid;
     std::vector<VkDynamicState> dynamicState = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineCreateFlags flags = 0;
 
     struct Graphics {
-        vk::GraphicsPipelineCreateInfo::Input         input;
-        vk::GraphicsPipelineCreateInfo::DepthStencil  depthStencil;
-        vk::GraphicsPipelineCreateInfo::Rasterization rasterization;
-        vk::GraphicsPipelineCreateInfo::Multisample   multisample;
-        VkPipelineColorBlendAttachmentState           blending;
+        vk::GraphicsPipelineCreateInfo::Input            input;
+        vk::GraphicsPipelineCreateInfo::DepthStencil     depthStencil;
+        vk::GraphicsPipelineCreateInfo::Rasterization    rasterization;
+        vk::GraphicsPipelineCreateInfo::Multisample      multisample;
+        /// If size is 1, the blending attachment applies to all color attachments.
+        std::vector<VkPipelineColorBlendAttachmentState> blending; 
     } graphics;
 
     std::string shader;
 };
-struct SimpleRenderPass {
-    std::string                                     name;
-    std::vector<vk::RenderPass::ResourceDependency> reads;
-    std::vector<vk::RenderPass::ResourceWrite>      writes;
-    std::function<vk::RenderPass::callback_t>       callback;
+
+class RenderPassBuilder;
+template<typename T>
+using RenderPassSetupCallback_t = void (RenderPassBuilder &);
+class RenderGraphResult;
+template<typename T>
+using RenderPassPostCompileCallback_t = void (T &, RenderGraphResult const &);
+template<typename T>
+using RenderPassRenderCallback_t = void (T &, VkCommandBuffer);
+
+struct ResourceTraits {
+    struct {
+        VkBufferUsageFlags2 usage = 0;
+        VkDeviceSize offset = 0;
+        VkDeviceSize size = 0;
+
+        bool valid() const {
+            return usage != 0 && size != 0;
+        }
+    } bufferTraits;
+    struct {
+        VkImageUsageFlags usage = 0;
+        VkImageSubresourceRange subresourceRange = {VK_IMAGE_ASPECT_NONE, 0, 1, 0, 1};
+        VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        bool valid() const {
+            return usage != 0 && layout != VK_IMAGE_LAYOUT_UNDEFINED;
+        }
+    } imageTraits;
+
+    VkAccessFlags2 access = VK_ACCESS_NONE;
+    VkPipelineStageFlags2 stages = VK_PIPELINE_STAGE_NONE;
+
+    bool valid() const {
+        return access != VK_ACCESS_NONE && stages != VK_PIPELINE_STAGE_NONE && (bufferTraits.valid() || imageTraits.valid());
+    }
 };
-// Component
-struct DescriptorArray {
-    std::vector<Entity> resources;
-};
 
-class RenderManager {
-    SimpleShaderCreateInfo mShaderCreateInfo;
-    vk::AllocationCreateInfo mAllocInfo;
-    vk::RenderGraph mRenderGraph;
-    Entity mSwapchain;
-
-    VkFormat mDepthFormat = VK_FORMAT_UNDEFINED;
-
-    Entity addImageResource(std::string_view name, glm::uvec2 size, vk::ImageCreateInfo ci);
-    vk::Shader makeShader(std::string_view name);
-    vk::Pipeline makePipeline(SimpleRenderPass const &pass, VkQueueFlagBits queue);
+class RenderPassBuilder {
 public:
-    RenderManager() = default;
-    RenderManager(vk::AllocationCreateInfo allocInfo, SimpleShaderCreateInfo shaderInfo, RestrictedEntity<vk::Swapchain> swapchain, VkPhysicalDevice device);
-    ~RenderManager();
+    void addExternalResource(std::string_view name, RestrictedAnyEntity<vk::Image, vk::Buffer> eResource);
+    void addImageResource(std::string_view name, vk::ImageCreateInfo::ImageInfo info);
+    void addBufferResource(std::string_view name, uint32_t size);
 
-    Entity addColorResource(std::string_view name, glm::uvec2 size = {0, 0});
-    Entity addDepthStencilResource(std::string_view name, glm::uvec2 size = {0, 0});
-    Entity addBufferResource(std::string_view name, uint32_t size, void const *data = nullptr, VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    void addResource(RestrictedAnyEntity<vk::Image, vk::Buffer, DescriptorArray> eResource);
-
-    void addPipeline(std::string_view name, SimplePipelineCreateInfo ci);
-    void addShader(std::string_view name);
-    
-    void addPass(vk::RenderPass const &pass);
-    void addPass(std::string_view name);
-
-    void attachPipeline(std::string_view passName, std::string_view pipelineName);
-    void attachResource(std::string_view passName, std::string_view resourceName);
+    void attachResourceRead(std::string_view resourceName, ResourceTraits traits);
+    void attachResourceWrite(std::string_view resourceName, ResourceTraits traits);
 };
+
+class IRenderPassStorage {
+public:
+    virtual ~IRenderPassStorage() = default;
+    virtual void setup(RenderPassBuilder &builder) = 0;
+    virtual void postCompile(RenderGraphResult const &res) = 0;
+    virtual void render(VkCommandBuffer cb) = 0;
+};
+template<typename T>
+class RenderPassStorage : IRenderPassStorage {
+private:
+    T mData;
+    std::function<RenderPassSetupCallback_t<T>>       mSetupCallback;
+    std::function<RenderPassPostCompileCallback_t<T>> mPostCompileCallback;
+    std::function<RenderPassRenderCallback_t<T>>      mRenderCallback;
+public:
+    RenderPassStorage() = default;
+    RenderPassStorage(std::function<RenderPassSetupCallback_t<T>> setupCallback,
+                      std::function<RenderPassPostCompileCallback_t<T>> postCompileCallback,
+                      std::function<RenderPassRenderCallback_t<T>> renderCallback);
+
+    void setup(RenderPassBuilder &builder) override {
+        mSetupCallback(mData, builder);
+    }
+    void postCompile(RenderGraphResult const &res) override {
+        mPostCompileCallback(mData, res);
+    }
+    void render(VkCommandBuffer cb) override {
+        mRenderCallback(mData, cb);
+    }
+};
+
+struct Barrier {
+    struct Scope {
+        VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkBufferUsageFlags2 bufferUsage = 0;
+        VkImageUsageFlags imageUsage = 0;
+
+        uint32_t queueIndex = VK_QUEUE_FAMILY_IGNORED;
+        VkAccessFlags2 access = VK_ACCESS_2_NONE;
+        VkPipelineStageFlags2 stages = VK_PIPELINE_STAGE_2_NONE;
+    };
+
+    Entity resource;
+    Scope src;
+    Scope dst;
+    
+    VkImageSubresourceRange subresourceRange;
+    VkDeviceSize offset;
+    VkDeviceSize size;
+
+    inline VkImageMemoryBarrier2 getImageBarrier(RestrictedEntity<vk::Image> eResource) const {
+        auto const &image = eResource.get<vk::Image>();
+        return {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = src.stages,
+            .srcAccessMask = src.access,
+            .dstStageMask = dst.stages,
+            .dstAccessMask = dst.access,
+            .oldLayout = src.layout,
+            .newLayout = dst.layout,
+            .srcQueueFamilyIndex = src.queueIndex,
+            .dstQueueFamilyIndex = dst.queueIndex,
+            .image = image.image,
+            .subresourceRange = subresourceRange
+        };
+    }
+    inline VkBufferMemoryBarrier2 getBufferBarrier(RestrictedEntity<vk::Buffer> eResource) const {
+        auto const &buffer = eResource.get<vk::Buffer>();
+        return {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+            .srcStageMask = src.stages,
+            .srcAccessMask = src.access,
+            .dstStageMask = dst.stages,
+            .dstAccessMask = dst.access,
+            .srcQueueFamilyIndex = src.queueIndex,
+            .dstQueueFamilyIndex = dst.queueIndex,
+            .buffer = buffer.buffer,
+            .offset = offset,
+            .size = size
+        };
+    }
+};
+struct RenderPass {
+    std::string name;
+    std::vector<std::string> reads;
+    std::vector<std::string> writes;
+    std::vector<Barrier> barriers;
+    VkQueueFlagBits queue = VK_QUEUE_GRAPHICS_BIT;
+
+    std::unique_ptr<IRenderPassStorage> storage;
+
+    inline void render(VkCommandBuffer cb) const {
+        assert(storage);
+        storage->render(cb);
+    }
+};
+
+class RenderGraphBuilder {
+private:
+    struct Pass {
+        std::string name;
+        VkQueueFlagBits queue;
+        std::unique_ptr<IRenderPassStorage> storage;
+    };
+    std::unordered_map<std::string, Pass> mPasses;
+public:
+    RenderGraphBuilder() = default;
+    RenderGraphBuilder(RenderGraphBuilder const &) = delete;
+    RenderGraphBuilder &operator=(RenderGraphBuilder const &) = delete;
+    RenderGraphBuilder(RenderGraphBuilder &&) = default;
+    RenderGraphBuilder &operator=(RenderGraphBuilder &&) = default;
+    ~RenderGraphBuilder() = default;
+
+    template<typename Data_t>
+    void addPass(std::string_view name, VkQueueFlagBits queue,
+        std::function<RenderPassSetupCallback_t<Data_t>> setup, 
+        std::function<RenderPassPostCompileCallback_t<Data_t>> post, 
+        std::function<RenderPassRenderCallback_t<Data_t>> render);
+};
+
+struct GraphvizSettings {
+    bool implicitDependencies = true; ///< If set to true, dashed arrows will point to implicit pass dependencies (read before next write).
+    bool showHistory = true; ///< If set to true, dotted arrows will point from the last pass that wrote to the resource to the pass that reads the history.
+    std::vector<std::string> graphAttributes = {"beautify=true", "nodesep=0.5", "ranksep=0.5", "rankdir=TB"};
+    std::vector<std::string> nodeAttributes = {};
+    std::vector<std::string> edgeAttributes = {"stype=solid",  "constraint=true",  "arrowhead=normal"};
+    // std::vector<std::string> explicitEdgeAttributes = {"stype=solid",  "constraint=true",  "arrowhead=normal", "weight=2"};
+    // std::vector<std::string> implicitEdgeAttributes = {"style=dotted", "constraint=false", "arrowhead=empty",  "weight=1"};
+    // std::vector<std::string> historyEdgeAttributes  = {"stype=dotted", "constraint=false", "arrowhead=empty",  "weight=1"};
+};
+
+class RenderGraphResult {
+private:
+    struct RenderGraphResultImpl *mImpl = nullptr;
+public:
+    RenderGraphResult(RenderGraphResultImpl *data);
+    ~RenderGraphResult();
+
+    // Just in case. Who knows... hehe...
+    void setResource(std::string_view name, Entity eResource);
+    Entity getResource(std::string_view name) const;
+
+    // 0 - invalid
+    uint findPass(std::string_view name) const;
+    RenderPass const &getPass(uint id) const;
+
+    /// @brief Get the execution order of the passes
+    /// Contains pass id's
+    std::vector<uint> const &getPassStack() const;
+
+    /// @brief Generate a DOT graph.
+    /// @param indent If indent is nonnegative, then elements will be pretty-printed with that indent level. 
+    /// An indent level of 0 will only insert newlines. -1 (the default) selects the most compact representation.
+    std::string dumpGraphviz(int indent = -1, GraphvizSettings settings = {}) const;
+};
+
+RenderGraphResult buildRenderGraph(RenderGraphBuilder &builder);
+
+
+
+
+template<typename Data_t>
+inline void RenderGraphBuilder::addPass(std::string_view name, VkQueueFlagBits queue,
+  std::function<RenderPassSetupCallback_t<Data_t>> setup, 
+  std::function<RenderPassPostCompileCallback_t<Data_t>> post, 
+  std::function<RenderPassRenderCallback_t<Data_t>> render) {
+    if(mPasses.contains(std::string(name))) {
+        LOG_ERROR("Pass \"{}\" already exists!", name);
+        return;
+    }
+    
+    mPasses[std::string(name)] = Pass{
+        .name = std::string(name),
+        .queue = queue,
+        .storage = std::unique_ptr<IRenderPassStorage>(new RenderPassStorage<Data_t>(setup, post, render))
+    };
+}

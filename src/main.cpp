@@ -16,6 +16,39 @@ constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
 
 ////////////////////////////////////////////////////////////////
 
+/* 
+struct ShaderCompilerCreateInfo {
+    VkDevice device = VK_NULL_HANDLE;
+
+    fs::IFilesystem *fs = nullptr;
+
+    std::string srcPrefix = "shaders";
+    std::string binPrefix = "shaders-bin";
+    std::vector<std::string> includeDirs;
+    std::vector<std::string> systemIncludeDirs;
+    std::vector<std::pair<std::string, std::string>> definitions;
+
+    uint32_t targetVersion = VK_API_VERSION_1_3;
+    vk::SpirvVersion spirvVersion = vk::SpirvVersion::SpirvVersion_1_6;
+};
+*/
+
+struct MatrixData {
+    struct CameraData {
+        glm::mat4 projMat;
+        glm::mat4 viewMat;
+    } camera;
+    struct ModelData {
+        glm::mat4 modelMat;
+        glm::mat4 normMat;
+    } model;
+};
+
+struct UniformBuffer {
+    VulkanMaterial uMaterial;
+    MatrixData uMatrixData;
+};
+
 template<typename T>
 static T hash_combine(T lhs, T rhs) {
     lhs ^= rhs + T(0x9e3779b9) + (lhs << T(6)) + (lhs >> T(2));
@@ -166,17 +199,6 @@ static VkFence createFence(VkDevice dev) {
     CHECK_VK_RES(vkCreateFence(dev, &fenceCI, nullptr, &fence));
     return fence;
 }
-static void updateUniformBufferDescriptors(vk::RingBuffer const &buffer, vk::Pipeline const &pipeline, uint32_t set = 0, uint32_t desc = 0) {
-    vk::writeDescriptors(pipeline, {vk::DescriptorWrite{
-        .dstSet = set,
-        .dstBinding = desc,
-        .bufferInfo = {VkDescriptorBufferInfo{
-            .buffer = buffer.getBuffer().buffer,
-            .offset = 0,
-            .range  = sizeof(UniformBuffer),
-        }}
-    }});
-}
 static void assetGrid(std::vector<Entity> const &props, glm::uvec3 dimensions, glm::vec3 offset, float distance) {
     static std::random_device dev;
     static std::mt19937 rng(dev());
@@ -197,6 +219,25 @@ static void assetGrid(std::vector<Entity> const &props, glm::uvec3 dimensions, g
             position(distX(rng), distY(rng), distZ(rng))
         ));
     }
+}
+static VkFormat getDepthFormat(VkPhysicalDevice dev) {
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    std::vector<VkFormat> depthFormatList{ VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM };
+    for(VkFormat &format : depthFormatList) {
+        VkFormatProperties2 formatProperties{ .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2 };
+        vkGetPhysicalDeviceFormatProperties2(dev, format, &formatProperties);
+        if(formatProperties.formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+            format = format;
+            break;
+        }
+    }
+    if(format == VK_FORMAT_UNDEFINED)
+    {
+        LOG_ERROR("Failed to pick depth image format!");
+        format = depthFormatList.at(0);
+    }
+
+    return format;
 }
 
 ////////////////////////////////////////////////////////////////
@@ -229,11 +270,11 @@ int app(int argc, char **argv) {
         return -1;
     }
 
-    Window &window = makeWindow(sReg, "levulkan").get<Window>();
+    DirectEntity<Window> window = makeWindow(sReg, "levulkan");
 
     vk::InitInfo initInfo{
         .appName = "levulkan",
-        .window = window.handle,
+        .window = window->handle,
         .version = VK_API_VERSION_1_4,
         .queues = {VK_QUEUE_GRAPHICS_BIT, VK_QUEUE_COMPUTE_BIT, VK_QUEUE_TRANSFER_BIT},
         .deviceFeatures = {
@@ -288,17 +329,16 @@ int app(int argc, char **argv) {
     VkSharingMode const SHARING_MODE = initRes.queueFamilies.uniqueFamilies.size() == 1 ? VK_SHARING_MODE_EXCLUSIVE : VK_SHARING_MODE_CONCURRENT;
     LOG_TRACE("SHARING_MODE={}", string_VkSharingMode(SHARING_MODE));
 
-    auto eSwapchain = sReg.create(vk::makeSwapchain({
+    DirectEntity<vk::Swapchain> swapchain = sReg.create(vk::makeSwapchain({
         .alloc = {
             .device = device,
             .physicalDevice = initRes.physicalDevice,
             .surface = initRes.surface,
         },
-        .size = {window.size.x, window.size.y},
+        .size = {window->size.x, window->size.y},
         .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
         .registry = &sReg
     }));
-    vk::Swapchain &swapchain = eSwapchain.get<vk::Swapchain>();
 
     VkCommandPool commandPool = createCommandPool(initRes.queueFamilies.indices.at(VK_QUEUE_GRAPHICS_BIT), device);
     VkQueue graphicsQueue = initRes.queueFamilies.getQueue(VK_QUEUE_GRAPHICS_BIT);
@@ -313,7 +353,7 @@ int app(int argc, char **argv) {
 
     { // Scene
         const auto prototypeTextures = Material::Textures{
-            .albedo = loadTexture("assets/textures/prototype/texture_03.png")
+            .albedo = loadTexture("assets/textures/prototype/texture_03.png", {}, false)
         };
         const auto suzanne = loadModel("assets/models/suzanne.glb", prototypeTextures);
         const auto cube    = loadModel("assets/models/cube.glb",    prototypeTextures);
@@ -333,112 +373,40 @@ int app(int argc, char **argv) {
     
     ////////////////////////////////////////////////////////////////
 
-    // for(auto e : sReg.view<Model>())
-    //     printModelData(e);
-
-    ResourceAllocator alloc(ALLOCATION_INFO, commandPool, graphicsQueue);
-
-    alloc.begin();
-    for(auto e : sReg.view<Texture2D>())
-        alloc.processImage(e);
-    for(auto e : sReg.view<Model>())
-        alloc.processModel(e);
-    alloc.end();
-
-    ////////////////////////////////////////////////////////////////
-
-    std::vector<VkDescriptorImageInfo> imageInfos;
-    for(auto eImage : alloc.getProcessedImages())
-    {
-        auto &image = eImage.get<vk::Image>();
-        imageInfos.emplace_back(VkDescriptorImageInfo{
-            .sampler = image.sampler,
-            .imageView = image.view,
-            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-        });
+    ResourceAllocator allocator(ALLOCATION_INFO, commandPool, graphicsQueue);
+    allocator.begin();
+    for(auto eTexture : sReg.view<Texture2D>(exclude<vk::Image>{})) {
+        allocator.processImage(eTexture);
     }
+    for(auto eTexture : sReg.view<Model>(exclude<VulkanModel>{})) {
+        allocator.processModel(eTexture);
+    }
+    allocator.end();
 
-    VkPhysicalDeviceProperties properties;
-    vkGetPhysicalDeviceProperties(initRes.physicalDevice, &properties);
+    auto images = allocator.getProcessedImages();
 
-    // TODO: Make a uniform buffer class that uses vk::RingBuffer and abstracts stuff a little
-    vk::RingBuffer uniformBuffer(vk::BufferCreateInfo{
+    DescriptorManager descManager;
+
+    vk::RingBuffer uniformBuffer(sReg, {
         .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
         .allocInfo = ALLOCATION_INFO,
         .size = static_cast<uint32_t>(64*1e6), // 64MB
         .map = true
     });
 
-    /////////////////////////////////////////////////////////
+    VkPhysicalDeviceProperties properties;
+    vkGetPhysicalDeviceProperties(initRes.physicalDevice, &properties);
 
-    vk::ImageCreateInfo DEPTH_ATTACHMENT_CREATE_INFO{
-        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        .allocInfo = ALLOCATION_INFO,
-        .imageType = VK_IMAGE_TYPE_2D,
-        .format = VK_FORMAT_D32_SFLOAT,
-        .dimensions = {swapchain.createInfo.imageExtent.width, swapchain.createInfo.imageExtent.height},
-        .view = {
-            .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
-            .viewType = VK_IMAGE_VIEW_TYPE_2D
-        },
-    };
+    ////////////////////////////////////////////////////////////////
 
-    vk::ImageCreateInfo COLOR_ATTACHMENT_CREATE_INFO{
-        .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        .allocInfo = ALLOCATION_INFO,
-        .imageType = VK_IMAGE_TYPE_2D,
-        .format = VK_FORMAT_R8G8B8A8_UNORM,
-        .dimensions = {swapchain.createInfo.imageExtent.width, swapchain.createInfo.imageExtent.height},
-        .view = {
-            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-            .viewType = VK_IMAGE_VIEW_TYPE_2D
-        },
-    };
-    vk::ResourceTraits constexpr COLOR_ATTACHMENT_TRAITS{
-        .imageTraits = {
-            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-            .layout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-        },
-        .access = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-        .stages = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT
-    };
-    vk::ResourceTraits constexpr DEPTH_STENCIL_ATTACHMENT_TRAITS{
-        .imageTraits = {
-            .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-            .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
-            .layout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-        },
-        .access = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-        .stages = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT
-    };
-    vk::ResourceTraits constexpr SHADER_SAMPLED_TRAITS{
-        .imageTraits = {
-            .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
-            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-            .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        },
-        .access = VK_ACCESS_2_SHADER_READ_BIT,
-        .stages = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT
-    };
-    vk::ResourceTraits constexpr TRANSFER_SRC_TRAITS{
-        .imageTraits = {
-            .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-            .layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        },
-        .access = VK_ACCESS_2_TRANSFER_READ_BIT,
-        .stages = VK_PIPELINE_STAGE_2_TRANSFER_BIT
-    };
-    vk::ResourceTraits constexpr TRANSFER_DST_TRAITS{
-        .imageTraits = {
-            .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-            .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        },
-        .access = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-        .stages = VK_PIPELINE_STAGE_2_TRANSFER_BIT
-    };
+    uint frameIndex = 0;
+    uint imageIndex = 0;
+    float deltatime = 1e-6;
+
+    auto eCamera = Controller::createCamera(sReg, {0, 2, 4}, {0, 0, 0});
+    Controller::Camera &camera = eCamera.get<Controller::Camera>();
+
+
     VkPipelineColorBlendAttachmentState constexpr ALPHA_BLENDING{
         .blendEnable = true,
         .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
@@ -464,71 +432,163 @@ int app(int argc, char **argv) {
         .colorWriteMask = 0xFF,
     };
 
-    ///////////////////////////////////////////////////
+    VkFormat const DEPTH_ATTACHMENT_FORMAT = getDepthFormat(initRes.physicalDevice);
 
-    bool uniformBufferRealloc = false;
-    bool resizedAttachments = false;
-    bool updateDescriptors = true;
-    uint frameIndex = 0;
-    uint imageIndex = 0;
-    float deltatime = 1e-6;
+    ResourceTraits constexpr COLOR_ATTACHMENT_TRAITS{
+        .imageTraits = {
+            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+            .layout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+        },
+        .access = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+        .stages = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT
+    };
+    ResourceTraits constexpr DEPTH_STENCIL_ATTACHMENT_TRAITS{
+        .imageTraits = {
+            .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+            .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
+            .layout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+        },
+        .access = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        .stages = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT
+    };
+    ResourceTraits constexpr SHADER_READ_TRAITS{
+        .imageTraits = {
+            .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+            .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        },
+        .access = VK_ACCESS_2_SHADER_READ_BIT,
+        .stages = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT
+    };
+    ResourceTraits constexpr TRANSFER_SRC_TRAITS{
+        .imageTraits = {
+            .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+            .layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        },
+        .access = VK_ACCESS_2_TRANSFER_READ_BIT,
+        .stages = VK_PIPELINE_STAGE_2_TRANSFER_BIT
+    };
+    ResourceTraits constexpr TRANSFER_DST_TRAITS{
+        .imageTraits = {
+            .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+            .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        },
+        .access = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+        .stages = VK_PIPELINE_STAGE_2_TRANSFER_BIT
+    };
 
-    auto eCamera = Controller::createCamera(sReg, {0, 2, 4}, {0, 0, 0});
-    Controller::Camera &camera = eCamera.get<Controller::Camera>();
+    struct gbuffer_data {
+        DirectEntity<vk::Pipeline> pipeline;
+        DirectEntity<vk::Shader> shader;
 
-    vk::RenderGraph renderGraph({
-        .queueFamilies = initRes.queueFamilies,
-    });
+        DirectEntity<vk::Image> albedo;
+        DirectEntity<vk::Image> position;
+        DirectEntity<vk::Image> normal;
+        DirectEntity<vk::Image> pbr;
+        DirectEntity<vk::Image> depth;
+    };
+    RenderGraphBuilder builder;
+    builder.addPass<gbuffer_data>("gbuffer", VK_QUEUE_GRAPHICS_BIT, [&](RenderPassBuilder &builder){
+        auto extent = swapchain.get<vk::Swapchain>().createInfo.imageExtent;
+        builder.addImageResource("gbuffer_albedo", {
+            .format = VK_FORMAT_R8G8B8A8_UNORM,
+            .dimensions = {extent.width, extent.height},
+        });
+        builder.addImageResource("gbuffer_position", {
+            .format = VK_FORMAT_R8G8B8A8_UNORM,
+            .dimensions = {extent.width, extent.height},
+        });
+        builder.addImageResource("gbuffer_normal", {
+            .format = VK_FORMAT_R8G8B8A8_UNORM,
+            .dimensions = {extent.width, extent.height},
+        });
+        builder.addImageResource("gbuffer_pbr", {
+            .format = VK_FORMAT_R8G8B8A8_UNORM,
+            .dimensions = {extent.width, extent.height},
+        });
+        builder.addImageResource("gbuffer_depth", {
+            .format = DEPTH_ATTACHMENT_FORMAT,
+            .dimensions = {extent.width, extent.height},
+        });
 
-    //////////////////////////////////////////////
-    
-    COLOR_ATTACHMENT_CREATE_INFO.name = "gbuffer_albedo";
-    renderGraph.setResource("gbuffer_albedo", sReg.create(
-        vk::makeImage(COLOR_ATTACHMENT_CREATE_INFO),
-        ResizeToSwapchain{}
-    ));
-    COLOR_ATTACHMENT_CREATE_INFO.name = "gbuffer_position";
-    renderGraph.setResource("gbuffer_position", sReg.create(
-        vk::makeImage(COLOR_ATTACHMENT_CREATE_INFO),
-        ResizeToSwapchain{}
-    ));
-    COLOR_ATTACHMENT_CREATE_INFO.name = "gbuffer_normal";
-    COLOR_ATTACHMENT_CREATE_INFO.format = VK_FORMAT_R32G32B32A32_SFLOAT;
-    renderGraph.setResource("gbuffer_normal", sReg.create(
-        vk::makeImage(COLOR_ATTACHMENT_CREATE_INFO),
-        ResizeToSwapchain{}
-    ));
-    COLOR_ATTACHMENT_CREATE_INFO.name = "gbuffer_pbr";
-    renderGraph.setResource("gbuffer_pbr", sReg.create(
-        vk::makeImage(COLOR_ATTACHMENT_CREATE_INFO),
-        ResizeToSwapchain{}
-    ));
-    DEPTH_ATTACHMENT_CREATE_INFO.name = "gbuffer_depth";
-    renderGraph.setResource("gbuffer_depth", sReg.create(
-        vk::makeImage(DEPTH_ATTACHMENT_CREATE_INFO),
-        ResizeToSwapchain{}
-    ));
-
-    COLOR_ATTACHMENT_CREATE_INFO.name = "main_color";
-    COLOR_ATTACHMENT_CREATE_INFO.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    renderGraph.setResource("main_color", sReg.create(
-        vk::makeImage(COLOR_ATTACHMENT_CREATE_INFO),
-        ResizeToSwapchain{}
-    ));
-    
-    ///////////////////////////////////////////////////
-
-    auto gbuffer_pass = [&](vk::RenderPass const &pass, VkCommandBuffer cb) {
-        if(uniformBufferRealloc || updateDescriptors)
-            updateUniformBufferDescriptors(uniformBuffer, pass.pipeline);
-        if(updateDescriptors) {
-            vk::writeDescriptors(pass.pipeline, {vk::DescriptorWrite{
-                .dstSet = 1,
-                .dstBinding = 0,
-                .imageInfo = imageInfos,
-            }});
+        builder.attachResourceWrite("gbuffer_albedo",  COLOR_ATTACHMENT_TRAITS);
+        builder.attachResourceWrite("gbuffer_position",COLOR_ATTACHMENT_TRAITS);
+        builder.attachResourceWrite("gbuffer_normal",  COLOR_ATTACHMENT_TRAITS);
+        builder.attachResourceWrite("gbuffer_pbr",     COLOR_ATTACHMENT_TRAITS);
+        builder.attachResourceWrite("gbuffer_depth",   DEPTH_STENCIL_ATTACHMENT_TRAITS);
+    }, [&](gbuffer_data &data, RenderGraphResult const &res){
+        if(!data.shader.valid()) {
+            Entity e = sReg.create();
+            e.emplace<vk::Shader>(vk::makeShader({
+                .backend = vk::ShaderBackend::SLANG,
+                .src = "shaders/deferred/gbuffer.slang",
+                .bin = "shaders-bin/deferred/gbuffer.slang",
+                .device = device,
+                .includeDirs = {"shaders"},
+                .debugInfo = true
+            }));
+            vk::PipelineLayoutCreateInfo layoutCi{
+                .dynamicDescriptors = {{.set = 0, .binding = 0}},
+                .unsizedDescriptorSize = {
+                    {{.set = 1, .binding = 0}, images.size()}
+                },
+            };
+            vk::GraphicsPipelineCreateInfo pipelineCi{
+                .dynamicState = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR },
+                .input = {
+                    .bindings = {
+                        { 0, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX },
+                        { 1, sizeof(glm::vec2), VK_VERTEX_INPUT_RATE_VERTEX },
+                        { 2, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX },
+                        { 3, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX },
+                    },
+                    .attributes = {
+                        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0 }, // pos
+                        { 1, 1, VK_FORMAT_R32G32_SFLOAT,    0 }, // uv
+                        { 2, 2, VK_FORMAT_R32G32B32_SFLOAT, 0 }, // norm
+                        { 3, 3, VK_FORMAT_R32G32B32_SFLOAT, 0 }, // tan
+                    },
+                },
+                .attachments = {
+                    //        albedo                    position                  normal                         pbr
+                    .color = {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R8G8B8A8_UNORM},
+                    .depth = DEPTH_ATTACHMENT_FORMAT,
+                },
+                .depthStencil = {
+                    .depthTestEnable = true
+                },
+                .blending = {
+                    .attachments = {ALPHA_BLENDING},
+                },
+            };
+            e.emplace<vk::Pipeline>(vk::makePipeline(data.shader.get<vk::Shader>(), layoutCi, pipelineCi));
+            descManager.addResource(data.pipeline, {0, 0}, uniformBuffer.getBuffer());
+            descManager.addResource(data.pipeline, {1, 0}, {images}, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            data.pipeline = e;
+            data.shader = e;
         }
-        
+        assert(data.shader.valid() && data.shader.get<vk::Shader>().valid);
+        assert(data.pipeline.valid() && data.pipeline.get<vk::Pipeline>().valid);
+
+        data.albedo = res.getResource("gbuffer_albedo");
+        data.position = res.getResource("gbuffer_position");
+        data.normal = res.getResource("gbuffer_normal");
+        data.pbr = res.getResource("gbuffer_pbr");
+        data.depth = res.getResource("gbuffer_depth");
+    }, [&](gbuffer_data &data, VkCommandBuffer cb){
+        auto const &albedo = data.albedo.getc();
+        auto const &position = data.position.getc();
+        auto const &normal = data.normal.getc();
+        auto const &pbr = data.pbr.getc();
+        auto const &depth = data.depth.getc();
+
+        auto const &pipeline = data.pipeline.getc();
+
+        VkExtent2D extent = swapchain->createInfo.imageExtent;
+
         // Update matrix data
         UniformBuffer uniformBufferData;
         uniformBufferData.uMatrixData.camera.projMat = camera.projMat;
@@ -537,7 +597,7 @@ int app(int argc, char **argv) {
         std::array<VkRenderingAttachmentInfo, 4> colorAttachmentInfos = {
             VkRenderingAttachmentInfo{
                 .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                .imageView = renderGraph.findResource("gbuffer_albedo").get<vk::Image>().view,
+                .imageView = albedo.view,
                 .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                 .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
@@ -545,7 +605,7 @@ int app(int argc, char **argv) {
             },
             VkRenderingAttachmentInfo{
                 .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                .imageView = renderGraph.findResource("gbuffer_position").get<vk::Image>().view,
+                .imageView = position.view,
                 .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                 .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
@@ -553,7 +613,7 @@ int app(int argc, char **argv) {
             },
             VkRenderingAttachmentInfo{
                 .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                .imageView = renderGraph.findResource("gbuffer_normal").get<vk::Image>().view,
+                .imageView = normal.view,
                 .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                 .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
@@ -561,7 +621,7 @@ int app(int argc, char **argv) {
             },
             VkRenderingAttachmentInfo{
                 .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                .imageView = renderGraph.findResource("gbuffer_pbr").get<vk::Image>().view,
+                .imageView = pbr.view,
                 .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                 .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
@@ -570,7 +630,7 @@ int app(int argc, char **argv) {
         };
         VkRenderingAttachmentInfo depthAttachmentInfo{
             .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView = renderGraph.findResource("gbuffer_depth").get<vk::Image>().view,
+            .imageView = depth.view,
             .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
             .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
@@ -581,7 +641,7 @@ int app(int argc, char **argv) {
             .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
             .renderArea = {
                 .offset = { 0, 0 },
-                .extent = { window.size.x, window.size.y },
+                .extent = { window->size.x, window->size.y },
             },
             .layerCount = 1,
             .colorAttachmentCount = colorAttachmentInfos.size(),
@@ -594,17 +654,17 @@ int app(int argc, char **argv) {
         VkViewport vp{
             .x = 0,
             .y = 0,
-            .width = static_cast<float>(window.size.x),
-            .height = static_cast<float>(window.size.y),
+            .width = static_cast<float>(window->size.x),
+            .height = static_cast<float>(window->size.y),
             .minDepth = 0.0f,
             .maxDepth = 1.0f
         };
         vkCmdSetViewport(cb, 0, 1, &vp);
-        VkRect2D scissor{ .extent{ .width = window.size.x, .height = window.size.y } };
+        VkRect2D scissor{ .extent{ .width = window->size.x, .height = window->size.y } };
         vkCmdSetScissor(cb, 0, 1, &scissor);
 
-        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.pipeline);
-        vk::bindDescriptorSet(cb, pass.pipeline, 1);
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
+        vk::bindDescriptorSet(cb, pipeline, 1);
 
         for(auto eInstance : sReg.view<ModelInstance>())
         {
@@ -632,8 +692,8 @@ int app(int argc, char **argv) {
                 uniformBufferData.uMaterial = mesh.material;
 
                 uint32_t offset = uniformBuffer.request(sizeof(uniformBufferData), frameIndex, properties.limits.minUniformBufferOffsetAlignment);
-                vk::bindDescriptorSet(cb, pass.pipeline, 0, 0, {offset});
-                std::memcpy(static_cast<char *>(uniformBuffer.getBuffer().mapped) + offset, &uniformBufferData, sizeof(uniformBufferData));
+                vk::bindDescriptorSet(cb, pipeline, 0, 0, {offset});
+                std::memcpy(static_cast<char *>(uniformBuffer.getBuffer().get<vk::Buffer>().mapped) + offset, &uniformBufferData, sizeof(uniformBufferData));
 
                 VkDeviceSize vOffset = 0;
                 vkCmdBindVertexBuffers(cb, 0, 1, &mesh.buffers.pos .buffer, &vOffset);
@@ -647,133 +707,90 @@ int app(int argc, char **argv) {
         }
 
         vkCmdEndRendering(cb);
+    });
+    struct lighting_data {
+        DirectEntity<vk::Pipeline> pipeline;
+        DirectEntity<vk::Shader> shader;
+
+        DirectEntity<vk::Image> output;
     };
-    auto gbuffer_shader = vk::makeShader({
-        .backend = vk::ShaderBackend::SLANG,
-        .src = "shaders/deferred/gbuffer.slang",
-        .bin = "shaders-bin/deferred/gbuffer",
-        .device = device,
-        .includeDirs = {"shaders"}
-    });
-    assert(gbuffer_shader.valid);
-    vk::Pipeline gbuffer_pipeline = vk::makePipeline(gbuffer_shader, {
-            .dynamicDescriptors = {{.set = 0, .binding = 0}},
-            .unsizedDescriptorSize = {
-                {{.set = 1, .binding = 0}, imageInfos.size()}
-            },
-        }, vk::GraphicsPipelineCreateInfo{
-        .dynamicState = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR },
-        .input = {
-            .bindings = {
-                { 0, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX },
-                { 1, sizeof(glm::vec2), VK_VERTEX_INPUT_RATE_VERTEX },
-                { 2, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX },
-                { 3, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX },
-            },
-            .attributes = {
-                { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0 }, // pos
-                { 1, 1, VK_FORMAT_R32G32_SFLOAT,    0 }, // uv
-                { 2, 2, VK_FORMAT_R32G32B32_SFLOAT, 0 }, // norm
-                { 3, 3, VK_FORMAT_R32G32B32_SFLOAT, 0 }, // tan
-            },
-        },
-        .attachments = {
-            .color = std::vector<VkFormat>(4, COLOR_ATTACHMENT_CREATE_INFO.format),
-            .depth = DEPTH_ATTACHMENT_CREATE_INFO.format,
-        },
-        .depthStencil = {
-            .depthTestEnable = true,
-            .depthWriteEnable = true
-        },
-        .rasterization = {
-            .cullMode = VK_CULL_MODE_BACK_BIT,
-            .frontFace = VK_FRONT_FACE_CLOCKWISE
-        },
-        .blending = {
-            .attachments = std::vector<VkPipelineColorBlendAttachmentState>(4, ALPHA_BLENDING),
-        },
-    });
-    vk::allocateDescriptors(gbuffer_pipeline);
-    assert(gbuffer_pipeline.valid);
-    renderGraph.addPass({
-        .name = "G Buffer",
-        .writes = {
-            {"gbuffer_albedo",   COLOR_ATTACHMENT_TRAITS        }, 
-            {"gbuffer_position", COLOR_ATTACHMENT_TRAITS        }, 
-            {"gbuffer_normal",   COLOR_ATTACHMENT_TRAITS        }, 
-            {"gbuffer_pbr",      COLOR_ATTACHMENT_TRAITS        },
-            {"gbuffer_depth",    DEPTH_STENCIL_ATTACHMENT_TRAITS}
-        },
-        .queue = VK_QUEUE_GRAPHICS_BIT,
-        .callback = gbuffer_pass,
-        .shader = gbuffer_shader,
-        .pipeline = gbuffer_pipeline
-    });
-
-    ///////////////////////////////////////////////////
-
-    auto lighting_pass = [&](vk::RenderPass const &pass, VkCommandBuffer cb) {
-        if(uniformBufferRealloc || updateDescriptors)
-            updateUniformBufferDescriptors(uniformBuffer, pass.pipeline, 1, 0);
-        if(resizedAttachments || updateDescriptors) {
-            vk::writeDescriptors(pass.pipeline, {
-                vk::DescriptorWrite{
-                    .dstSet = 0,
-                    .dstBinding = 0,
-                    .imageInfo = {VkDescriptorImageInfo{
-                        .sampler     = renderGraph.findResource("gbuffer_albedo").get<vk::Image>().sampler,
-                        .imageView   = renderGraph.findResource("gbuffer_albedo").get<vk::Image>().view,
-                        .imageLayout = SHADER_SAMPLED_TRAITS.imageTraits.layout,
-                    }}
+    builder.addPass<lighting_data>("lighting", VK_QUEUE_GRAPHICS_BIT, [&](RenderPassBuilder &builder){
+        auto extent = swapchain->createInfo.imageExtent;
+        builder.addImageResource("lighting_out", {
+            .format = VK_FORMAT_R8G8B8A8_UNORM,
+            .dimensions = {extent.width, extent.height},
+        });
+        builder.attachResourceRead("gbuffer_albedo",   SHADER_READ_TRAITS);
+        builder.attachResourceRead("gbuffer_position", SHADER_READ_TRAITS);
+        builder.attachResourceRead("gbuffer_normal",   SHADER_READ_TRAITS);
+        builder.attachResourceRead("gbuffer_pbr",      SHADER_READ_TRAITS);
+    }, [&](lighting_data &data, RenderGraphResult const &res){
+        if(!data.shader.valid()) {
+            data.shader = sReg.create(vk::makeShader({
+                .backend = vk::ShaderBackend::SLANG,
+                .src = "shaders/deferred/lighting.slang",
+                .bin = "shaders-bin/deferred/lighting.slang",
+                .device = device,
+                .includeDirs = {"shaders"},
+                .debugInfo = true
+            }));
+            vk::PipelineLayoutCreateInfo layoutCi{
+                .dynamicDescriptors = {{.set = 1, .binding = 0}},
+            };
+            vk::GraphicsPipelineCreateInfo pipelineCi{
+                .dynamicState = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR },
+                .attachments = {
+                    .color = {VK_FORMAT_R16G16B16A16_SFLOAT},
+                    .depth = DEPTH_ATTACHMENT_FORMAT,
                 },
-                vk::DescriptorWrite{
-                    .dstSet = 0,
-                    .dstBinding = 1,
-                    .imageInfo = {VkDescriptorImageInfo{
-                        .sampler     = renderGraph.findResource("gbuffer_position").get<vk::Image>().sampler,
-                        .imageView   = renderGraph.findResource("gbuffer_position").get<vk::Image>().view,
-                        .imageLayout = SHADER_SAMPLED_TRAITS.imageTraits.layout,
-                    }}
+                .blending = {
+                    .attachments = {NO_BLENDING},
                 },
-                vk::DescriptorWrite{
-                    .dstSet = 0,
-                    .dstBinding = 2,
-                    .imageInfo = {VkDescriptorImageInfo{
-                        .sampler     = renderGraph.findResource("gbuffer_normal").get<vk::Image>().sampler,
-                        .imageView   = renderGraph.findResource("gbuffer_normal").get<vk::Image>().view,
-                        .imageLayout = SHADER_SAMPLED_TRAITS.imageTraits.layout,
-                    }}
-                },
-                vk::DescriptorWrite{
-                    .dstSet = 0,
-                    .dstBinding = 3,
-                    .imageInfo = {VkDescriptorImageInfo{
-                        .sampler     = renderGraph.findResource("gbuffer_pbr").get<vk::Image>().sampler,
-                        .imageView   = renderGraph.findResource("gbuffer_pbr").get<vk::Image>().view,
-                        .imageLayout = SHADER_SAMPLED_TRAITS.imageTraits.layout,
-                    }}
-                }
-            });
+            };
+            data.pipeline = sReg.create(vk::makePipeline(data.shader.get<vk::Shader>(), layoutCi, pipelineCi));
+            descManager.addResource(data.pipeline, {0, 0}, uniformBuffer.getBuffer());
+            descManager.addResource(data.pipeline, {1, 0}, {images}, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
+        assert(data.shader.valid() && data.shader.get<vk::Shader>().valid);
+        assert(data.pipeline.valid() && data.pipeline.get<vk::Pipeline>().valid);
 
-        VkRenderingAttachmentInfo attachment{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView = renderGraph.findResource("main_color").get<vk::Image>().view,
-            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-            .clearValue{.color{{ 0.2f, 0.0f, 0.0f, 1.0f }}}
+        descManager.addResource(data.pipeline, {0, 0}, res.getResource("gbuffer_albedo"), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        descManager.addResource(data.pipeline, {0, 1}, res.getResource("gbuffer_position"), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        descManager.addResource(data.pipeline, {0, 2}, res.getResource("gbuffer_normal"), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        descManager.addResource(data.pipeline, {0, 3}, res.getResource("gbuffer_pbr"), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        data.output = res.getResource("lighting_out");
+    }, [&](lighting_data &data, VkCommandBuffer cb){
+        auto const &out = data.output.getc();
+
+        auto const &pipeline = data.pipeline.getc();
+
+        VkExtent2D extent = swapchain->createInfo.imageExtent;
+
+        // Update matrix data
+        UniformBuffer uniformBufferData;
+        uniformBufferData.uMatrixData.camera.projMat = camera.projMat;
+        uniformBufferData.uMatrixData.camera.viewMat = camera.viewMat;
+
+        std::array<VkRenderingAttachmentInfo, 1> colorAttachmentInfos = {
+            VkRenderingAttachmentInfo{
+                .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                .imageView = out.view,
+                .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                .clearValue{.color{{ 0.0f, 0.0f, 0.0f, 0.0f }}}
+            },
         };
 
         VkRenderingInfo renderingInfo{
             .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
             .renderArea = {
                 .offset = { 0, 0 },
-                .extent = { window.size.x, window.size.y },
+                .extent = { window->size.x, window->size.y },
             },
             .layerCount = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &attachment,
+            .colorAttachmentCount = colorAttachmentInfos.size(),
+            .pColorAttachments = colorAttachmentInfos.data(),
             .pDepthAttachment = nullptr
         };
 
@@ -781,89 +798,54 @@ int app(int argc, char **argv) {
 
         VkViewport vp{
             .x = 0,
-            .y = static_cast<float>(window.size.y),
-            .width = static_cast<float>(window.size.x),
-            .height = -static_cast<float>(window.size.y),
+            .y = 0,
+            .width = static_cast<float>(window->size.x),
+            .height = static_cast<float>(window->size.y),
             .minDepth = 0.0f,
             .maxDepth = 1.0f
         };
         vkCmdSetViewport(cb, 0, 1, &vp);
-        VkRect2D scissor{ .extent = {window.size.x, window.size.y} };
+        VkRect2D scissor{ .extent{ .width = window->size.x, .height = window->size.y } };
         vkCmdSetScissor(cb, 0, 1, &scissor);
 
-        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline.pipeline);
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
+        vk::bindDescriptorSet(cb, pipeline, 1);
 
-        vk::bindDescriptorSet(cb, pass.pipeline, 0);
-        
-        MatrixData::CameraData uniformBufferData;
-        uniformBufferData.viewMat = camera.viewMat;
-        uniformBufferData.projMat = camera.projMat;
-        uint32_t offset = uniformBuffer.request(sizeof(uniformBufferData), frameIndex, properties.limits.minUniformBufferOffsetAlignment);
-        vk::bindDescriptorSet(cb, pass.pipeline, 1, 0, {offset});
-        std::memcpy(static_cast<char *>(uniformBuffer.getBuffer().mapped) + offset, &uniformBufferData, sizeof(uniformBufferData));
-        
         vkCmdDraw(cb, 3, 1, 0, 0);
 
         vkCmdEndRendering(cb);
+    });
+
+    struct swapchain_blit_data {
+        DirectEntity<vk::Image> lighting_out;
+        DirectEntity<vk::Image> swapchainImage;
     };
-    auto lighting_shader = vk::makeShader({
-        .backend = vk::ShaderBackend::SLANG,
-        .src = "shaders/deferred/lighting.slang",
-        .bin = "shaders-bin/deferred/lighting",
-        .device = device,
-        .includeDirs = {"shaders"}
-    });
-    assert(lighting_shader.valid);
-    vk::Pipeline lighting_pipeline = vk::makePipeline(lighting_shader, {
-        .dynamicDescriptors = {{1, 0}}
-    }, vk::GraphicsPipelineCreateInfo{
-        .dynamicState = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR },
-        .input = {},
-        .attachments = {
-            .color = std::vector<VkFormat>(1, COLOR_ATTACHMENT_CREATE_INFO.format),
-        },
-        .depthStencil = {},
-        .blending = {
-            .attachments = { NO_BLENDING }
-        },
-    });
-    vk::allocateDescriptors(lighting_pipeline);
-    assert(lighting_pipeline.valid);
+    builder.addPass<swapchain_blit_data>("swapchain_blit", VK_QUEUE_TRANSFER_BIT, [&](RenderPassBuilder &builder){
+        auto extent = swapchain->createInfo.imageExtent;
+        builder.addExternalResource("swapchain", swapchain->images[imageIndex]);
+        builder.attachResourceRead("lighting_out",  TRANSFER_SRC_TRAITS);
+        builder.attachResourceWrite("swapchain",  TRANSFER_DST_TRAITS);
+    }, [&](swapchain_blit_data &data, RenderGraphResult const &res){
+        data.swapchainImage = res.getResource("swapchain_blit_out");
+        data.lighting_out = res.getResource("lighting_out");
+    }, [&](swapchain_blit_data &data, VkCommandBuffer cb){
+        auto const &src = data.lighting_out.getc();
+        auto const &dst = data.swapchainImage.getc();
 
-    renderGraph.addPass({
-        .name = "Lighting",
-        .reads = {
-            {"gbuffer_albedo",   "G Buffer", SHADER_SAMPLED_TRAITS}, 
-            {"gbuffer_position", "G Buffer", SHADER_SAMPLED_TRAITS}, 
-            {"gbuffer_normal",   "G Buffer", SHADER_SAMPLED_TRAITS}, 
-            {"gbuffer_pbr",      "G Buffer", SHADER_SAMPLED_TRAITS}, 
-        },
-        .writes = {{"main_color", COLOR_ATTACHMENT_TRAITS}},
-        .queue = VK_QUEUE_GRAPHICS_BIT,
-        .callback = lighting_pass,
-        .shader = lighting_shader,
-        .pipeline = lighting_pipeline
-    });
+        VkExtent2D extent = swapchain->createInfo.imageExtent;
 
-
-    ///////////////////////////////////////////////////
-
-
-    auto swapchain_pass = [&](vk::RenderPass const &pass, VkCommandBuffer cb) {
-        auto const &main_color = renderGraph.findResource("main_color").get<vk::Image>();
-        auto const &swapchain = renderGraph.findResource("swapchain").get<vk::Image>();
         VkImageBlit2 region{
             .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
             .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-            .srcOffsets = {{0, 0, 0}, {static_cast<int32_t>(main_color.createInfo.dimensions.width), static_cast<int32_t>(main_color.createInfo.dimensions.height), 1}},
+            .srcOffsets = {{0, 0, 0}, {static_cast<int32_t>(src.createInfo.image.dimensions.width), static_cast<int32_t>(src.createInfo.image.dimensions.height), 1}},
             .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-            .dstOffsets = {{0, 0, 0}, {static_cast<int32_t>(swapchain.createInfo.dimensions.width), static_cast<int32_t>(swapchain.createInfo.dimensions.height), 1}},
+            .dstOffsets = {{0, 0, 0}, {static_cast<int32_t>(dst.createInfo.image.dimensions.width), static_cast<int32_t>(dst.createInfo.image.dimensions.height), 1}},
         };
         VkBlitImageInfo2 blit{
             .sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
-            .srcImage = main_color.image,
+            .srcImage = src.image,
             .srcImageLayout = TRANSFER_SRC_TRAITS.imageTraits.layout,
-            .dstImage = swapchain.image,
+            .dstImage = dst.image,
             .dstImageLayout = TRANSFER_DST_TRAITS.imageTraits.layout,
             .regionCount = 1,
             .pRegions = &region,
@@ -872,7 +854,7 @@ int app(int argc, char **argv) {
         vkCmdBlitImage2(cb, &blit);
 
         // Prepare for presentation
-        vk::insertImageMemoryBarrier(cb, renderGraph.findResource("swapchain").get<vk::Image>().image, 
+        vk::insertImageMemoryBarrier(cb, dst.image, 
             TRANSFER_DST_TRAITS.access,
             0,
             TRANSFER_DST_TRAITS.imageTraits.layout,
@@ -880,20 +862,10 @@ int app(int argc, char **argv) {
             TRANSFER_DST_TRAITS.stages,
             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
         );
-    };
-
-    renderGraph.addPass({
-        .name = "Swapchain blit",
-        .reads = {{"main_color", "Lighting", TRANSFER_SRC_TRAITS}},
-        .writes = {{"swapchain", TRANSFER_DST_TRAITS}},
-        .queue = VK_QUEUE_TRANSFER_BIT,
-        .callback = swapchain_pass
     });
 
-    ////////////////////////////////////////////////
-
-    assert(renderGraph.build());
-    std::ofstream("RenderGraph.dot", std::ios::trunc) << renderGraph.dumpGraphviz(4);
+    RenderGraphResult renderGraph = buildRenderGraph(builder);
+    std::ofstream("RenderGraph.dot", std::ios::trunc) << renderGraph.dumpGraphviz(2);
 
     ////////////////////////////////////////////////////////////////
 
@@ -944,7 +916,7 @@ int app(int argc, char **argv) {
         CHECK_VK_RES(vkCreateFence(device, &fenceCI, nullptr, &fences[i]));
     }
 
-    renderSemaphores.resize(swapchain.images.size());
+    renderSemaphores.resize(swapchain->images.size());
     for(auto &semaphore : renderSemaphores)
     {
         VkSemaphoreCreateInfo semaphoreCI{
@@ -963,37 +935,36 @@ int app(int argc, char **argv) {
     LOG_INFO("Starting rendering.");
 
     bool shouldResize = false;
-    while(!glfwWindowShouldClose(window.handle))
+    while(!glfwWindowShouldClose(window->handle))
     {
         auto start = std::chrono::high_resolution_clock::now();
         // LOG_TRACE(frameIndex);
         
         // Poll events
         glfwPollEvents();
-        auto prevSize = window.size;
-        glfwGetWindowSize(window.handle, reinterpret_cast<int *>(&window.size.x), reinterpret_cast<int *>(&window.size.y));
-        VkExtent2D windowExtent = { .width = window.size.x, .height = window.size.y };
+        auto prevSize = window->size;
+        glfwGetWindowSize(window->handle, reinterpret_cast<int *>(&window->size.x), reinterpret_cast<int *>(&window->size.y));
+        VkExtent2D windowExtent = { .width = window->size.x, .height = window->size.y };
 
-        shouldResize = shouldResize || prevSize != window.size;
+        shouldResize = shouldResize || prevSize != window->size;
         
         // Resize swapchain
         if(shouldResize) {
             LOG_WARN("Resizing the viewport to {}x{}", windowExtent.width, windowExtent.height);
             CHECK_VK_RES(vkDeviceWaitIdle(device));
 
-            vk::resizeSwapchain(swapchain, windowExtent);
+            vk::resizeSwapchain(swapchain.getc(), windowExtent);
  
             for(auto e : sReg.view<vk::Image, ResizeToSwapchain>())
             {
                 auto &image = e.get<vk::Image>();
                 vk::destroy(image);
-                image.createInfo.dimensions.width = windowExtent.width;
-                image.createInfo.dimensions.height = windowExtent.height;
+                image.createInfo.image.dimensions.width = windowExtent.width;
+                image.createInfo.image.dimensions.height = windowExtent.height;
                 image = vk::makeImage(image.createInfo);
             }
 
             shouldResize = false;
-            resizedAttachments = true;
         }
         
         auto &listener = eListener.get<io::EventListener>();
@@ -1005,39 +976,39 @@ int app(int argc, char **argv) {
             if(event.key == GLFW_KEY_R && event.action == GLFW_PRESS)
             {
                 CHECK_VK_RES(vkDeviceWaitIdle(device));
-                for(auto &pass : renderGraph.getPassesRange())
+                for(auto e : sReg.view<vk::Pipeline, vk::Shader>())
                 {
-                    if(!pass.shader.valid || !pass.pipeline.valid)
-                        continue;
+                    auto &pipeline = e.get<vk::Pipeline>();
+                    auto &shader = e.get<vk::Shader>();
 
-                    auto newShader = vk::makeShader(pass.shader.createInfo);
+                    auto newShader = vk::makeShader(shader.createInfo);
                     if(!newShader.valid)
                         continue;
 
-                    vk::destroy(pass.shader);
-                    pass.shader = newShader;
-                    vk::destroy(pass.pipeline);
-                    switch(pass.pipeline.type)
+                    vk::destroy(shader);
+                    shader = newShader;
+                    vk::destroy(pipeline);
+                    switch(pipeline.type)
                     {
                     case vk::Pipeline::Type::Graphics:
-                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.layout, pass.pipeline.createInfo.graphics);
+                    pipeline = vk::makePipeline(shader, pipeline.createInfo.layout, pipeline.createInfo.graphics);
                     break;
 
                     case vk::Pipeline::Type::Compute:
-                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.layout, pass.pipeline.createInfo.compute);
+                    pipeline = vk::makePipeline(shader, pipeline.createInfo.layout, pipeline.createInfo.compute);
                     break;
 
                     case vk::Pipeline::Type::RayTracing:
-                    pass.pipeline = vk::makePipeline(pass.shader, pass.pipeline.createInfo.layout, pass.pipeline.createInfo.raytracing);
+                    pipeline = vk::makePipeline(shader, pipeline.createInfo.layout, pipeline.createInfo.raytracing);
                     break;
 
                     default:
                     assert(false && "unknown pipeline");
                     }
-                    vk::allocateDescriptors(pass.pipeline);
-                }
+                    vk::allocateDescriptors(pipeline);
 
-                updateDescriptors = true;
+                    e.emplace<ResourceDirty>();
+                }
             }
         }
 
@@ -1050,10 +1021,10 @@ int app(int argc, char **argv) {
         CHECK_VK_RES(vkResetFences(device, 1, &fences[frameIndex]));
         
         uniformBuffer.free(frameIndex);
-        uniformBufferRealloc = uniformBufferRealloc || uniformBuffer.realloc();
+        uniformBuffer.realloc();
 
         // Acquire next image
-        auto imageAcquireRes = vkAcquireNextImageKHR(device, swapchain.swapchain, UINT64_MAX, presentSemaphores[frameIndex], nullptr, &imageIndex);
+        auto imageAcquireRes = vkAcquireNextImageKHR(device, swapchain->swapchain, UINT64_MAX, presentSemaphores[frameIndex], nullptr, &imageIndex);
         if(imageAcquireRes == VK_ERROR_OUT_OF_DATE_KHR)
         {
             LOG_TRACE("VK_ERROR_OUT_OF_DATE_KHR");
@@ -1072,43 +1043,35 @@ int app(int argc, char **argv) {
         } 
 
         //                                   This is so dumb
-        renderGraph.setResource("swapchain", swapchain.images[imageIndex]);
+        renderGraph.setResource("swapchain", swapchain->images[imageIndex]);
 
         // Record command buffer
         // FUUUUCK
         for(auto passIndex : renderGraph.getPassStack())
         {
-            auto const &pass = renderGraph.getPasses().at(passIndex);
-            auto const &barriers = renderGraph.getBarriers().at(passIndex);
+            auto const &pass = renderGraph.getPass(passIndex);
 
             struct Barriers {
                 std::vector<VkImageMemoryBarrier2> imageBarriers;
                 std::vector<VkBufferMemoryBarrier2> bufferBarriers;
-                inline void emplace(vk::Barrier const &barrier, Entity resource) {
-                    if(resource.has<vk::Image>())
-                        imageBarriers.emplace_back(barrier.getImageBarrier(resource));
-                    if(resource.has<vk::Buffer>())
-                        bufferBarriers.emplace_back(barrier.getBufferBarrier(resource));
+                inline void emplace(Barrier const &barrier) {
+                    if(barrier.resource.has<vk::Image>())
+                        imageBarriers.emplace_back(barrier.getImageBarrier(barrier.resource));
+                    if(barrier.resource.has<vk::Buffer>())
+                        bufferBarriers.emplace_back(barrier.getBufferBarrier(barrier.resource));
                 }
             };
             // For each queue for release/acquire operations
             SparseSet<Barriers> queueBarriers;
-            for(auto barrier : barriers)
+            for(auto barrier : pass.barriers)
             {
-                if(!renderGraph.getResources().contains(barrier.resourceIndex))
-                {
-                    LOG_ERROR("Resource for index {} is not set via RenderGraph::setResource!");
-                    continue;
-                }
-                auto resource = renderGraph.getResources().at(barrier.resourceIndex);
-
                 if(barrier.src.queueIndex == VK_QUEUE_FAMILY_IGNORED)
                     barrier.src.queueIndex = barrier.dst.queueIndex;
 
                 if(barrier.src.queueIndex != barrier.dst.queueIndex)
-                    queueBarriers[barrier.src.queueIndex].emplace(barrier, resource);
+                    queueBarriers[barrier.src.queueIndex].emplace(barrier);
                 
-                queueBarriers[barrier.dst.queueIndex].emplace(barrier, resource);
+                queueBarriers[barrier.dst.queueIndex].emplace(barrier);
             }
 
 
@@ -1141,7 +1104,7 @@ int app(int argc, char **argv) {
                 vkCmdPipelineBarrier2(commandBuffers.at(queue)[frameIndex], &dependencyInfo);
             }
 
-            pass.callback(pass, commandBuffers.at(queue)[frameIndex]);
+            pass.render(commandBuffers.at(queue)[frameIndex]);
         }
 
         // WHY?
@@ -1179,15 +1142,12 @@ int app(int argc, char **argv) {
             .waitSemaphoreCount = 1,
             .pWaitSemaphores = &renderSemaphores[imageIndex],
             .swapchainCount = 1,
-            .pSwapchains = &swapchain.swapchain,
+            .pSwapchains = &swapchain->swapchain,
             .pImageIndices = &imageIndex
         };
         CHECK_VK_RES(vkQueuePresentKHR(presentQueue, &presentInfo));
 
         deltatime = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - start).count() * 1e-9f;
-        uniformBufferRealloc = false;
-        resizedAttachments = false;
-        updateDescriptors = false;
         // LOG_INFO("dt {:.2f}ms fps {:.2f}", deltatime * 1e3, 1 / deltatime);
     }
 
@@ -1216,18 +1176,25 @@ int app(int argc, char **argv) {
             vk::destroy(mesh.buffers.idx);
         }
     }
-    for(auto e : sReg.view<vk::Image>())
+    for(auto e : sReg.view<vk::Image>()) {
         vk::destroy(e.get<vk::Image>());
-    for(auto e : sReg.view<vk::Buffer>())
-        vk::destroy(e.get<vk::Buffer>());
-    
-    for(auto &pass : renderGraph.getPassesRange())
-    {
-        vk::destroy(pass.pipeline);
-        vk::destroy(pass.shader);
+        e.destroy();
     }
-
-    vk::destroy(swapchain);
+    for(auto e : sReg.view<vk::Buffer>()) {
+        vk::destroy(e.get<vk::Buffer>());
+        e.destroy();
+    }
+    for(auto e : sReg.view<vk::Pipeline>()) {
+        vk::destroy(e.get<vk::Pipeline>());
+        e.destroy();
+    }
+    for(auto e : sReg.view<vk::Shader>()) {
+        vk::destroy(e.get<vk::Shader>());
+        e.destroy();
+    }
+    
+    vk::destroy(swapchain.getc());
+    swapchain.destroy();
 
     LOG_INFO("Exiting");
     return 0;

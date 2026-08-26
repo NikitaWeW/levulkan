@@ -11,7 +11,6 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 
 #pragma once
 #include "vulkan.h"
-#include "spdlog/fmt/fmt.h"
 #include <vector>
 
 namespace vk {
@@ -53,7 +52,6 @@ struct Buffer {
     bool owns = true;
 
     bool valid() const;
-    inline std::string name() const { return createInfo.name.empty() ? fmt::format("{:#x}", reinterpret_cast<uintptr_t>(this)) : createInfo.name; }
 };
 
 Buffer makeBuffer(BufferCreateInfo const &ci);
@@ -84,63 +82,66 @@ inline Buffer makeBuffer(VmaAllocator allocator, std::vector<T> const &vec, VkBu
 
 struct ImageCreateInfo {
     /// VK_IMAGE_USAGE_TRANSFER_XXX_BIT is added automatically if data is not nullptr.
-    /// VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER or VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE will create the sampler.
+    /// VK_IMAGE_USAGE_SAMPLED_BIT will create the sampler.
     VkImageUsageFlags usage = 0; 
     AllocationCreateInfo allocInfo;
-    VkImageType imageType = VK_IMAGE_TYPE_2D;
-
+    
     // Command buffer to record transfer commands to
     VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
     
-    VkFormat format = VK_FORMAT_UNDEFINED;
-    struct Dimensions {
-        uint32_t width = 1;
-        uint32_t height = 1;
-        uint32_t depth = 1;
-        uint32_t mipLevels = 1;
-        uint32_t arrayLayers = 1;
-        VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
-    } dimensions;
-    struct Sampler {
-        VkSamplerCreateFlags flags = 0;
-        VkFilter magFilter = VK_FILTER_NEAREST;
-        VkFilter minFilter = VK_FILTER_NEAREST;
-        VkSamplerMipmapMode mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-        VkSamplerAddressMode addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        VkSamplerAddressMode addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        VkSamplerAddressMode addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        float mipLodBias = 0;
-        bool anisotropyEnable = true;
-        float maxAnisotropy = 8;
-        bool compareEnable = false;
-        VkCompareOp compareOp = VK_COMPARE_OP_NEVER;
-        float minLod = 0;
-        VkBorderColor borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
-        struct {
-            float r = 0, g = 0, b = 0, a = 0;
-        } customBorderColor;
-        bool unnormalizedCoordinates = false;
-    } sampler;
-    struct View {
-        VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_NONE; ///< Leave at VK_IMAGE_ASPECT_NONE to skip view creation.
-        VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D;
-    } view;
+    struct ImageInfo {
+        VkImageType imageType = VK_IMAGE_TYPE_2D;
+        VkFormat format = VK_FORMAT_UNDEFINED;
+        struct Dimensions {
+            uint32_t width = 1;
+            uint32_t height = 1;
+            uint32_t depth = 1;
+            uint32_t mipLevels = 1;
+            uint32_t arrayLayers = 1;
+            VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
+        } dimensions;
+        struct Sampler {
+            VkSamplerCreateFlags flags = 0;
+            VkFilter magFilter = VK_FILTER_NEAREST;
+            VkFilter minFilter = VK_FILTER_NEAREST;
+            VkSamplerMipmapMode mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            VkSamplerAddressMode addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            VkSamplerAddressMode addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            VkSamplerAddressMode addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            float mipLodBias = 0;
+            bool anisotropyEnable = true;
+            float maxAnisotropy = 8;
+            bool compareEnable = false;
+            VkCompareOp compareOp = VK_COMPARE_OP_NEVER;
+            float minLod = 0;
+            VkBorderColor borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+            struct {
+                float r = 0, g = 0, b = 0, a = 0;
+            } customBorderColor;
+            bool unnormalizedCoordinates = false;
+        } sampler;
+        struct View {
+            VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_NONE; ///< Leave at VK_IMAGE_ASPECT_NONE to skip view creation.
+            VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D;
+        } view;
+    } image;
+
     void const *data = nullptr;
     std::string name = ""; ///< Debug name
 
     inline VkImageCreateInfo getImageCreateInfo() const {
         return {
             .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-            .imageType = imageType,
-            .format = format,
+            .imageType = image.imageType,
+            .format = image.format,
             .extent = {
-                .width = dimensions.width, 
-                .height = dimensions.height, 
-                .depth = dimensions.depth 
+                .width = image.dimensions.width, 
+                .height = image.dimensions.height, 
+                .depth = image.dimensions.depth 
             },
-            .mipLevels = dimensions.mipLevels,
-            .arrayLayers = dimensions.arrayLayers,
-            .samples = dimensions.samples,
+            .mipLevels = image.dimensions.mipLevels,
+            .arrayLayers = image.dimensions.arrayLayers,
+            .samples = image.dimensions.samples,
             .tiling = VK_IMAGE_TILING_OPTIMAL,
             .usage = usage,
             .sharingMode = allocInfo.sharingMode,
@@ -151,22 +152,22 @@ struct ImageCreateInfo {
     inline VkSamplerCreateInfo getSamplerCreateInfo() const {
         return {
             .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-            .flags = sampler.flags,
-            .magFilter = sampler.magFilter,
-            .minFilter = sampler.minFilter,
-            .mipmapMode = sampler.mipmapMode,
-            .addressModeU = sampler.addressModeU,
-            .addressModeV = sampler.addressModeV,
-            .addressModeW = sampler.addressModeW,
-            .mipLodBias = sampler.mipLodBias,
-            .anisotropyEnable = sampler.anisotropyEnable,
-            .maxAnisotropy = sampler.maxAnisotropy,
-            .compareEnable = sampler.compareEnable,
-            .compareOp = sampler.compareOp,
-            .minLod = sampler.minLod,
-            .maxLod = (float) dimensions.mipLevels,
-            .borderColor = sampler.borderColor,
-            .unnormalizedCoordinates = sampler.unnormalizedCoordinates,
+            .flags = image.sampler.flags,
+            .magFilter = image.sampler.magFilter,
+            .minFilter = image.sampler.minFilter,
+            .mipmapMode = image.sampler.mipmapMode,
+            .addressModeU = image.sampler.addressModeU,
+            .addressModeV = image.sampler.addressModeV,
+            .addressModeW = image.sampler.addressModeW,
+            .mipLodBias = image.sampler.mipLodBias,
+            .anisotropyEnable = image.sampler.anisotropyEnable,
+            .maxAnisotropy = image.sampler.maxAnisotropy,
+            .compareEnable = image.sampler.compareEnable,
+            .compareOp = image.sampler.compareOp,
+            .minLod = image.sampler.minLod,
+            .maxLod = (float) image.dimensions.mipLevels,
+            .borderColor = image.sampler.borderColor,
+            .unnormalizedCoordinates = image.sampler.unnormalizedCoordinates,
         };
     }
 };
@@ -188,8 +189,6 @@ struct Image {
 
     /// @brief A small helper function that checks if necessary members handles are not null
     bool valid() const; 
-
-    inline std::string name() const { return createInfo.name.empty() ? fmt::format("{:#x}", reinterpret_cast<uintptr_t>(this)) : createInfo.name; }
 };
 
 Image makeImage(ImageCreateInfo const &ci);

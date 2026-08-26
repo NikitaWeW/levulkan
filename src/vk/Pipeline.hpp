@@ -90,7 +90,7 @@ struct GraphicsPipelineCreateInfo {
     struct Blending {
         bool logicOpEnable = false;
         VkLogicOp logicOp;
-        std::vector<VkPipelineColorBlendAttachmentState> attachments;
+        std::vector<VkPipelineColorBlendAttachmentState> attachments; // If size is 1, all the attachments are filled with the first element
         struct {
             float r = 0, g = 0, b = 0, a = 0;
         } constant;
