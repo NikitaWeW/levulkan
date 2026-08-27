@@ -726,7 +726,8 @@ int app(int argc, char **argv) {
         builder.attachResourceRead("gbuffer_pbr",      SHADER_READ_TRAITS);
     }, [&](lighting_data &data, RenderGraphResult const &res){
         if(!data.shader.valid()) {
-            data.shader = sReg.create(vk::makeShader({
+            auto e = sReg.create();
+            e.emplace<vk::Shader>(vk::makeShader({
                 .backend = vk::ShaderBackend::SLANG,
                 .src = "shaders/deferred/lighting.slang",
                 .bin = "shaders-bin/deferred/lighting.slang",
@@ -747,7 +748,9 @@ int app(int argc, char **argv) {
                     .attachments = {NO_BLENDING},
                 },
             };
-            data.pipeline = sReg.create(vk::makePipeline(data.shader.get<vk::Shader>(), layoutCi, pipelineCi));
+            e.emplace<vk::Pipeline>(vk::makePipeline(data.shader.get<vk::Shader>(), layoutCi, pipelineCi));
+            data.shader = e;
+            data.pipeline = e;
             descManager.addResource(data.pipeline, {0, 0}, uniformBuffer.getBuffer());
             descManager.addResource(data.pipeline, {1, 0}, {images}, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
@@ -1022,6 +1025,11 @@ int app(int argc, char **argv) {
         
         uniformBuffer.free(frameIndex);
         uniformBuffer.realloc();
+
+        descManager.update(frameIndex);
+        for(auto e : sReg.view<ResourceDirty>()) {
+            e.remove<ResourceDirty>();
+        }
 
         // Acquire next image
         auto imageAcquireRes = vkAcquireNextImageKHR(device, swapchain->swapchain, UINT64_MAX, presentSemaphores[frameIndex], nullptr, &imageIndex);

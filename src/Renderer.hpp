@@ -100,23 +100,6 @@ public:
     void update(uint frame = 0);
 };
 
-struct RenderGraphPipelineCreateInfo {
-    vk::Pipeline::Type type = vk::Pipeline::Type::Invalid;
-    std::vector<VkDynamicState> dynamicState = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    VkPipelineCreateFlags flags = 0;
-
-    struct Graphics {
-        vk::GraphicsPipelineCreateInfo::Input            input;
-        vk::GraphicsPipelineCreateInfo::DepthStencil     depthStencil;
-        vk::GraphicsPipelineCreateInfo::Rasterization    rasterization;
-        vk::GraphicsPipelineCreateInfo::Multisample      multisample;
-        /// If size is 1, the blending attachment applies to all color attachments.
-        std::vector<VkPipelineColorBlendAttachmentState> blending; 
-    } graphics;
-
-    std::string shader;
-};
-
 class RenderPassBuilder;
 template<typename T>
 using RenderPassSetupCallback_t = void (RenderPassBuilder &);
@@ -154,9 +137,25 @@ struct ResourceTraits {
     }
 };
 
+class RenderGraphBuilder;
 class RenderPassBuilder {
+private:
+    std::unordered_map<std::string, Entity> mExternalResources;
+    std::unordered_map<std::string, vk::ImageCreateInfo::ImageInfo> mImageResources;
+    std::unordered_map<std::string, uint32_t> mBufferResources;
+
+    struct ResourceUsage {
+        std::string name;
+        ResourceTraits traits;
+    };
+    std::vector<ResourceUsage> mReads;
+    std::vector<ResourceUsage> mWrites;
+
+    friend RenderGraphResult buildRenderGraph(RenderGraphBuilder &&builder);
 public:
-    void addExternalResource(std::string_view name, RestrictedAnyEntity<vk::Image, vk::Buffer> eResource);
+    /// @brief Yup it adds an external resource.
+    /// @param keep Keeps the contents of the resource from a previous frame (whether to set the barrier layout to undefined). Image only
+    void addExternalResource(std::string_view name, RestrictedAnyEntity<vk::Image, vk::Buffer> eResource, bool keep = false);
     void addImageResource(std::string_view name, vk::ImageCreateInfo::ImageInfo info);
     void addBufferResource(std::string_view name, uint32_t size);
 
@@ -184,13 +183,13 @@ public:
                       std::function<RenderPassPostCompileCallback_t<T>> postCompileCallback,
                       std::function<RenderPassRenderCallback_t<T>> renderCallback);
 
-    void setup(RenderPassBuilder &builder) override {
+    inline void setup(RenderPassBuilder &builder) override {
         mSetupCallback(mData, builder);
     }
-    void postCompile(RenderGraphResult const &res) override {
+    inline void postCompile(RenderGraphResult const &res) override {
         mPostCompileCallback(mData, res);
     }
-    void render(VkCommandBuffer cb) override {
+    inline void render(VkCommandBuffer cb) override {
         mRenderCallback(mData, cb);
     }
 };
@@ -269,6 +268,7 @@ private:
         std::unique_ptr<IRenderPassStorage> storage;
     };
     std::unordered_map<std::string, Pass> mPasses;
+    friend RenderGraphResult buildRenderGraph(RenderGraphBuilder &&);
 public:
     RenderGraphBuilder() = default;
     RenderGraphBuilder(RenderGraphBuilder const &) = delete;
@@ -302,6 +302,8 @@ public:
     RenderGraphResult(RenderGraphResultImpl *data);
     ~RenderGraphResult();
 
+    bool success() const;
+
     // Just in case. Who knows... hehe...
     void setResource(std::string_view name, Entity eResource);
     Entity getResource(std::string_view name) const;
@@ -320,10 +322,9 @@ public:
     std::string dumpGraphviz(int indent = -1, GraphvizSettings settings = {}) const;
 };
 
-RenderGraphResult buildRenderGraph(RenderGraphBuilder &builder);
+RenderGraphResult buildRenderGraph(RenderGraphBuilder &&builder);
 
-
-
+// ===================================================================================
 
 template<typename Data_t>
 inline void RenderGraphBuilder::addPass(std::string_view name, VkQueueFlagBits queue,
