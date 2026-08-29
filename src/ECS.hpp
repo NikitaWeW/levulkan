@@ -90,11 +90,11 @@ private:
     Registry *mReg = nullptr;
     ecs::entity mEntity = 0;
 public:
-    inline explicit constexpr Entity() = default;
+    inline constexpr Entity() = default;
     inline explicit constexpr Entity(Registry *reg, ecs::entity e) : mReg(reg), mEntity(e) {}
-    inline ecs::entity id() const { return mEntity; }
-    inline Registry const *pReg() const { return mReg; }
-    inline Registry *pReg() { return mReg; }
+    inline constexpr ecs::entity id() const { return mEntity; }
+    inline constexpr Registry const *pReg() const { return mReg; }
+    inline constexpr Registry *pReg() { return mReg; }
     inline Registry const &reg() const 
     { 
         assert(pReg() && "Invalid registry!");
@@ -105,7 +105,7 @@ public:
         assert(pReg() && "Invalid registry!");
         return *pReg(); 
     }
-    inline operator ecs::entity() const { return mEntity; }
+    inline constexpr operator ecs::entity() const { return mEntity; }
 
     template <typename component_t, class... Args>
     inline void emplace(Args&&... args) { assert(pReg()); return reg()->emplace<component_t, Args...>(id(), std::forward<Args>(args)...); }
@@ -126,7 +126,7 @@ public:
     inline void remove() { assert(pReg()); return reg()->remove<component_t>(id()); }
 
     /// @copydoc Registry::destroy
-    inline void destroy() { assert(pReg()); reg().destroy(*this); };
+    inline void destroy() { assert(pReg()); reg().destroy(*this); mEntity = 0; };
 
     /// @copydoc ecs::registry::size
     inline std::size_t size() const { assert(pReg()); return reg()->size(id()); }
@@ -302,5 +302,21 @@ public:
     /// @copydoc ecs::sparse_set::get
     inline T const &at(size_t index) const { return this->get(index); }
 };
+
+struct Name {
+    std::string name;
+};
+
+#include "Logging.hpp"
+
+template <> class fmt::formatter<Entity> {
+public:
+    constexpr auto parse(format_parse_context &ctx) { return ctx.begin(); }
+    template <typename Context>
+    constexpr auto format(Entity const &e, Context &ctx) const {
+        return format_to(ctx.out(), "e{}{}{}", e.id(), e.valid() && e.has<Name>() ? "-\"" + e.get<Name>().name + "\"" : "", e.valid() ? "" : "-invalid");
+    }
+};
+
 
 extern Registry sReg;

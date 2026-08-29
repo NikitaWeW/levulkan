@@ -57,15 +57,15 @@ static T hash_combine(T lhs, T rhs) {
 
 static std::string printTexture(Entity e) {
     if(!e.valid() || !e.has<Texture2D>())
-        return fmt::format("e{} -- INVALID", e.id());
+        return fmt::format("{}", e);
     auto const &texture2D = e.get<Texture2D>();
-    return fmt::format("e{}, \"{:<30} {}x{}, {:>3} {} mips", e.id(), texture2D.path + "\",", texture2D.bitmap.size.x, texture2D.bitmap.size.y,(texture2D.srgb ? "srgb" : "not srgb"), texture2D.numMipLevels);
+    return fmt::format("{}, \"{:<30} {}x{}, {:>3} {} mips", e, texture2D.path + "\",", texture2D.bitmap.size.x, texture2D.bitmap.size.y,(texture2D.srgb ? "srgb" : "not srgb"), texture2D.numMipLevels);
 }
 [[maybe_unused]] static void printModelData(Entity e) {
     assert(e.valid() && e.has<Model>());
     Model const &model = e.get<Model>();
     LOG_INFO("");
-    LOG_INFO("Model: e{}: \"{}\"", e.id(), model.path);
+    LOG_INFO("Model: {}: \"{}\"", e, model.path);
     LOG_INFO("Skeleton: ");
     LOG_INFO("  Bone map size / number of bones: {}", model.skeleton.boneMap.size());
     if(model.skeleton.boneMap.size() <= 30)
@@ -491,28 +491,30 @@ int app(int argc, char **argv) {
         DirectEntity<vk::Image> depth;
     };
     RenderGraphBuilder builder;
+    builder.setAllocInfo(ALLOCATION_INFO, sReg);
+    builder.setQueueFamilies(initRes.queueFamilies);
     builder.addPass<gbuffer_data>("gbuffer", VK_QUEUE_GRAPHICS_BIT, [&](RenderPassBuilder &builder){
         auto extent = swapchain.get<vk::Swapchain>().createInfo.imageExtent;
-        builder.addImageResource("gbuffer_albedo", {
+        builder.addImageResource("gbuffer_albedo", {.imageInfo = {
             .format = VK_FORMAT_R8G8B8A8_UNORM,
             .dimensions = {extent.width, extent.height},
-        });
-        builder.addImageResource("gbuffer_position", {
+        }, .resizeToSwapchain = true });
+        builder.addImageResource("gbuffer_position", {.imageInfo = {
             .format = VK_FORMAT_R8G8B8A8_UNORM,
             .dimensions = {extent.width, extent.height},
-        });
-        builder.addImageResource("gbuffer_normal", {
+        }, .resizeToSwapchain = true });
+        builder.addImageResource("gbuffer_normal", {.imageInfo = {
+            .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+            .dimensions = {extent.width, extent.height},
+        }, .resizeToSwapchain = true });
+        builder.addImageResource("gbuffer_pbr", {.imageInfo = {
             .format = VK_FORMAT_R8G8B8A8_UNORM,
             .dimensions = {extent.width, extent.height},
-        });
-        builder.addImageResource("gbuffer_pbr", {
-            .format = VK_FORMAT_R8G8B8A8_UNORM,
-            .dimensions = {extent.width, extent.height},
-        });
-        builder.addImageResource("gbuffer_depth", {
+        }, .resizeToSwapchain = true });
+        builder.addImageResource("gbuffer_depth", {.imageInfo = {
             .format = DEPTH_ATTACHMENT_FORMAT,
             .dimensions = {extent.width, extent.height},
-        });
+        }, .resizeToSwapchain = true });
 
         builder.attachResourceWrite("gbuffer_albedo",  COLOR_ATTACHMENT_TRAITS);
         builder.attachResourceWrite("gbuffer_position",COLOR_ATTACHMENT_TRAITS);
@@ -671,12 +673,12 @@ int app(int argc, char **argv) {
             auto const &instance = eInstance.get<ModelInstance>();
             if(!instance.eModel.valid())
             {
-                LOG_ERROR("Model instance e{} has invalid eModel {}", eInstance.id(), instance.eModel.id());
+                LOG_ERROR("Model instance e has invalid eModel {}", eInstance, instance.eModel);
                 continue;
             }
             if(!instance.eModel.has<VulkanModel>())
             {
-                LOG_ERROR("Model e{} doesent have VulkanModel component!", instance.eModel.id());
+                LOG_ERROR("Model {} doesent have VulkanModel component!", instance.eModel);
                 continue;
             }
 
@@ -716,10 +718,10 @@ int app(int argc, char **argv) {
     };
     builder.addPass<lighting_data>("lighting", VK_QUEUE_GRAPHICS_BIT, [&](RenderPassBuilder &builder){
         auto extent = swapchain->createInfo.imageExtent;
-        builder.addImageResource("lighting_out", {
+        builder.addImageResource("lighting_out", {.imageInfo = {
             .format = VK_FORMAT_R8G8B8A8_UNORM,
             .dimensions = {extent.width, extent.height},
-        });
+        }, .resizeToSwapchain = true });
         builder.attachResourceRead("gbuffer_albedo",   SHADER_READ_TRAITS);
         builder.attachResourceRead("gbuffer_position", SHADER_READ_TRAITS);
         builder.attachResourceRead("gbuffer_normal",   SHADER_READ_TRAITS);
@@ -867,7 +869,11 @@ int app(int argc, char **argv) {
         );
     });
 
-    RenderGraphResult renderGraph = buildRenderGraph(builder);
+    RenderGraphResult renderGraph = buildRenderGraph(std::move(builder));
+    if(!renderGraph.success()) {
+        LOG_ERROR("Failed to build a frame graph!");
+        return -1;
+    }
     std::ofstream("RenderGraph.dot", std::ios::trunc) << renderGraph.dumpGraphviz(2);
 
     ////////////////////////////////////////////////////////////////
@@ -1057,7 +1063,8 @@ int app(int argc, char **argv) {
         // FUUUUCK
         for(auto passIndex : renderGraph.getPassStack())
         {
-            auto const &pass = renderGraph.getPass(passIndex);
+            auto pass = renderGraph.getPass(passIndex);
+            assert(pass);
 
             struct Barriers {
                 std::vector<VkImageMemoryBarrier2> imageBarriers;
@@ -1071,7 +1078,7 @@ int app(int argc, char **argv) {
             };
             // For each queue for release/acquire operations
             SparseSet<Barriers> queueBarriers;
-            for(auto barrier : pass.barriers)
+            for(auto barrier : pass->barriers)
             {
                 if(barrier.src.queueIndex == VK_QUEUE_FAMILY_IGNORED)
                     barrier.src.queueIndex = barrier.dst.queueIndex;
@@ -1083,11 +1090,11 @@ int app(int argc, char **argv) {
             }
 
 
-            auto queue = initRes.queueFamilies.indices.at(pass.queue);
+            auto queue = initRes.queueFamilies.indices.at(pass->queue);
             
             auto queues = queueBarriers.sparse();
             queues.emplace_back(queue);
-            for(auto queue : queues)
+            for(auto queue : queues) {
                 if(!usedCommandBuffers.contains(queue)) {
                     auto cb = commandBuffers.at(queue)[frameIndex];
 
@@ -1099,6 +1106,7 @@ int app(int argc, char **argv) {
                     };
                     CHECK_VK_RES(vkBeginCommandBuffer(cb, &cbBI));
                 }
+            }
 
             for(auto [queue, barrierss] : queueBarriers)
             {
@@ -1112,7 +1120,7 @@ int app(int argc, char **argv) {
                 vkCmdPipelineBarrier2(commandBuffers.at(queue)[frameIndex], &dependencyInfo);
             }
 
-            pass.render(commandBuffers.at(queue)[frameIndex]);
+            pass->render(commandBuffers.at(queue)[frameIndex]);
         }
 
         // WHY?

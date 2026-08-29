@@ -30,8 +30,9 @@ struct BufferCreateInfo {
     VkBufferCreateFlags createFlags = 0;
     AllocationCreateInfo allocInfo;
 
+    VkDeviceSize size = 0; // In bytes
+
     void const *data = nullptr; ///< If not nullptr, appropriate memory flags are added automatically and the data is copied to mapped location. Adds appropriate flags.
-    uint32_t size = 0; // In bytes
     bool map = true; ///< Map the buffer to host memory persistently. Adds appropriate flags.
     std::string name = ""; ///< Debug name
 };
@@ -64,8 +65,8 @@ inline Buffer makeBuffer(VmaAllocator allocator, T const &obj, VkBufferUsageFlag
         .allocInfo = {
             .allocator = allocator,
         },
-        .data = &obj,
         .size = sizeof(T),
+        .data = &obj,
     });
 }
 template<typename T>
@@ -148,7 +149,7 @@ struct ImageCreateInfo {
             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         };
     }
-    // Doesent include custom border
+    // Doesn't include custom border
     inline VkSamplerCreateInfo getSamplerCreateInfo() const {
         return {
             .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,

@@ -88,7 +88,6 @@ set(ENGINE_SOURCE
     "src/vk/RingBuffer.cpp"
     "src/vk/Shader.cpp"
     "src/vk/Swapchain.cpp"
-    "src/vk/RenderGraph.cpp"
 )
 add_library(engine ${ENGINE_SOURCE})
 target_link_libraries(engine PUBLIC spdlog nicecs::ecs glm assimp meshoptimizer cpptrace::cpptrace nlohmann_json::nlohmann_json zip)

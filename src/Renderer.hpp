@@ -137,12 +137,22 @@ struct ResourceTraits {
     }
 };
 
+struct RenderGraphImageCreateInfo {
+    vk::ImageCreateInfo::ImageInfo imageInfo;
+    bool resizeToSwapchain = false;
+};
+struct RenderGraphBufferCreateInfo {
+    VkDeviceSize size = 0;
+};
+
+struct RenderGraphResource {};
+
 class RenderGraphBuilder;
 class RenderPassBuilder {
 private:
     std::unordered_map<std::string, Entity> mExternalResources;
-    std::unordered_map<std::string, vk::ImageCreateInfo::ImageInfo> mImageResources;
-    std::unordered_map<std::string, uint32_t> mBufferResources;
+    std::unordered_map<std::string, RenderGraphImageCreateInfo> mImageResources;
+    std::unordered_map<std::string, RenderGraphBufferCreateInfo> mBufferResources;
 
     struct ResourceUsage {
         std::string name;
@@ -151,13 +161,13 @@ private:
     std::vector<ResourceUsage> mReads;
     std::vector<ResourceUsage> mWrites;
 
-    friend RenderGraphResult buildRenderGraph(RenderGraphBuilder &&builder);
+    friend bool setupRenderGraph(RenderGraphBuilder &&, struct RenderGraphImpl &);
 public:
     /// @brief Yup it adds an external resource.
     /// @param keep Keeps the contents of the resource from a previous frame (whether to set the barrier layout to undefined). Image only
     void addExternalResource(std::string_view name, RestrictedAnyEntity<vk::Image, vk::Buffer> eResource, bool keep = false);
-    void addImageResource(std::string_view name, vk::ImageCreateInfo::ImageInfo info);
-    void addBufferResource(std::string_view name, uint32_t size);
+    void addImageResource(std::string_view name, RenderGraphImageCreateInfo info);
+    void addBufferResource(std::string_view name, RenderGraphBufferCreateInfo info);
 
     void attachResourceRead(std::string_view resourceName, ResourceTraits traits);
     void attachResourceWrite(std::string_view resourceName, ResourceTraits traits);
@@ -245,10 +255,14 @@ struct Barrier {
         };
     }
 };
+struct ResourceUsage {
+    std::string name;
+    ResourceTraits traits;
+};
 struct RenderPass {
     std::string name;
-    std::vector<std::string> reads;
-    std::vector<std::string> writes;
+    std::vector<ResourceUsage> reads;
+    std::vector<ResourceUsage> writes;
     std::vector<Barrier> barriers;
     VkQueueFlagBits queue = VK_QUEUE_GRAPHICS_BIT;
 
@@ -267,8 +281,12 @@ private:
         VkQueueFlagBits queue;
         std::unique_ptr<IRenderPassStorage> storage;
     };
-    std::unordered_map<std::string, Pass> mPasses;
-    friend RenderGraphResult buildRenderGraph(RenderGraphBuilder &&);
+    std::unordered_map<std::string, Pass> passes;
+    std::optional<vk::AllocationCreateInfo> allocInfo;
+    std::optional<vk::QueueFamilies> queueFamilies;
+    Registry *reg = nullptr;
+    bool fresh = true; 
+    friend bool setupRenderGraph(RenderGraphBuilder &&, struct RenderGraphImpl &);
 public:
     RenderGraphBuilder() = default;
     RenderGraphBuilder(RenderGraphBuilder const &) = delete;
@@ -277,29 +295,35 @@ public:
     RenderGraphBuilder &operator=(RenderGraphBuilder &&) = default;
     ~RenderGraphBuilder() = default;
 
+    /// @brief Required for allocating stuff (optional)
+    /// If not called only RenderPassBuilder::addExternalResource is allowed!
+    void setAllocInfo(vk::AllocationCreateInfo const &allocInfo, Registry &reg);
+
+    /// Required for barrier placement (not optional)
+    void setQueueFamilies(vk::QueueFamilies const &queueFamilies);
+
     template<typename Data_t>
     void addPass(std::string_view name, VkQueueFlagBits queue,
-        std::function<RenderPassSetupCallback_t<Data_t>> setup, 
-        std::function<RenderPassPostCompileCallback_t<Data_t>> post, 
+        std::function<RenderPassSetupCallback_t<Data_t>> setup,
+        std::function<RenderPassPostCompileCallback_t<Data_t>> post,
         std::function<RenderPassRenderCallback_t<Data_t>> render);
 };
 
 struct GraphvizSettings {
-    bool implicitDependencies = true; ///< If set to true, dashed arrows will point to implicit pass dependencies (read before next write).
-    bool showHistory = true; ///< If set to true, dotted arrows will point from the last pass that wrote to the resource to the pass that reads the history.
     std::vector<std::string> graphAttributes = {"beautify=true", "nodesep=0.5", "ranksep=0.5", "rankdir=TB"};
     std::vector<std::string> nodeAttributes = {};
     std::vector<std::string> edgeAttributes = {"stype=solid",  "constraint=true",  "arrowhead=normal"};
-    // std::vector<std::string> explicitEdgeAttributes = {"stype=solid",  "constraint=true",  "arrowhead=normal", "weight=2"};
-    // std::vector<std::string> implicitEdgeAttributes = {"style=dotted", "constraint=false", "arrowhead=empty",  "weight=1"};
-    // std::vector<std::string> historyEdgeAttributes  = {"stype=dotted", "constraint=false", "arrowhead=empty",  "weight=1"};
 };
 
 class RenderGraphResult {
 private:
     struct RenderGraphResultImpl *mImpl = nullptr;
 public:
-    RenderGraphResult(RenderGraphResultImpl *data);
+    RenderGraphResult(RenderGraphResultImpl *data); // data could be nullptr if failed
+    RenderGraphResult(RenderGraphResult const &);
+    RenderGraphResult(RenderGraphResult &&);
+    RenderGraphResult &operator=(RenderGraphResult const &);
+    RenderGraphResult &operator=(RenderGraphResult &&);
     ~RenderGraphResult();
 
     bool success() const;
@@ -308,13 +332,10 @@ public:
     void setResource(std::string_view name, Entity eResource);
     Entity getResource(std::string_view name) const;
 
-    // 0 - invalid
-    uint findPass(std::string_view name) const;
-    RenderPass const &getPass(uint id) const;
+    RenderPass const *getPass(std::string_view name) const;
 
     /// @brief Get the execution order of the passes
-    /// Contains pass id's
-    std::vector<uint> const &getPassStack() const;
+    std::vector<std::string> const &getPassStack() const;
 
     /// @brief Generate a DOT graph.
     /// @param indent If indent is nonnegative, then elements will be pretty-printed with that indent level. 
@@ -331,12 +352,12 @@ inline void RenderGraphBuilder::addPass(std::string_view name, VkQueueFlagBits q
   std::function<RenderPassSetupCallback_t<Data_t>> setup, 
   std::function<RenderPassPostCompileCallback_t<Data_t>> post, 
   std::function<RenderPassRenderCallback_t<Data_t>> render) {
-    if(mPasses.contains(std::string(name))) {
+    if(passes.contains(std::string(name))) {
         LOG_ERROR("Pass \"{}\" already exists!", name);
         return;
     }
     
-    mPasses[std::string(name)] = Pass{
+    passes[std::string(name)] = Pass{
         .name = std::string(name),
         .queue = queue,
         .storage = std::unique_ptr<IRenderPassStorage>(new RenderPassStorage<Data_t>(setup, post, render))

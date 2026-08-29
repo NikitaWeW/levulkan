@@ -20,13 +20,13 @@ static void writeImage(Image &image, ImageCreateInfo const &ci) {
             .allocator = image.createInfo.allocInfo.allocator,
             .allocFlags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT
         },
-        .data = ci.data,
         .size = ci.image.dimensions.width * 
                 ci.image.dimensions.height * 
                 ci.image.dimensions.depth * 
                 ci.image.dimensions.arrayLayers * 
                 ci.image.dimensions.samples * 
                 vkuGetFormatInfo(ci.image.format).texel_block_size,
+        .data = ci.data,
     });
 
     VkBufferImageCopy2 bufferCopyRegion = {

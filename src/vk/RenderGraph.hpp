@@ -5,8 +5,8 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
 \$$\  $$  |$$$$$  /    insert git repo url here
  \$$\$$  / $$  $$<     
   \$$$  /  $$ |\$$\    
-   \$  /   $$ | \$$\   
-    \_/    \__|  \__|  Vulkan render graph.
+   \$  /   $$ | \$$\   Vulkan render graph.
+    \_/    \__|  \__|  An old frame graph system with more complex explicit resource aliasing
 */
 #pragma once
 #include "Init.hpp"

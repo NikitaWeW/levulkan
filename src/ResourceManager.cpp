@@ -124,7 +124,7 @@ uint32_t ResourceAllocator::processImage(Entity eImage) {
             case Texture2D::AddressMode::ClampToEdge:       addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;        break;
             case Texture2D::AddressMode::ClampToBorder:     addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;      break;
             case Texture2D::AddressMode::MirrorClampToEdge: addressMode = VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE; break;
-            default: LOG_WARN("Unknown address mode in e{}!", eImage.id()); break;
+            default: LOG_WARN("Unknown address mode in {}!", eImage); break;
         }
         vk::ImageCreateInfo ci{
             .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -157,6 +157,7 @@ uint32_t ResourceAllocator::processImage(Entity eImage) {
         };
         eImage.emplace<vk::Image>(vk::makeImage(ci));
         eImage.emplace<ImageIndex>(mProcessedImages.size());
+        eImage.emplace<Name>(ci.name);
         mProcessedImages.emplace_back(eImage);
 
         vk::insertImageMemoryBarrier(mCommandBuffer, eImage.get<vk::Image>().image,

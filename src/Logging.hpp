@@ -5,6 +5,7 @@
 #include "spdlog/pattern_formatter.h"
 #include "spdlog/fmt/ranges.h"
 #include "spdlog/fmt/ostr.h"
+#include "fmt/color.h"
 #include "glm/gtx/io.hpp"
 
 inline std::shared_ptr<spdlog::logger> sLogger;
