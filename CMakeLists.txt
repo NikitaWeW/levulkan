@@ -81,7 +81,8 @@ set(ENGINE_SOURCE
     "src/fs/MemoryFilesystem.cpp"
 
     "src/Renderer.cpp"
-    "src/ResourceAllocator.cpp"
+    "src/ResourceManager.cpp"
+
     "src/vk/Init.cpp"
     "src/vk/Pipeline.cpp"
     "src/vk/Resource.cpp"

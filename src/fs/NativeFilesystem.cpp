@@ -192,8 +192,6 @@ fs::NativeFilesystem::NativeFilesystem(NativeFilesystem &&rhs) {
     *this = std::move(rhs);
 }
 void fs::NativeFilesystem::copy(Path const &from, Path const &to, Error *outErr) {
-    std::filesystem::copy_options copyOptions = std::filesystem::copy_options::none;
-
     if(exists(to, outErr) && isRegularFile(to, outErr))
         remove(to, outErr);
     if(outErr && outErr->failed)

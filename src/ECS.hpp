@@ -314,7 +314,11 @@ public:
     constexpr auto parse(format_parse_context &ctx) { return ctx.begin(); }
     template <typename Context>
     constexpr auto format(Entity const &e, Context &ctx) const {
-        return format_to(ctx.out(), "e{}{}{}", e.id(), e.valid() && e.has<Name>() ? "-\"" + e.get<Name>().name + "\"" : "", e.valid() ? "" : "-invalid");
+        return format_to(ctx.out(), "e{}{}{}", 
+            e.id(), 
+            e.valid() && e.has<Name>() ? ("-\"" + e.get<Name>().name + "\"") : "", 
+            e.valid() ? "" : "-invalid"
+        );
     }
 };
 

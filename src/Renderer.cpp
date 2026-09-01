@@ -11,7 +11,7 @@ struct Pass {
     VkQueueFlagBits queue;
     std::unique_ptr<IRenderPassStorage> storage;
 };
-struct ResourcePoolAllocation {
+struct ResourceAllocationInfo {
     VkImageUsageFlags imageUsage = 0;
     VkBufferUsageFlags bufferUsage = 0;
     VkDeviceSize bufferSize = 0;
@@ -54,8 +54,8 @@ struct RenderGraphResultImpl {
     std::unordered_map<std::string, ResourceInfo> resources;
     std::vector<std::string> passStack;
 };
-
 struct PleaseKeepTheImageContents {};
+
 void RenderPassBuilder::addExternalResource(std::string_view name, RestrictedAnyEntity<vk::Image, vk::Buffer> eResource, bool keep) {
     mExternalResources[std::string(name)] = eResource;
     if(eResource.has<vk::Image>()) {
@@ -94,17 +94,8 @@ RenderGraphResult::~RenderGraphResult() {
     if(mImpl)
         delete mImpl;
 }
-RenderGraphResult::RenderGraphResult(RenderGraphResult const &rhs) {
-    *this = rhs;
-}
 RenderGraphResult::RenderGraphResult(RenderGraphResult &&rhs) {
     *this = std::move(rhs);
-}
-RenderGraphResult &RenderGraphResult::operator=(RenderGraphResult const &rhs) {
-    if(rhs.mImpl) {
-        mImpl = new RenderGraphResultImpl(*rhs.mImpl);
-    }
-    return *this;
 }
 RenderGraphResult &RenderGraphResult::operator=(RenderGraphResult &&rhs) {
     std::swap(mImpl, rhs.mImpl);
@@ -289,11 +280,14 @@ bool setupRenderGraph(RenderGraphBuilder &&builder, RenderGraphImpl &renderGraph
             .storage = std::move(pass.storage),
         };
 
-        RenderPassBuilder builder;
-        renderGraphPass.storage->setup(builder);
-        for(auto const &[name, eResource] : builder.mExternalResources) {
-            if(renderGraph.resources.contains(name)) {
-                LOG_ERROR("Resoure \"{}\" already exists(error in pass \"{}\")", name, pass.name); 
+        LOG_TRACE("Adding pass {} queue {}", renderGraphPass.name, string_VkQueueFlagBits(renderGraphPass.queue));
+
+        RenderPassBuilder passBuilder;
+        renderGraphPass.storage->setup(passBuilder);
+        for(auto const &[name, eResource] : passBuilder.mExternalResources) {
+            LOG_TRACE("  External resource {} {}", name, eResource);
+            if(renderGraph.resources.contains(name) && renderGraph.resources.at(name).eResource.valid()) {
+                LOG_ERROR("Resoure \"{}\" already exists (error in pass \"{}\")", name, renderGraphPass.name); 
                 return false;
             }
 
@@ -304,9 +298,10 @@ bool setupRenderGraph(RenderGraphBuilder &&builder, RenderGraphImpl &renderGraph
                 ResourceCreateInfo::Type::External
             );
         }
-        for(auto const &[name, info] : builder.mImageResources) {
-            if(renderGraph.resources.contains(name)) {
-                LOG_ERROR("Resoure \"{}\" already exists(error in pass \"{}\")", name, pass.name); 
+        for(auto const &[name, info] : passBuilder.mImageResources) {
+            LOG_TRACE("  Image resource {} {} {} {}x{}x{} resize to swapchain {}", name, string_VkFormat(info.imageInfo.format), string_VkImageType(info.imageInfo.imageType),  info.imageInfo.dimensions.width, info.imageInfo.dimensions.height, info.imageInfo.dimensions.depth, info.resizeToSwapchain);
+            if(renderGraph.resources.contains(name) && renderGraph.resources.at(name).eResource.valid()) {
+                LOG_ERROR("Resoure \"{}\" already exists (error in pass \"{}\")", name, renderGraphPass.name); 
                 return false;
             }
 
@@ -317,9 +312,10 @@ bool setupRenderGraph(RenderGraphBuilder &&builder, RenderGraphImpl &renderGraph
                 .image = info
             });
         }
-        for(auto const &[name, info] : builder.mBufferResources) {
-            if(renderGraph.resources.contains(name)) {
-                LOG_ERROR("Resoure \"{}\" already exists(error in pass \"{}\")", name, pass.name); 
+        for(auto const &[name, info] : passBuilder.mBufferResources) {
+            LOG_TRACE("  Buffer resource {} {} bytes", name, info.size);
+            if(renderGraph.resources.contains(name) && renderGraph.resources.at(name).eResource.valid()) {
+                LOG_ERROR("Resoure \"{}\" already exists (error in pass \"{}\")", name, renderGraphPass.name); 
                 return false;
             }
 
@@ -330,39 +326,46 @@ bool setupRenderGraph(RenderGraphBuilder &&builder, RenderGraphImpl &renderGraph
                 .buffer = info
             });
         }
-        for(auto const &[name, traits] : builder.mWrites) {
-            if(!renderGraph.resources.contains(name)) {
-                LOG_ERROR("Pass \"{}\" writes to unknown resource \"{}\"", pass.name, name);
-                return false;
-            }
-
+        for(auto const &[name, traits] : passBuilder.mWrites) {
+            LOG_TRACE("  Writes {} {}", name, string_VkAccessFlags2(traits.access));
             auto &resourceInfo = renderGraph.resources[name];
 
             if(!resourceInfo.written.name.empty()) {
-                LOG_ERROR("Cannot write to resource \"{}\" more than once!(error in pass \"{}\")", name, pass.name);
+                LOG_ERROR("Cannot write to resource \"{}\" more than once!(error in pass \"{}\")", name, renderGraphPass.name);
                 return false;
             }
             resourceInfo.name = name;
-            resourceInfo.written = {pass.name, traits};
+            resourceInfo.written = {renderGraphPass.name, traits};
 
             renderGraphPass.writes.emplace_back(name, traits);
         }
-        for(auto const &[name, traits] : builder.mReads) {
-            if(!renderGraph.resources.contains(name)) {
-                LOG_ERROR("Pass \"{}\" reads from unknown resource \"{}\"", pass.name, name);
-                return false;
-            }
-
+        for(auto const &[name, traits] : passBuilder.mReads) {
+            LOG_TRACE("  Reads {} {}", name, string_VkAccessFlags2(traits.access));
             auto &resourceInfo = renderGraph.resources[name];
-            if(resourceInfo.written.name == pass.name) {
-                LOG_ERROR("Cannot read and write to the same resource \"{}\". Use different names!(error in pass \"{}\")", name, pass.name);
+            if(resourceInfo.written.name == renderGraphPass.name) {
+                LOG_ERROR("Cannot read and write to the same resource \"{}\". Use different names!(error in pass \"{}\")", name, renderGraphPass.name);
                 return false;
             }
 
             resourceInfo.name = name;
-            resourceInfo.read.emplace_back(pass.name, traits);
+            resourceInfo.read.emplace_back(renderGraphPass.name, traits);
 
             renderGraphPass.reads.emplace_back(name, traits);
+        }
+    }
+
+    for(auto const &[_, pass] : renderGraph.passes) {
+        for(auto const &[res, _] : pass.writes) {
+            if(!(renderGraph.resources.contains(res) && renderGraph.resources.at(res).eResource.valid())) {
+                LOG_ERROR("Pass \"{}\" writes to unknown resource \"{}\"", pass.name, res);
+                return false;
+            }
+        }
+        for(auto const &[res, _] : pass.reads) {
+            if(!(renderGraph.resources.contains(res) && renderGraph.resources.at(res).eResource.valid())) {
+                LOG_ERROR("Pass \"{}\" reads from unknown resource \"{}\"", pass.name, res);
+                return false;
+            }
         }
     }
 
@@ -384,11 +387,12 @@ static bool processPass(std::string const &passName, RenderGraphImpl &renderGrap
 
     auto &pass = renderGraph.passes.at(passName);
 
-    // Cull passes results of which are not used anywhere
+    // Cull passes results of which are not used anywhere, 
+    // Unless the resource is external
     bool used = false;
     for(auto const &resource : pass.writes) {
         auto const &info = renderGraph.resources.at(resource.name);
-        if(!info.read.empty()) {
+        if(!info.read.empty() || info.eResource.get<ResourceCreateInfo>().type == ResourceCreateInfo::External) {
             used = true;
             break;
         }
@@ -531,11 +535,11 @@ static void aliasResources(RenderGraphImpl &renderGraph) {
                 e = renderGraph.reg->create(ci);
             }
 
-            if(!e.has<ResourcePoolAllocation>()) {
-                e.emplace<ResourcePoolAllocation>();
+            if(!e.has<ResourceAllocationInfo>()) {
+                e.emplace<ResourceAllocationInfo>();
             }
 
-            auto &allocInfo = e.get<ResourcePoolAllocation>();
+            auto &allocInfo = e.get<ResourceAllocationInfo>();
             allocInfo.imageUsage |= traits.imageTraits.usage;
             allocInfo.bufferUsage |= traits.bufferTraits.usage;
             allocInfo.bufferSize = std::max<VkDeviceSize>(allocInfo.bufferSize, traits.bufferTraits.size + traits.bufferTraits.offset);
@@ -544,7 +548,7 @@ static void aliasResources(RenderGraphImpl &renderGraph) {
         // Free
         for(auto const &[resourceName, _] : pass.reads) {
             auto &resource = renderGraph.resources.at(resourceName);
-            auto const &ci = resource.eResource.get<ResourceCreateInfo>();
+            // auto const &ci = resource.eResource.get<ResourceCreateInfo>();
 
             // Might use external resources if the contents are not used next frame
             if(resource.eResource.has<PleaseKeepTheImageContents>())
@@ -558,10 +562,10 @@ static void aliasResources(RenderGraphImpl &renderGraph) {
 static void allocateResources(RenderGraphImpl &renderGraph) {
     if(!renderGraph.reg)
         return;
-    for(auto &e : renderGraph.reg->view<ResourceCreateInfo, ResourcePoolAllocation>()) {
+    for(auto &e : renderGraph.reg->view<ResourceCreateInfo, ResourceAllocationInfo>()) {
         auto const &ci = e.get<ResourceCreateInfo>();
-        auto allocInfo = e.get<ResourcePoolAllocation>();
-        e.remove<ResourcePoolAllocation>();
+        auto allocInfo = e.get<ResourceAllocationInfo>();
+        e.remove<ResourceAllocationInfo>();
 
         assert(ci.type != ResourceCreateInfo::External);
 
@@ -577,7 +581,11 @@ static void allocateResources(RenderGraphImpl &renderGraph) {
             if(ci.image.resizeToSwapchain)
                 e.emplace<ResizeToSwapchain>();
 
+            // FIXME: bad image creation (no sampler flag?)
+            // maybe main.cpp
             e.emplace<vk::Image>(vk::makeImage(imageCreateInfo));
+            assert(e.get<vk::Image>().image);
+            assert(e.get<vk::Image>().view);
             e.emplace<RenderGraphResource>();
         } else {
             assert(allocInfo.bufferUsage != 0);
@@ -604,7 +612,7 @@ static bool buildBarriers(RenderGraphImpl &renderGraph) {
 
             uint32_t queue = VK_QUEUE_FAMILY_IGNORED;
             if(!renderGraph.queueFamilies.indices.contains(pass.queue)) {
-                LOG_ERROR("Pass {} needs queue {} which is not in queue families provided to the frame graph!", pass.name, string_VkQueueFlagBits(pass.queue));
+                LOG_ERROR("Pass \"{}\" needs queue {} which is not in queue families provided to the frame graph!", pass.name, string_VkQueueFlagBits(pass.queue));
                 return false;
             } else {
                 queue = renderGraph.queueFamilies.indices.at(pass.queue);
@@ -643,7 +651,7 @@ static bool buildBarriers(RenderGraphImpl &renderGraph) {
 
             };
             pass.barriers.emplace_back(Barrier{
-                .resource = resource.eResource,
+                .resource = resource.name,
                 .src = prevState,
                 .dst = state,
                 .subresourceRange = traits.imageTraits.subresourceRange,
@@ -666,7 +674,7 @@ static bool buildBarriers(RenderGraphImpl &renderGraph) {
                 .stages = traits.stages,
             };
             pass.barriers.emplace_back(Barrier{
-                .resource = resource.eResource,
+                .resource = resource.name,
                 .src = prevState,
                 .dst = state,
                 .subresourceRange = traits.imageTraits.subresourceRange,
@@ -687,7 +695,7 @@ RenderGraphResult buildRenderGraph(RenderGraphBuilder &&builder) {
         return RenderGraphResult(nullptr);
     }
 
-    // TODO: validate
+    // TODO: better validation
 
     for(auto const &[_, pass] : renderGraph.passes) {
         if(pass.reads.empty()) {
@@ -731,5 +739,11 @@ RenderGraphResult buildRenderGraph(RenderGraphBuilder &&builder) {
         };
     }
 
-    return RenderGraphResult(res);
+    RenderGraphResult result(res);
+
+    for(auto &[_, pass] : res->passes) {
+        pass.storage->postCompile(result);
+    }
+    
+    return result;
 }

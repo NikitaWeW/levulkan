@@ -32,7 +32,7 @@ public:
     /// @brief Construct an invalid ring buffer.
     RingBuffer() = default;
     /// @brief Construct a valid ring buffer.
-    RingBuffer(Registry reg, BufferCreateInfo createInfo);
+    RingBuffer(Registry &reg, BufferCreateInfo createInfo);
     ~RingBuffer();
     RingBuffer(RingBuffer &&) = default;
     RingBuffer &operator=(RingBuffer &&) = default;

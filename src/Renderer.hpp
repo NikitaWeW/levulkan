@@ -90,14 +90,15 @@ public:
 struct ResourceDirty {};
 class DescriptorManager {
 private:
-    std::map<std::pair<Entity, vk::DescriptorBinding>, std::vector<RestrictedAnyEntity<vk::Image, vk::Buffer>>> mResources;
+    // Oh god not again
+    std::map<Entity, std::map<vk::DescriptorBinding, std::vector<RestrictedAnyEntity<vk::Image, vk::Buffer>>>> mPipelineResources;
     std::map<std::pair<Entity, vk::DescriptorBinding>, VkImageLayout> mLayouts;
 public:
     void addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, RestrictedAnyEntity<vk::Image, vk::Buffer> resource, VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED);
     void addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, std::vector<RestrictedAnyEntity<vk::Image, vk::Buffer>> resources, VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED);
     void addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, std::vector<Entity> resources, VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED);
     void erase(Entity pipeline, vk::DescriptorBinding binding);
-    void update(uint frame = 0);
+    void update(uint frame = 0, bool force = false);
 };
 
 class RenderPassBuilder;
@@ -179,9 +180,11 @@ public:
     virtual void setup(RenderPassBuilder &builder) = 0;
     virtual void postCompile(RenderGraphResult const &res) = 0;
     virtual void render(VkCommandBuffer cb) = 0;
+
+    virtual IRenderPassStorage *clone() = 0;
 };
 template<typename T>
-class RenderPassStorage : IRenderPassStorage {
+class RenderPassStorage : public IRenderPassStorage {
 private:
     T mData;
     std::function<RenderPassSetupCallback_t<T>>       mSetupCallback;
@@ -189,18 +192,25 @@ private:
     std::function<RenderPassRenderCallback_t<T>>      mRenderCallback;
 public:
     RenderPassStorage() = default;
-    RenderPassStorage(std::function<RenderPassSetupCallback_t<T>> setupCallback,
+    inline RenderPassStorage(std::function<RenderPassSetupCallback_t<T>> setupCallback,
                       std::function<RenderPassPostCompileCallback_t<T>> postCompileCallback,
-                      std::function<RenderPassRenderCallback_t<T>> renderCallback);
+                      std::function<RenderPassRenderCallback_t<T>> renderCallback) {
+        mSetupCallback = setupCallback;
+        mPostCompileCallback = postCompileCallback;
+        mRenderCallback = renderCallback;
+    }
 
     inline void setup(RenderPassBuilder &builder) override {
-        mSetupCallback(mData, builder);
+        mSetupCallback(builder);
     }
     inline void postCompile(RenderGraphResult const &res) override {
         mPostCompileCallback(mData, res);
     }
     inline void render(VkCommandBuffer cb) override {
         mRenderCallback(mData, cb);
+    }
+    inline IRenderPassStorage *clone() override {
+        return new RenderPassStorage<T>(*this);
     }
 };
 
@@ -215,7 +225,7 @@ struct Barrier {
         VkPipelineStageFlags2 stages = VK_PIPELINE_STAGE_2_NONE;
     };
 
-    Entity resource;
+    std::string resource;
     Scope src;
     Scope dst;
     
@@ -320,9 +330,9 @@ private:
     struct RenderGraphResultImpl *mImpl = nullptr;
 public:
     RenderGraphResult(RenderGraphResultImpl *data); // data could be nullptr if failed
-    RenderGraphResult(RenderGraphResult const &);
+    RenderGraphResult(RenderGraphResult const &) = delete;
+    RenderGraphResult &operator=(RenderGraphResult const &) = delete;
     RenderGraphResult(RenderGraphResult &&);
-    RenderGraphResult &operator=(RenderGraphResult const &);
     RenderGraphResult &operator=(RenderGraphResult &&);
     ~RenderGraphResult();
 

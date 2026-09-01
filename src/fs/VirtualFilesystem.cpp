@@ -216,31 +216,31 @@ void fs::VirtualFilesystem::move(Path const &from, Path const &to, Error *err) {
 }
 void fs::VirtualFilesystem::createDirectory(Path const &path, Error *err) {
     auto mount = getMount(path, err);
-    if(err && err->failed || !mount.fs)
+    if((err && err->failed) || !mount.fs)
         return;
     mount.fs->createDirectory(mount.relativePath, err);
 }
 void fs::VirtualFilesystem::createDirectories(Path const &path, Error *err) {
     auto mount = getMount(path, err);
-    if(err && err->failed || !mount.fs)
+    if((err && err->failed) || !mount.fs)
         return;
     mount.fs->createDirectories(mount.relativePath, err);
 }
 bool fs::VirtualFilesystem::exists(Path const &path, Error *err) const {
     auto mount = getMount(path, err);
-    if(err && err->failed || !mount.fs)
+    if((err && err->failed) || !mount.fs)
         return false;
     return mount.fs->exists(mount.relativePath, err);
 }
 uintmax_t fs::VirtualFilesystem::fileSize(Path const &path, Error *err) const {
     auto mount = getMount(path, err);
-    if(err && err->failed || !mount.fs)
+    if((err && err->failed) || !mount.fs)
         return 0;
     return mount.fs->fileSize(mount.relativePath, err);
 }
 void fs::VirtualFilesystem::remove(Path const &path, Error *err) {
     auto mount = getMount(path, err);
-    if(err && err->failed || !mount.fs)
+    if((err && err->failed) || !mount.fs)
         return;
 
     if(mount.relativePath.empty()) {
@@ -258,7 +258,7 @@ void fs::VirtualFilesystem::remove(Path const &path, Error *err) {
 }
 std::vector<fs::Path> fs::VirtualFilesystem::getContents(Path const &path, bool recursive, Error *err) const {
     auto mount = getMount(path, err);
-    if(err && err->failed || !mount.fs)
+    if((err && err->failed) || !mount.fs)
         return {};
     auto contents = mount.fs->getContents(mount.relativePath, recursive, err);
     for(auto &entry : contents) {
@@ -268,31 +268,31 @@ std::vector<fs::Path> fs::VirtualFilesystem::getContents(Path const &path, bool 
 }
 bool fs::VirtualFilesystem::isDirectory(Path const &path, Error *err) const {
     auto mount = getMount(path, err);
-    if(err && err->failed || !mount.fs)
+    if((err && err->failed) || !mount.fs)
         return false;
     return mount.fs->isDirectory(mount.relativePath, err);
 }
 bool fs::VirtualFilesystem::isRegularFile(Path const &path, Error *err) const {
     auto mount = getMount(path, err);
-    if(err && err->failed || !mount.fs)
+    if((err && err->failed) || !mount.fs)
         return false;
     return mount.fs->isRegularFile(mount.relativePath, err);
 }
 bool fs::VirtualFilesystem::isEmpty(Path const &path, Error *err) const {
     auto mount = getMount(path, err);
-    if(err && err->failed || !mount.fs)
+    if((err && err->failed) || !mount.fs)
         return false;
     return mount.fs->isEmpty(mount.relativePath, err);
 }
 fs::FileHandle fs::VirtualFilesystem::open(Path const &path, FileOpenMode::Flags mode, Error *err) {
     auto mount = getMount(path, err);
-    if(err && err->failed || !mount.fs)
+    if((err && err->failed) || !mount.fs)
         return {};
     return mount.fs->open(mount.relativePath, mode, err);
 }
 std::chrono::file_clock::time_point fs::VirtualFilesystem::lastTimeWrite(Path const &path, Error *err) const {
     auto mount = getMount(path, err);
-    if(err && err->failed || !mount.fs)
+    if((err && err->failed) || !mount.fs)
         return std::chrono::file_clock::now();
     return mount.fs->lastTimeWrite(mount.relativePath, err);
 }

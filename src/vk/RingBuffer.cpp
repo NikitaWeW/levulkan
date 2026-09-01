@@ -4,13 +4,15 @@
 #include "Renderer.hpp"
 using namespace vk;
 
-RingBuffer::RingBuffer(Registry reg, BufferCreateInfo createInfo) {
+RingBuffer::RingBuffer(Registry &reg, BufferCreateInfo createInfo) {
     mCreateInfo = createInfo;
     mBuffer = reg.create(vk::makeBuffer(createInfo));
 }
 RingBuffer::~RingBuffer() {
-    vk::destroy(mBuffer.get<vk::Buffer>());
-    mBuffer.destroy();
+    if(mBuffer.valid()) {
+        vk::destroy(mBuffer.get<vk::Buffer>());
+        mBuffer.destroy();
+    }
 }
 
 static uint32_t align(uint32_t value, uint32_t alignment) {

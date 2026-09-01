@@ -90,7 +90,7 @@ static void getImages(Swapchain &swapchain, Registry &reg) {
 
     for(uint i = 0; i < imageCount; ++i)
     {
-        swapchain.images.emplace_back(reg.create(vk::Image{
+        auto eImage = swapchain.images.emplace_back(reg.create(vk::Image{
             .image = images[i],
             .view = imageViews[i],
             .createInfo = {
@@ -99,25 +99,28 @@ static void getImages(Swapchain &swapchain, Registry &reg) {
                     .device = swapchain.alloc.device,
                     .sharingMode = swapchain.sharingMode
                 },
-                .imageType = VK_IMAGE_TYPE_2D,
-                .format = swapchain.createInfo.imageFormat,
-                .dimensions = {
-                    .width = swapchain.createInfo.imageExtent.width,
-                    .height = swapchain.createInfo.imageExtent.height,
-                },
-                .view = {
-                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                    .viewType = VK_IMAGE_VIEW_TYPE_2D
+                .image = {
+                    .imageType = VK_IMAGE_TYPE_2D,
+                    .format = swapchain.createInfo.imageFormat,
+                    .dimensions = {
+                        .width = swapchain.createInfo.imageExtent.width,
+                        .height = swapchain.createInfo.imageExtent.height,
+                    },
+                    .view = {
+                        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                        .viewType = VK_IMAGE_VIEW_TYPE_2D
+                    },
                 },
                 .name = fmt::format("swapchain_image_{}", i),
             },
             .owns = false,
         }));
+        eImage.emplace<Name>(eImage.get<vk::Image>().createInfo.name);
         VkDebugUtilsObjectNameInfoEXT name_info{
             .sType        = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
             .objectType   = VK_OBJECT_TYPE_IMAGE,
             .objectHandle = (uint64_t) images[i],
-            .pObjectName  = swapchain.images.back().get<vk::Image>().createInfo.name.c_str(),
+            .pObjectName  = eImage.get<vk::Image>().createInfo.name.c_str(),
         };
         vkSetDebugUtilsObjectNameEXT(swapchain.alloc.device, &name_info);
     }

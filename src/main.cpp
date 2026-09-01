@@ -169,7 +169,7 @@ static Transform lookat(glm::vec3 pos, glm::vec3 center) {
     };
 }
 static Entity makeWindow(Registry &reg, std::string_view name) {
-    auto eWindow = reg.create<Window>();
+    auto eWindow = reg.create(Window{}, Name("window_" + std::string(name)));
     auto &window = eWindow.get<Window>();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     window.handle = glfwCreateWindow(800, 600, name.data(), nullptr, nullptr);
@@ -191,7 +191,7 @@ static VkCommandPool createCommandPool(uint32_t index, VkDevice device) {
     vkCreateCommandPool(device, &commandPoolCI, nullptr, &commandPool);
     return commandPool;
 }
-static VkFence createFence(VkDevice dev) {
+[[maybe_unused]] static VkFence createFence(VkDevice dev) {
     VkFence fence = nullptr;
     VkFenceCreateInfo fenceCI{
         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
@@ -221,23 +221,23 @@ static void assetGrid(std::vector<Entity> const &props, glm::uvec3 dimensions, g
     }
 }
 static VkFormat getDepthFormat(VkPhysicalDevice dev) {
-    VkFormat format = VK_FORMAT_UNDEFINED;
+    VkFormat outFormat = VK_FORMAT_UNDEFINED;
     std::vector<VkFormat> depthFormatList{ VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM };
     for(VkFormat &format : depthFormatList) {
         VkFormatProperties2 formatProperties{ .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2 };
         vkGetPhysicalDeviceFormatProperties2(dev, format, &formatProperties);
         if(formatProperties.formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
-            format = format;
+            outFormat = format;
             break;
         }
     }
-    if(format == VK_FORMAT_UNDEFINED)
+    if(outFormat == VK_FORMAT_UNDEFINED)
     {
         LOG_ERROR("Failed to pick depth image format!");
-        format = depthFormatList.at(0);
+        outFormat = depthFormatList.at(0);
     }
 
-    return format;
+    return outFormat;
 }
 
 ////////////////////////////////////////////////////////////////
@@ -263,7 +263,7 @@ static bool init() {
 
     return true;
 }
-int app(int argc, char **argv) {
+int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     if(!init())
     {
         LOG_ERROR("Failed to init!");
@@ -338,7 +338,7 @@ int app(int argc, char **argv) {
         .size = {window->size.x, window->size.y},
         .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
         .registry = &sReg
-    }));
+    }), Name("swapchain_" + (window.has<Name>() ? window.get<Name>().name : "")));
 
     VkCommandPool commandPool = createCommandPool(initRes.queueFamilies.indices.at(VK_QUEUE_GRAPHICS_BIT), device);
     VkQueue graphicsQueue = initRes.queueFamilies.getQueue(VK_QUEUE_GRAPHICS_BIT);
@@ -407,7 +407,7 @@ int app(int argc, char **argv) {
     Controller::Camera &camera = eCamera.get<Controller::Camera>();
 
 
-    VkPipelineColorBlendAttachmentState constexpr ALPHA_BLENDING{
+    [[maybe_unused]] VkPipelineColorBlendAttachmentState constexpr ALPHA_BLENDING{
         .blendEnable = true,
         .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
         .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
@@ -417,7 +417,7 @@ int app(int argc, char **argv) {
         .alphaBlendOp = VK_BLEND_OP_ADD,
         .colorWriteMask = 0xFF
     };
-    VkPipelineColorBlendAttachmentState constexpr ADDITIVE_BLENDING{
+    [[maybe_unused]] VkPipelineColorBlendAttachmentState constexpr ADDITIVE_BLENDING{
         .blendEnable = true,
         .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
         .dstColorBlendFactor = VK_BLEND_FACTOR_ONE,
@@ -427,7 +427,7 @@ int app(int argc, char **argv) {
         .alphaBlendOp = VK_BLEND_OP_ADD,
         .colorWriteMask = 0xFF,
     };
-    VkPipelineColorBlendAttachmentState constexpr NO_BLENDING{
+    [[maybe_unused]] VkPipelineColorBlendAttachmentState constexpr NO_BLENDING{
         .blendEnable = false,
         .colorWriteMask = 0xFF,
     };
@@ -498,22 +498,27 @@ int app(int argc, char **argv) {
         builder.addImageResource("gbuffer_albedo", {.imageInfo = {
             .format = VK_FORMAT_R8G8B8A8_UNORM,
             .dimensions = {extent.width, extent.height},
+            .view = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT }
         }, .resizeToSwapchain = true });
         builder.addImageResource("gbuffer_position", {.imageInfo = {
             .format = VK_FORMAT_R8G8B8A8_UNORM,
             .dimensions = {extent.width, extent.height},
+            .view = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT }
         }, .resizeToSwapchain = true });
         builder.addImageResource("gbuffer_normal", {.imageInfo = {
             .format = VK_FORMAT_R16G16B16A16_SFLOAT,
             .dimensions = {extent.width, extent.height},
+            .view = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT }
         }, .resizeToSwapchain = true });
         builder.addImageResource("gbuffer_pbr", {.imageInfo = {
             .format = VK_FORMAT_R8G8B8A8_UNORM,
             .dimensions = {extent.width, extent.height},
+            .view = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT }
         }, .resizeToSwapchain = true });
         builder.addImageResource("gbuffer_depth", {.imageInfo = {
             .format = DEPTH_ATTACHMENT_FORMAT,
             .dimensions = {extent.width, extent.height},
+            .view = { .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT }
         }, .resizeToSwapchain = true });
 
         builder.attachResourceWrite("gbuffer_albedo",  COLOR_ATTACHMENT_TRAITS);
@@ -566,11 +571,12 @@ int app(int argc, char **argv) {
                     .attachments = {ALPHA_BLENDING},
                 },
             };
+            data.shader = e;
             e.emplace<vk::Pipeline>(vk::makePipeline(data.shader.get<vk::Shader>(), layoutCi, pipelineCi));
+            data.pipeline = e;
+            vk::allocateDescriptors(data.pipeline.getc());
             descManager.addResource(data.pipeline, {0, 0}, uniformBuffer.getBuffer());
             descManager.addResource(data.pipeline, {1, 0}, {images}, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            data.pipeline = e;
-            data.shader = e;
         }
         assert(data.shader.valid() && data.shader.get<vk::Shader>().valid);
         assert(data.pipeline.valid() && data.pipeline.get<vk::Pipeline>().valid);
@@ -643,7 +649,7 @@ int app(int argc, char **argv) {
             .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
             .renderArea = {
                 .offset = { 0, 0 },
-                .extent = { window->size.x, window->size.y },
+                .extent = extent,
             },
             .layerCount = 1,
             .colorAttachmentCount = colorAttachmentInfos.size(),
@@ -656,8 +662,8 @@ int app(int argc, char **argv) {
         VkViewport vp{
             .x = 0,
             .y = 0,
-            .width = static_cast<float>(window->size.x),
-            .height = static_cast<float>(window->size.y),
+            .width = static_cast<float>(extent.width),
+            .height = static_cast<float>(extent.height),
             .minDepth = 0.0f,
             .maxDepth = 1.0f
         };
@@ -721,11 +727,13 @@ int app(int argc, char **argv) {
         builder.addImageResource("lighting_out", {.imageInfo = {
             .format = VK_FORMAT_R8G8B8A8_UNORM,
             .dimensions = {extent.width, extent.height},
+            .view = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT }
         }, .resizeToSwapchain = true });
         builder.attachResourceRead("gbuffer_albedo",   SHADER_READ_TRAITS);
         builder.attachResourceRead("gbuffer_position", SHADER_READ_TRAITS);
         builder.attachResourceRead("gbuffer_normal",   SHADER_READ_TRAITS);
         builder.attachResourceRead("gbuffer_pbr",      SHADER_READ_TRAITS);
+        builder.attachResourceWrite("lighting_out",    COLOR_ATTACHMENT_TRAITS);
     }, [&](lighting_data &data, RenderGraphResult const &res){
         if(!data.shader.valid()) {
             auto e = sReg.create();
@@ -750,9 +758,10 @@ int app(int argc, char **argv) {
                     .attachments = {NO_BLENDING},
                 },
             };
-            e.emplace<vk::Pipeline>(vk::makePipeline(data.shader.get<vk::Shader>(), layoutCi, pipelineCi));
             data.shader = e;
+            e.emplace<vk::Pipeline>(vk::makePipeline(data.shader.get<vk::Shader>(), layoutCi, pipelineCi));
             data.pipeline = e;
+            vk::allocateDescriptors(data.pipeline.getc());
             descManager.addResource(data.pipeline, {0, 0}, uniformBuffer.getBuffer());
             descManager.addResource(data.pipeline, {1, 0}, {images}, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
@@ -791,7 +800,7 @@ int app(int argc, char **argv) {
             .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
             .renderArea = {
                 .offset = { 0, 0 },
-                .extent = { window->size.x, window->size.y },
+                .extent = extent,
             },
             .layerCount = 1,
             .colorAttachmentCount = colorAttachmentInfos.size(),
@@ -804,8 +813,8 @@ int app(int argc, char **argv) {
         VkViewport vp{
             .x = 0,
             .y = 0,
-            .width = static_cast<float>(window->size.x),
-            .height = static_cast<float>(window->size.y),
+            .width = static_cast<float>(extent.width),
+            .height = static_cast<float>(extent.height),
             .minDepth = 0.0f,
             .maxDepth = 1.0f
         };
@@ -826,18 +835,15 @@ int app(int argc, char **argv) {
         DirectEntity<vk::Image> swapchainImage;
     };
     builder.addPass<swapchain_blit_data>("swapchain_blit", VK_QUEUE_TRANSFER_BIT, [&](RenderPassBuilder &builder){
-        auto extent = swapchain->createInfo.imageExtent;
         builder.addExternalResource("swapchain", swapchain->images[imageIndex]);
         builder.attachResourceRead("lighting_out",  TRANSFER_SRC_TRAITS);
         builder.attachResourceWrite("swapchain",  TRANSFER_DST_TRAITS);
     }, [&](swapchain_blit_data &data, RenderGraphResult const &res){
-        data.swapchainImage = res.getResource("swapchain_blit_out");
+        data.swapchainImage = res.getResource("swapchain");
         data.lighting_out = res.getResource("lighting_out");
     }, [&](swapchain_blit_data &data, VkCommandBuffer cb){
         auto const &src = data.lighting_out.getc();
         auto const &dst = data.swapchainImage.getc();
-
-        VkExtent2D extent = swapchain->createInfo.imageExtent;
 
         VkImageBlit2 region{
             .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
@@ -1069,11 +1075,12 @@ int app(int argc, char **argv) {
             struct Barriers {
                 std::vector<VkImageMemoryBarrier2> imageBarriers;
                 std::vector<VkBufferMemoryBarrier2> bufferBarriers;
-                inline void emplace(Barrier const &barrier) {
-                    if(barrier.resource.has<vk::Image>())
-                        imageBarriers.emplace_back(barrier.getImageBarrier(barrier.resource));
-                    if(barrier.resource.has<vk::Buffer>())
-                        bufferBarriers.emplace_back(barrier.getBufferBarrier(barrier.resource));
+                inline void emplace(Barrier const &barrier, RenderGraphResult const &rg) {
+                    auto eResource = rg.getResource(barrier.resource);
+                    if(eResource.has<vk::Image>())
+                        imageBarriers.emplace_back(barrier.getImageBarrier(eResource));
+                    if(eResource.has<vk::Buffer>())
+                        bufferBarriers.emplace_back(barrier.getBufferBarrier(eResource));
                 }
             };
             // For each queue for release/acquire operations
@@ -1084,9 +1091,9 @@ int app(int argc, char **argv) {
                     barrier.src.queueIndex = barrier.dst.queueIndex;
 
                 if(barrier.src.queueIndex != barrier.dst.queueIndex)
-                    queueBarriers[barrier.src.queueIndex].emplace(barrier);
+                    queueBarriers[barrier.src.queueIndex].emplace(barrier, renderGraph);
                 
-                queueBarriers[barrier.dst.queueIndex].emplace(barrier);
+                queueBarriers[barrier.dst.queueIndex].emplace(barrier, renderGraph);
             }
 
 

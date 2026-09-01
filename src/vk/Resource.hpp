@@ -76,8 +76,8 @@ inline Buffer makeBuffer(VmaAllocator allocator, std::vector<T> const &vec, VkBu
         .allocInfo = {
             .allocator = allocator,
         },
-        .data = vec.data(),
         .size = static_cast<uint32_t>(vec.size() * sizeof(T)),
+        .data = vec.data(),
     });
 }
 
