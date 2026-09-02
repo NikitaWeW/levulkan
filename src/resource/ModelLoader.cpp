@@ -454,6 +454,7 @@ void ModelLoaderImpl::loadMaterialTexture(aiMaterial const *material, aiTextureT
         {
             MODEL_LOADER_TRACE("Loading embedded compressed texture \"{}\"", embedded->mFilename.C_Str());
             out = mTextureLoader.loadFromMemory(embedded->pcData, embedded->mWidth, mOptions.textureOptions);
+            mRegistry->get<Texture2D>(out).path = embedded->mFilename.C_Str();
         } else
         {
             MODEL_LOADER_TRACE("Loading embedded raw texture \"{}\"", embedded->mFilename.C_Str());
@@ -616,7 +617,7 @@ void calculateParent(Model::Skeleton &skeleton, aiNode const *node, int parent) 
         calculateParent(skeleton, node->mChildren[i], parent);
     }
 }
-ecs::entity ModelLoaderImpl::processLight(aiLight const *light) {
+ecs::entity ModelLoaderImpl::processLight([[maybe_unused]] aiLight const *light) {
     return 0;
     // switch(light->mType)
     // {
@@ -739,11 +740,14 @@ ecs::entity ModelLoader::loadFromFile(std::string_view path, ModelLoaderOptions 
     Assimp::Importer importer;
     importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
     importer.SetPropertyInteger(AI_CONFIG_PP_LBW_MAX_WEIGHTS, 4);
-    aiScene const *scene = importer.ReadFile(std::string{path},
-        ASSIMP_FLAGS |
-        (options.flipWindingOrder ? aiProcess_FlipWindingOrder : 0) |
-        (options.flipUVs ? aiProcess_FlipUVs : 0)
-    );
+    unsigned flags = ASSIMP_FLAGS;
+    if(options.flipWindingOrder) {
+        flags |= aiProcess_FlipWindingOrder;
+    }
+    if(options.flipUVs) {
+        flags |= aiProcess_FlipUVs;
+    }
+    aiScene const *scene = importer.ReadFile(std::string{path}, flags);
 
     if(!scene)
     {
@@ -776,11 +780,14 @@ ecs::entity ModelLoader::loadFromMemory(void const *data, size_t size, ModelLoad
     Assimp::Importer importer;
     importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
     importer.SetPropertyInteger(AI_CONFIG_PP_LBW_MAX_WEIGHTS, 4);
-    aiScene const *scene = importer.ReadFileFromMemory(data, size,
-        ASSIMP_FLAGS |
-        (options.flipWindingOrder ? aiProcess_FlipWindingOrder : 0) |
-        (options.flipUVs ? aiProcess_FlipUVs : 0)
-    );
+    unsigned flags = ASSIMP_FLAGS;
+    if(options.flipWindingOrder) {
+        flags |= aiProcess_FlipWindingOrder;
+    }
+    if(options.flipUVs) {
+        flags |= aiProcess_FlipUVs;
+    }
+    aiScene const *scene = importer.ReadFileFromMemory(data, size, flags);
 
     if(!scene)
     {

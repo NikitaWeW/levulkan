@@ -333,7 +333,7 @@ void fs::MemoryFilesystem::createDirectory(Path const &path, Error *err) {
         return;
     }
 
-    auto &desc = getDesc(path, DescriptorType::Directory);
+    getDesc(path, DescriptorType::Directory);
 }
 void fs::MemoryFilesystem::createDirectories(Path const &path, Error *err) {
     auto parentPath = path;
@@ -353,7 +353,7 @@ void fs::MemoryFilesystem::createDirectories(Path const &path, Error *err) {
             return;
     }
 }
-bool fs::MemoryFilesystem::exists(Path const &path, Error *err) const {
+bool fs::MemoryFilesystem::exists(Path const &path, Error *) const {
     return path.empty() || getFileIndex(path) != 0;
 }
 uintmax_t fs::MemoryFilesystem::fileSize(Path const &path, Error *err) const {
@@ -398,7 +398,7 @@ std::vector<fs::Path> fs::MemoryFilesystem::getContents(Path const &path, bool r
     auto prefix = path.makeAbsolute("");
     for(auto const &desc : mDescriptors.dense()) {
         if(recursive) {
-            if(prefix.empty() || desc.path.string().compare(0, prefix.string().size(), prefix.string()) == 0 && desc.path != path)
+            if(prefix.empty() || (desc.path.string().compare(0, prefix.string().size(), prefix.string()) == 0 && desc.path != path))
                 res.emplace_back(desc.path);
         } else {
             if(desc.path.parentPath() == prefix)
@@ -408,12 +408,12 @@ std::vector<fs::Path> fs::MemoryFilesystem::getContents(Path const &path, bool r
 
     return res;
 }
-bool fs::MemoryFilesystem::isDirectory(Path const &path, Error *err) const {
+bool fs::MemoryFilesystem::isDirectory(Path const &path, Error *) const {
     uint index = getFileIndex(path);
-    return path.empty() || index != 0 && mDescriptors.at(index).type == DescriptorType::Directory;
+    return path.empty() || (index != 0 && mDescriptors.at(index).type == DescriptorType::Directory);
 
 }
-bool fs::MemoryFilesystem::isRegularFile(Path const &path, Error *err) const {
+bool fs::MemoryFilesystem::isRegularFile(Path const &path, Error *) const {
     uint index = getFileIndex(path);
     return index != 0 && mDescriptors.at(index).type == DescriptorType::File;
 }
@@ -423,8 +423,6 @@ bool fs::MemoryFilesystem::isEmpty(Path const &path, Error *err) const {
         return false;
     }
 
-    uint index = getFileIndex(path);
-    auto const &desc = mDescriptors.at(index);
     return isRegularFile(path) ? fileSize(path) == 0 : getContents(path, false).size() == 0;
 }
 std::chrono::file_clock::time_point fs::MemoryFilesystem::lastTimeWrite(Path const &path, Error *err) const {

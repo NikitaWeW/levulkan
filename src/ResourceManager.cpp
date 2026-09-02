@@ -107,9 +107,9 @@ ResourceAllocator::~ResourceAllocator() {
     vkDestroyFence(mAllocInfo.device, mFence, nullptr);
 }
 uint32_t ResourceAllocator::processImage(Entity eImage) {
-    assert(eImage.valid() && (eImage.has<Texture2D>()) && "Invalid model!");
+    assert(eImage.valid() && (eImage.contains<Texture2D>()) && "Invalid model!");
     assert(mCommandBuffer && "ResourceAllocator uninitialized! (Make sure to not use the default constructor)");
-    if(!eImage.has<vk::Image>() && eImage.has<Texture2D>())
+    if(!eImage.contains<vk::Image>() && eImage.contains<Texture2D>())
     {
         auto &image = eImage.get<Texture2D>();
 
@@ -157,7 +157,7 @@ uint32_t ResourceAllocator::processImage(Entity eImage) {
         };
         eImage.emplace<vk::Image>(vk::makeImage(ci));
         eImage.emplace<ImageIndex>(mProcessedImages.size());
-        eImage.emplace<Name>(ci.name);
+        eImage.emplace<DebugName>(ci.name);
         mProcessedImages.emplace_back(eImage);
 
         vk::insertImageMemoryBarrier(mCommandBuffer, eImage.get<vk::Image>().image,
@@ -188,8 +188,8 @@ uint32_t ResourceAllocator::processImage(Entity eImage) {
     return eImage.get<ImageIndex>().index;
 }
 void ResourceAllocator::processModel(Entity eModel) {
-    assert(eModel.valid() && eModel.has<Model>() && "Invalid model!");
-    if(eModel.has<VulkanModel>())
+    assert(eModel.valid() && eModel.contains<Model>() && "Invalid model!");
+    if(eModel.contains<VulkanModel>())
         return;
 
     auto &model = eModel.get<Model>();
@@ -242,31 +242,30 @@ void ResourceAllocator::end() {
 }
 
 enum class ResourceType {Image, Buffer};
-static ResourceType getResourceType(RestrictedAnyEntity<vk::Image, vk::Buffer> e) {
-    return e.has<vk::Image>() ? ResourceType::Image : ResourceType::Buffer;
+static ResourceType getResourceType(RestrictedEntityAny<vk::Image, vk::Buffer> e) {
+    return e.contains<vk::Image>() ? ResourceType::Image : ResourceType::Buffer;
 }
-void DescriptorManager::addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, RestrictedAnyEntity<vk::Image, vk::Buffer> resource, VkImageLayout layout) {
-    addResource(pipeline, binding, std::vector<RestrictedAnyEntity<vk::Image, vk::Buffer>>{resource}, layout);
+void DescriptorManager::addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, RestrictedEntityAny<vk::Image, vk::Buffer> resource, ResourceDescriptorUpdateInfo info) {
+    addResource(pipeline, binding, std::vector<Entity>{resource}, info);
 }
-void DescriptorManager::addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, std::vector<Entity> resources, VkImageLayout layout) {
-    std::vector<RestrictedAnyEntity<vk::Image, vk::Buffer>> restrictedResources(resources.size());
-    std::copy(resources.begin(), resources.end(), restrictedResources.begin());
-    addResource(pipeline, binding, restrictedResources, layout);
-}
-void DescriptorManager::addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, std::vector<RestrictedAnyEntity<vk::Image, vk::Buffer>> resources, VkImageLayout layout) {
+void DescriptorManager::addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, std::vector<Entity> resources, ResourceDescriptorUpdateInfo info) {
     assert(!resources.empty());
     ResourceType type = getResourceType(resources[0]);
     for(uint i = 1; i < resources.size(); ++i) {
-        assert(getResourceType(resources[i]) == type && "All resources must be the same type (buffer / image)");
+        auto e = resources[i];
+        assert(e.valid());
+        assert(e.contains<vk::Image>() || e.contains<vk::Buffer>());
+        assert(getResourceType(e) == type && "All resources must be the same type (buffer / image)");
     }
     if(type == ResourceType::Image) {
-        assert(layout != VK_IMAGE_LAYOUT_UNDEFINED && "layout required for image resources");
+        assert(info.imageLayout != VK_IMAGE_LAYOUT_UNDEFINED && "layout required for image resources");
     }
     
     mPipelineResources[pipeline][binding] = resources;
-    mLayouts[{pipeline, binding}] = layout;
+    mInfos[{pipeline, binding}] = info;
+    LOG_TRACE("Adding {} {} resources to binding (set={}, binding={}) to pipeline {}", resources.size(), type == ResourceType::Image ? "image" : "buffer", binding.set, binding.binding, static_cast<Entity const &>(pipeline));
 
-    if(!pipeline.has<ResourceDirty>())
+    if(!pipeline.contains<ResourceDirty>())
         pipeline.emplace<ResourceDirty>();
 }
 void DescriptorManager::erase(Entity pipeline, vk::DescriptorBinding binding) {
@@ -283,50 +282,64 @@ void DescriptorManager::erase(Entity pipeline, vk::DescriptorBinding binding) {
     if(resources.empty())
         mPipelineResources.erase(pipeline);
 }
+#define LOG_DESC(should, msg, ...) if(static_cast<bool>(should)) { LOG_TRACE(msg, __VA_ARGS__); }
 void DescriptorManager::update(uint frame, bool force) {
+    bool shouldLog = !sReg.view<ResourceDirty>().empty();
+    LOG_DESC(shouldLog, "Updating descriptors for frame {}, force {}", frame, force);
     for(auto &[ePipeline, bindings] : mPipelineResources) {
-        assert(ePipeline.valid() && ePipeline.has<vk::Pipeline>());
+        assert(ePipeline.valid() && ePipeline.contains<vk::Pipeline>());
         auto &pipeline = ePipeline.get<vk::Pipeline>();
 
-        bool dirty = force || ePipeline.has<ResourceDirty>();
+        bool pipelineDirty = force || ePipeline.contains<ResourceDirty>();
+        if(pipelineDirty) {
+            LOG_DESC(shouldLog, "  Pipeline {} is dirty", ePipeline);
+        } else  {
+            LOG_DESC(shouldLog, "  Processing pipeline {}", ePipeline);
+        }
         std::vector<vk::DescriptorWrite> writes;
         for(auto &[binding, resources] : bindings) {
-            if(dirty)
-                goto update;
+            assert(!resources.empty());
 
-            for(auto const &res : resources) {
-                if(res.has<ResourceDirty>()) {
-                    dirty = true;
-                    break;
+            LOG_DESC(shouldLog, "    Binding (set={}, binding={})", binding.set, binding.binding);
+
+            bool resourceDirty = false;
+
+            if(!pipelineDirty) {
+                for(auto const &res : resources) {
+                    if(res.contains<ResourceDirty>()) {
+                        resourceDirty = true;
+                        LOG_DESC(shouldLog, "    Resource {} at binding (set={}, binding={}) is dirty! (image={}, buffer={})", static_cast<Entity const &>(res), binding.set, binding.binding, res.contains<vk::Image>(), res.contains<vk::Buffer>());
+                        break;
+                    }
                 }
             }
-
-            update:
             
-            if(dirty) {
+            if(pipelineDirty || resourceDirty) {
                 std::vector<VkDescriptorImageInfo> imageInfos;
                 std::vector<VkDescriptorBufferInfo> bufferInfos;
                 imageInfos.reserve(resources.size());
                 bufferInfos.reserve(resources.size());
 
                 for(auto res : resources) {
-                    if(res.has<ResourceDirty>())
-                        res.remove<ResourceDirty>();
-                    if(res.has<vk::Image>()) {
+                    if(res.contains<vk::Image>()) {
                         auto const &image = res.get<vk::Image>();
                         VkDescriptorImageInfo imageInfo{
                             .sampler = image.sampler,
                             .imageView = image.view,
-                            .imageLayout = mLayouts.at({ePipeline, binding}),
+                            .imageLayout = mInfos.at({ePipeline, binding}).imageLayout,
                         };
                         imageInfos.emplace_back(imageInfo);
-                    } else {
+                        LOG_DESC(shouldLog, "      Adding image resource {}", static_cast<Entity const &>(res));
+                    } else if(res.contains<vk::Buffer>()) {
                         auto const &buffer = res.get<vk::Buffer>();
                         bufferInfos.emplace_back(VkDescriptorBufferInfo{
                             .buffer = buffer.buffer,
                             .offset = 0,
-                            .range = VK_WHOLE_SIZE
+                            .range = mInfos.at({ePipeline, binding}).bufferSize
                         });
+                        LOG_DESC(shouldLog, "      Adding buffer resource {}", static_cast<Entity const &>(res));
+                    } else {
+                        assert(false && "wtf");
                     }
                 }
 
@@ -341,8 +354,19 @@ void DescriptorManager::update(uint frame, bool force) {
             if(!writes.empty()) {
                 vk::writeDescriptors(pipeline, writes, frame);
             }
-            if(ePipeline.has<ResourceDirty>()) {
-                Entity(ePipeline).remove<ResourceDirty>(); // I dont even know man...
+            if(ePipeline.contains<ResourceDirty>()) {
+                Entity(ePipeline).erase<ResourceDirty>(); // I dont even know man...
+            }
+        }
+    }
+
+
+    for(auto &[ePipeline, bindings] : mPipelineResources) {
+        for(auto &[_, resources] : bindings) {
+            for(auto &resource : resources) {
+                if(resource.contains<ResourceDirty>()) {
+                    resource.erase<ResourceDirty>();
+                }
             }
         }
     }

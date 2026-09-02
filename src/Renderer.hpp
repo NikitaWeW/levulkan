@@ -88,15 +88,18 @@ public:
 };
 
 struct ResourceDirty {};
+struct ResourceDescriptorUpdateInfo {
+    VkImageLayout imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkDeviceSize bufferSize = VK_WHOLE_SIZE;
+};
 class DescriptorManager {
 private:
     // Oh god not again
-    std::map<Entity, std::map<vk::DescriptorBinding, std::vector<RestrictedAnyEntity<vk::Image, vk::Buffer>>>> mPipelineResources;
-    std::map<std::pair<Entity, vk::DescriptorBinding>, VkImageLayout> mLayouts;
+    std::map<Entity, std::map<vk::DescriptorBinding, std::vector<Entity>>> mPipelineResources;
+    std::map<std::pair<Entity, vk::DescriptorBinding>, ResourceDescriptorUpdateInfo> mInfos;
 public:
-    void addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, RestrictedAnyEntity<vk::Image, vk::Buffer> resource, VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED);
-    void addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, std::vector<RestrictedAnyEntity<vk::Image, vk::Buffer>> resources, VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED);
-    void addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, std::vector<Entity> resources, VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED);
+    void addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, RestrictedEntityAny<vk::Image, vk::Buffer> resource, ResourceDescriptorUpdateInfo info);
+    void addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, std::vector<Entity> resources, ResourceDescriptorUpdateInfo info);
     void erase(Entity pipeline, vk::DescriptorBinding binding);
     void update(uint frame = 0, bool force = false);
 };
@@ -166,7 +169,7 @@ private:
 public:
     /// @brief Yup it adds an external resource.
     /// @param keep Keeps the contents of the resource from a previous frame (whether to set the barrier layout to undefined). Image only
-    void addExternalResource(std::string_view name, RestrictedAnyEntity<vk::Image, vk::Buffer> eResource, bool keep = false);
+    void addExternalResource(std::string_view name, RestrictedEntityAny<vk::Image, vk::Buffer> eResource, bool keep = false);
     void addImageResource(std::string_view name, RenderGraphImageCreateInfo info);
     void addBufferResource(std::string_view name, RenderGraphBufferCreateInfo info);
 

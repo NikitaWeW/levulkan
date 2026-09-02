@@ -551,7 +551,7 @@ void vk::bindDescriptorSet(VkCommandBuffer cb, Pipeline const &pipeline, uint32_
 
     assert(pipeline.valid);
     assert(pipeline._reflection);
-    auto const &reflection = *static_cast<Reflection *>(pipeline._reflection);
+    // auto const &reflection = *static_cast<Reflection *>(pipeline._reflection);
 
     VkShaderStageFlags stages = VK_SHADER_STAGE_ALL;
 

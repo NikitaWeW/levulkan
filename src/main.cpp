@@ -56,13 +56,13 @@ static T hash_combine(T lhs, T rhs) {
 }
 
 static std::string printTexture(Entity e) {
-    if(!e.valid() || !e.has<Texture2D>())
+    if(!e.valid() || !e.contains<Texture2D>())
         return fmt::format("{}", e);
     auto const &texture2D = e.get<Texture2D>();
     return fmt::format("{}, \"{:<30} {}x{}, {:>3} {} mips", e, texture2D.path + "\",", texture2D.bitmap.size.x, texture2D.bitmap.size.y,(texture2D.srgb ? "srgb" : "not srgb"), texture2D.numMipLevels);
 }
 [[maybe_unused]] static void printModelData(Entity e) {
-    assert(e.valid() && e.has<Model>());
+    assert(e.valid() && e.contains<Model>());
     Model const &model = e.get<Model>();
     LOG_INFO("");
     LOG_INFO("Model: {}: \"{}\"", e, model.path);
@@ -169,7 +169,7 @@ static Transform lookat(glm::vec3 pos, glm::vec3 center) {
     };
 }
 static Entity makeWindow(Registry &reg, std::string_view name) {
-    auto eWindow = reg.create(Window{}, Name("window_" + std::string(name)));
+    auto eWindow = reg.create(Window{}, DebugName("window_" + std::string(name)));
     auto &window = eWindow.get<Window>();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     window.handle = glfwCreateWindow(800, 600, name.data(), nullptr, nullptr);
@@ -338,7 +338,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         .size = {window->size.x, window->size.y},
         .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
         .registry = &sReg
-    }), Name("swapchain_" + (window.has<Name>() ? window.get<Name>().name : "")));
+    }), DebugName("swapchain_" + (window.contains<DebugName>() ? window.get<DebugName>().name : "")));
 
     VkCommandPool commandPool = createCommandPool(initRes.queueFamilies.indices.at(VK_QUEUE_GRAPHICS_BIT), device);
     VkQueue graphicsQueue = initRes.queueFamilies.getQueue(VK_QUEUE_GRAPHICS_BIT);
@@ -391,7 +391,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
         .allocInfo = ALLOCATION_INFO,
         .size = static_cast<uint32_t>(64*1e6), // 64MB
-        .map = true
+        .map = true,
+        .name = "uniform_buffer"
     });
 
     VkPhysicalDeviceProperties properties;
@@ -498,22 +499,22 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         builder.addImageResource("gbuffer_albedo", {.imageInfo = {
             .format = VK_FORMAT_R8G8B8A8_UNORM,
             .dimensions = {extent.width, extent.height},
-            .view = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT }
+            .view = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT },
         }, .resizeToSwapchain = true });
         builder.addImageResource("gbuffer_position", {.imageInfo = {
             .format = VK_FORMAT_R8G8B8A8_UNORM,
             .dimensions = {extent.width, extent.height},
-            .view = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT }
+            .view = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT },
         }, .resizeToSwapchain = true });
         builder.addImageResource("gbuffer_normal", {.imageInfo = {
             .format = VK_FORMAT_R16G16B16A16_SFLOAT,
             .dimensions = {extent.width, extent.height},
-            .view = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT }
+            .view = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT },
         }, .resizeToSwapchain = true });
         builder.addImageResource("gbuffer_pbr", {.imageInfo = {
             .format = VK_FORMAT_R8G8B8A8_UNORM,
             .dimensions = {extent.width, extent.height},
-            .view = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT }
+            .view = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT },
         }, .resizeToSwapchain = true });
         builder.addImageResource("gbuffer_depth", {.imageInfo = {
             .format = DEPTH_ATTACHMENT_FORMAT,
@@ -574,9 +575,10 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             data.shader = e;
             e.emplace<vk::Pipeline>(vk::makePipeline(data.shader.get<vk::Shader>(), layoutCi, pipelineCi));
             data.pipeline = e;
+            e.emplace<DebugName>("gbuffer_pipeline");
             vk::allocateDescriptors(data.pipeline.getc());
-            descManager.addResource(data.pipeline, {0, 0}, uniformBuffer.getBuffer());
-            descManager.addResource(data.pipeline, {1, 0}, {images}, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            descManager.addResource(data.pipeline, {0, 0}, uniformBuffer.getBuffer(), {.bufferSize = sizeof(UniformBuffer)});
+            descManager.addResource(data.pipeline, {1, 0}, {images}, {.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
         }
         assert(data.shader.valid() && data.shader.get<vk::Shader>().valid);
         assert(data.pipeline.valid() && data.pipeline.get<vk::Pipeline>().valid);
@@ -682,14 +684,14 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 LOG_ERROR("Model instance e has invalid eModel {}", eInstance, instance.eModel);
                 continue;
             }
-            if(!instance.eModel.has<VulkanModel>())
+            if(!instance.eModel.contains<VulkanModel>())
             {
                 LOG_ERROR("Model {} doesent have VulkanModel component!", instance.eModel);
                 continue;
             }
 
             uniformBufferData.uMatrixData.model.modelMat = {1.0f};
-            if(eInstance.has<Transform>())
+            if(eInstance.contains<Transform>())
                 uniformBufferData.uMatrixData.model.modelMat = eInstance.get<Transform>().getMat();
 
             uniformBufferData.uMatrixData.model.normMat = glm::transpose(glm::inverse(glm::mat3(uniformBufferData.uMatrixData.model.modelMat)));
@@ -727,7 +729,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         builder.addImageResource("lighting_out", {.imageInfo = {
             .format = VK_FORMAT_R8G8B8A8_UNORM,
             .dimensions = {extent.width, extent.height},
-            .view = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT }
+            .view = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT },
         }, .resizeToSwapchain = true });
         builder.attachResourceRead("gbuffer_albedo",   SHADER_READ_TRAITS);
         builder.attachResourceRead("gbuffer_position", SHADER_READ_TRAITS);
@@ -761,17 +763,17 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             data.shader = e;
             e.emplace<vk::Pipeline>(vk::makePipeline(data.shader.get<vk::Shader>(), layoutCi, pipelineCi));
             data.pipeline = e;
+            e.emplace<DebugName>("lighting_pipeline");
             vk::allocateDescriptors(data.pipeline.getc());
-            descManager.addResource(data.pipeline, {0, 0}, uniformBuffer.getBuffer());
-            descManager.addResource(data.pipeline, {1, 0}, {images}, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            descManager.addResource(data.pipeline, {1, 0}, uniformBuffer.getBuffer(), {.bufferSize = sizeof(MatrixData::CameraData)});
         }
         assert(data.shader.valid() && data.shader.get<vk::Shader>().valid);
         assert(data.pipeline.valid() && data.pipeline.get<vk::Pipeline>().valid);
 
-        descManager.addResource(data.pipeline, {0, 0}, res.getResource("gbuffer_albedo"), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        descManager.addResource(data.pipeline, {0, 1}, res.getResource("gbuffer_position"), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        descManager.addResource(data.pipeline, {0, 2}, res.getResource("gbuffer_normal"), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        descManager.addResource(data.pipeline, {0, 3}, res.getResource("gbuffer_pbr"), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        descManager.addResource(data.pipeline, {0, 0}, res.getResource("gbuffer_albedo"), {.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        descManager.addResource(data.pipeline, {0, 1}, res.getResource("gbuffer_position"), {.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        descManager.addResource(data.pipeline, {0, 2}, res.getResource("gbuffer_normal"), {.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        descManager.addResource(data.pipeline, {0, 3}, res.getResource("gbuffer_pbr"), {.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
         data.output = res.getResource("lighting_out");
     }, [&](lighting_data &data, VkCommandBuffer cb){
         auto const &out = data.output.getc();
@@ -779,11 +781,6 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         auto const &pipeline = data.pipeline.getc();
 
         VkExtent2D extent = swapchain->createInfo.imageExtent;
-
-        // Update matrix data
-        UniformBuffer uniformBufferData;
-        uniformBufferData.uMatrixData.camera.projMat = camera.projMat;
-        uniformBufferData.uMatrixData.camera.viewMat = camera.viewMat;
 
         std::array<VkRenderingAttachmentInfo, 1> colorAttachmentInfos = {
             VkRenderingAttachmentInfo{
@@ -823,7 +820,14 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         vkCmdSetScissor(cb, 0, 1, &scissor);
 
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
-        vk::bindDescriptorSet(cb, pipeline, 1);
+        vk::bindDescriptorSet(cb, pipeline, 0, 0);
+
+        MatrixData::CameraData uniformBufferData;
+        uniformBufferData.projMat = camera.projMat;
+        uniformBufferData.viewMat = camera.viewMat;
+        uint32_t offset = uniformBuffer.request(sizeof(uniformBufferData), frameIndex, properties.limits.minUniformBufferOffsetAlignment);
+        std::memcpy(static_cast<char *>(uniformBuffer.getBuffer().get<vk::Buffer>().mapped) + offset, &uniformBufferData, sizeof(uniformBufferData));
+        vk::bindDescriptorSet(cb, pipeline, 1, 0, {offset});
 
         vkCmdDraw(cb, 3, 1, 0, 0);
 
@@ -1040,7 +1044,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
         descManager.update(frameIndex);
         for(auto e : sReg.view<ResourceDirty>()) {
-            e.remove<ResourceDirty>();
+            e.erase<ResourceDirty>();
         }
 
         // Acquire next image
@@ -1077,9 +1081,9 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 std::vector<VkBufferMemoryBarrier2> bufferBarriers;
                 inline void emplace(Barrier const &barrier, RenderGraphResult const &rg) {
                     auto eResource = rg.getResource(barrier.resource);
-                    if(eResource.has<vk::Image>())
+                    if(eResource.contains<vk::Image>())
                         imageBarriers.emplace_back(barrier.getImageBarrier(eResource));
-                    if(eResource.has<vk::Buffer>())
+                    if(eResource.contains<vk::Buffer>())
                         bufferBarriers.emplace_back(barrier.getBufferBarrier(eResource));
                 }
             };

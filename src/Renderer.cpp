@@ -56,13 +56,13 @@ struct RenderGraphResultImpl {
 };
 struct PleaseKeepTheImageContents {};
 
-void RenderPassBuilder::addExternalResource(std::string_view name, RestrictedAnyEntity<vk::Image, vk::Buffer> eResource, bool keep) {
+void RenderPassBuilder::addExternalResource(std::string_view name, RestrictedEntityAny<vk::Image, vk::Buffer> eResource, bool keep) {
     mExternalResources[std::string(name)] = eResource;
-    if(eResource.has<vk::Image>()) {
-        if(keep && !eResource.has<PleaseKeepTheImageContents>()) {
+    if(eResource.contains<vk::Image>()) {
+        if(keep && !eResource.contains<PleaseKeepTheImageContents>()) {
             eResource.emplace<PleaseKeepTheImageContents>();
-        } else if(!keep && eResource.has<PleaseKeepTheImageContents>()) {
-            eResource.remove<PleaseKeepTheImageContents>();
+        } else if(!keep && eResource.contains<PleaseKeepTheImageContents>()) {
+            eResource.erase<PleaseKeepTheImageContents>();
         }
     }
 }
@@ -484,22 +484,27 @@ static bool isCompatible(RenderGraphImageCreateInfo const &first, RenderGraphIma
 
 }
 // Additionally checks the type of an external resource
-static ResourceCreateInfo::Type getResourceType(RestrictedAnyEntity<ResourceCreateInfo> e) {
+static ResourceCreateInfo::Type getResourceType(RestrictedEntityAny<ResourceCreateInfo> e) {
     auto const &ci = e.get<ResourceCreateInfo>();
     if(ci.type == ResourceCreateInfo::External) {
-        assert(e.has<vk::Image>() || e.has<vk::Buffer>());
-        return e.has<vk::Image>() ? ResourceCreateInfo::Image : ResourceCreateInfo::Buffer;
+        assert(e.contains<vk::Image>() || e.contains<vk::Buffer>());
+        return e.contains<vk::Image>() ? ResourceCreateInfo::Image : ResourceCreateInfo::Buffer;
     } else {
         return ci.type;
     }
 }
-static Entity findPoolResource(ResourceCreateInfo const &ci, RenderGraphImpl &renderGraph) {
+static Entity findPoolResource(ResourceCreateInfo const &ci, RenderGraphImpl &renderGraph, VkImageUsageFlags usage = 0) {
     for(auto poolRes : renderGraph.resourcePool) {
-        assert(poolRes.has<ResourceCreateInfo>());
+        assert(poolRes.contains<ResourceCreateInfo>());
         auto type = getResourceType(poolRes);
 
         if(type != ci.type)
             continue;
+
+        // External resources must mach the usage
+        if(poolRes.contains<vk::Image>() && (poolRes.get<vk::Image>().createInfo.usage & usage) != usage) {
+            continue;
+        }
 
         auto const &poolCi = poolRes.get<ResourceCreateInfo>();
 
@@ -514,8 +519,11 @@ static Entity findPoolResource(ResourceCreateInfo const &ci, RenderGraphImpl &re
     return Entity();
 }
 static void aliasResources(RenderGraphImpl &renderGraph) {
+    LOG_TRACE("Aliasing resources");
     for(uint i = 0; i < renderGraph.passStack.size(); ++i) {
         auto const &pass = renderGraph.passes.at(renderGraph.passStack.at(i));
+
+        LOG_TRACE("  Processing pass {}", pass.name);
 
         // Allocate
         for(auto const &[resourceName, traits] : pass.writes) {
@@ -532,10 +540,14 @@ static void aliasResources(RenderGraphImpl &renderGraph) {
 
             if(!e.valid()) {
                 assert(renderGraph.reg && "Should have called RenderGraphBuilder::setAllocInfo!");
-                e = renderGraph.reg->create(ci);
+                e = renderGraph.reg->create(ci, DebugName(resourceName));
+                LOG_TRACE("    Adding new pool resource {} for {} {}", e, resourceName, string_VkAccessFlagBits2(traits.access));
+            } else {
+                LOG_TRACE("    Found pool resource {} for resource {} {}", e, resourceName, string_VkAccessFlagBits2(traits.access));
+                e.get<DebugName>().name += "," + resourceName;
             }
 
-            if(!e.has<ResourceAllocationInfo>()) {
+            if(!e.contains<ResourceAllocationInfo>()) {
                 e.emplace<ResourceAllocationInfo>();
             }
 
@@ -546,13 +558,24 @@ static void aliasResources(RenderGraphImpl &renderGraph) {
         }
 
         // Free
-        for(auto const &[resourceName, _] : pass.reads) {
+        for(auto const &[resourceName, traits] : pass.reads) {
             auto &resource = renderGraph.resources.at(resourceName);
-            // auto const &ci = resource.eResource.get<ResourceCreateInfo>();
+            auto const &ci = resource.eResource.get<ResourceCreateInfo>();
+
+            if(resource.eResource.contains<ResourceAllocationInfo>()) {
+                auto &allocInfo = resource.eResource.get<ResourceAllocationInfo>();
+                if(ci.type == ResourceCreateInfo::Image) {
+                    allocInfo.imageUsage |= traits.imageTraits.usage;
+                } else {
+                    allocInfo.bufferUsage |= traits.bufferTraits.usage;
+                }
+            }
 
             // Might use external resources if the contents are not used next frame
-            if(resource.eResource.has<PleaseKeepTheImageContents>())
+            if(resource.eResource.contains<PleaseKeepTheImageContents>())
                 continue;
+
+            LOG_TRACE("    Freeing resource {} {}", resource.name, resource.eResource);
 
             if(resource.lifetimeEnd <= i)
                 renderGraph.resourcePool.emplace(resource.eResource);
@@ -560,34 +583,35 @@ static void aliasResources(RenderGraphImpl &renderGraph) {
     }
 }
 static void allocateResources(RenderGraphImpl &renderGraph) {
+    LOG_TRACE("Allocating resources");
     if(!renderGraph.reg)
         return;
     for(auto &e : renderGraph.reg->view<ResourceCreateInfo, ResourceAllocationInfo>()) {
         auto const &ci = e.get<ResourceCreateInfo>();
         auto allocInfo = e.get<ResourceAllocationInfo>();
-        e.remove<ResourceAllocationInfo>();
+        e.erase<ResourceAllocationInfo>();
 
         assert(ci.type != ResourceCreateInfo::External);
 
         if(ci.type == ResourceCreateInfo::Image) {
+            LOG_TRACE("  Allocating image resource {} for {}", static_cast<Entity &>(e), string_VkImageUsageFlags(allocInfo.imageUsage));
             assert(allocInfo.imageUsage != 0);
             vk::ImageCreateInfo imageCreateInfo{
                 .usage = allocInfo.imageUsage,
                 .allocInfo = renderGraph.allocInfo,
                 .image = ci.image.imageInfo,
             };
-            if(e.has<Name>())
-                imageCreateInfo.name = e.get<Name>().name;
+            if(e.contains<DebugName>())
+                imageCreateInfo.name = e.get<DebugName>().name;
             if(ci.image.resizeToSwapchain)
                 e.emplace<ResizeToSwapchain>();
 
-            // FIXME: bad image creation (no sampler flag?)
-            // maybe main.cpp
             e.emplace<vk::Image>(vk::makeImage(imageCreateInfo));
             assert(e.get<vk::Image>().image);
             assert(e.get<vk::Image>().view);
             e.emplace<RenderGraphResource>();
         } else {
+            LOG_TRACE("  Allocating buffer resource {} for {} {} bytes", static_cast<Entity &>(e), string_VkBufferUsageFlags(allocInfo.bufferUsage), allocInfo.bufferSize);
             assert(allocInfo.bufferUsage != 0);
             assert(allocInfo.bufferSize != 0);
             vk::BufferCreateInfo bufferCreateInfo{
@@ -596,8 +620,8 @@ static void allocateResources(RenderGraphImpl &renderGraph) {
                 .size = allocInfo.bufferSize,
                 .map = false,
             };
-            if(e.has<Name>())
-                bufferCreateInfo.name = e.get<Name>().name;
+            if(e.contains<DebugName>())
+                bufferCreateInfo.name = e.get<DebugName>().name;
 
             e.emplace<vk::Buffer>(vk::makeBuffer(bufferCreateInfo));
         }
@@ -637,7 +661,7 @@ static bool buildBarriers(RenderGraphImpl &renderGraph) {
 
         for(auto const &[resourceName, traits] : pass.reads) {
             auto const &resource = renderGraph.resources.at(resourceName);
-            bool history = resource.eResource.has<PleaseKeepTheImageContents>() && !resourceState.contains(resource.eResource);
+            bool history = resource.eResource.contains<PleaseKeepTheImageContents>() && !resourceState.contains(resource.eResource);
             auto &state = resourceState[resource.eResource];
             auto prevState = history ? lastScope.at(resource.eResource) : state;
 

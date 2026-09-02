@@ -115,7 +115,7 @@ static void getImages(Swapchain &swapchain, Registry &reg) {
             },
             .owns = false,
         }));
-        eImage.emplace<Name>(eImage.get<vk::Image>().createInfo.name);
+        eImage.emplace<DebugName>(eImage.get<vk::Image>().createInfo.name);
         VkDebugUtilsObjectNameInfoEXT name_info{
             .sType        = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
             .objectType   = VK_OBJECT_TYPE_IMAGE,
