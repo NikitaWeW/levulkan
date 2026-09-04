@@ -152,6 +152,8 @@ Image vk::makeImage(ImageCreateInfo const &ci) {
     VkImageCreateInfo imageCreateInfo = image.createInfo.getImageCreateInfo();
     image.allocationInfo = makeAllocInfo(image.createInfo.allocInfo);
 
+    // LOG_TRACE("Making vulkan image {} {} {}x{}x{}", string_VkImageType(imageCreateInfo.imageType), string_VkFormat(imageCreateInfo.format), imageCreateInfo.extent.width, imageCreateInfo.extent.height, imageCreateInfo.extent.depth);
+
     CHECK_VK_RES(vmaCreateImage(image.createInfo.allocInfo.allocator, &imageCreateInfo, &image.allocationInfo, &image.image, &image.allocation, nullptr));
 
     if(image.createInfo.data)
@@ -172,6 +174,7 @@ Image vk::makeImage(ImageCreateInfo const &ci) {
         if(image.createInfo.image.sampler.borderColor == VK_BORDER_COLOR_INT_CUSTOM_EXT)
             LOG_ERROR("vk::ImageCreateInfo::sampler::borderColor=VK_BORDER_COLOR_INT_CUSTOM_EXT is not supported. Use VK_BORDER_COLOR_FLOAT_CUSTOM_EXT.");
 
+        // LOG_TRACE("  Sampler min {} mag {} mip {}", string_VkFilter(samplerCreateInfo.minFilter), string_VkFilter(samplerCreateInfo.magFilter), string_VkSamplerMipmapMode(samplerCreateInfo.mipmapMode));
         CHECK_VK_RES(vkCreateSampler(image.createInfo.allocInfo.device, &samplerCreateInfo, nullptr, &image.sampler));
     }
 
@@ -190,6 +193,7 @@ Image vk::makeImage(ImageCreateInfo const &ci) {
                 .layerCount = image.createInfo.image.dimensions.arrayLayers,
             }
         };
+        // LOG_TRACE("  View {} {} {}", string_VkFormat(viewCI.format), string_VkImageViewType(viewCI.viewType), string_VkImageAspectFlags(viewCI.subresourceRange.aspectMask));
         CHECK_VK_RES(vkCreateImageView(image.createInfo.allocInfo.device, &viewCI, nullptr, &image.view));
     }
 

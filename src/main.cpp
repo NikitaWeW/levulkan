@@ -481,6 +481,15 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         .stages = VK_PIPELINE_STAGE_2_TRANSFER_BIT
     };
 
+    // TODO: A better test render pipeline that uses all of the render graph features
+    // Multiple queues
+    // Complex pass dependencies
+    // Resource aliasing
+    // History resources
+    RenderGraphBuilder builder;
+    builder.setAllocInfo(ALLOCATION_INFO, sReg);
+    builder.setQueueFamilies(initRes.queueFamilies);
+
     struct gbuffer_data {
         DirectEntity<vk::Pipeline> pipeline;
         DirectEntity<vk::Shader> shader;
@@ -491,9 +500,6 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         DirectEntity<vk::Image> pbr;
         DirectEntity<vk::Image> depth;
     };
-    RenderGraphBuilder builder;
-    builder.setAllocInfo(ALLOCATION_INFO, sReg);
-    builder.setQueueFamilies(initRes.queueFamilies);
     builder.addPass<gbuffer_data>("gbuffer", VK_QUEUE_GRAPHICS_BIT, [&](RenderPassBuilder &builder){
         auto extent = swapchain.get<vk::Swapchain>().createInfo.imageExtent;
         builder.addImageResource("gbuffer_albedo", {.imageInfo = {
@@ -727,7 +733,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     builder.addPass<lighting_data>("lighting", VK_QUEUE_GRAPHICS_BIT, [&](RenderPassBuilder &builder){
         auto extent = swapchain->createInfo.imageExtent;
         builder.addImageResource("lighting_out", {.imageInfo = {
-            .format = VK_FORMAT_R8G8B8A8_UNORM,
+            .format = VK_FORMAT_R16G16B16A16_SFLOAT,
             .dimensions = {extent.width, extent.height},
             .view = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT },
         }, .resizeToSwapchain = true });
@@ -770,14 +776,12 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         assert(data.shader.valid() && data.shader.get<vk::Shader>().valid);
         assert(data.pipeline.valid() && data.pipeline.get<vk::Pipeline>().valid);
 
-        descManager.addResource(data.pipeline, {0, 0}, res.getResource("gbuffer_albedo"), {.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        descManager.addResource(data.pipeline, {0, 0}, res.getResource("gbuffer_albedo"),   {.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
         descManager.addResource(data.pipeline, {0, 1}, res.getResource("gbuffer_position"), {.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-        descManager.addResource(data.pipeline, {0, 2}, res.getResource("gbuffer_normal"), {.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-        descManager.addResource(data.pipeline, {0, 3}, res.getResource("gbuffer_pbr"), {.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        descManager.addResource(data.pipeline, {0, 2}, res.getResource("gbuffer_normal"),   {.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        descManager.addResource(data.pipeline, {0, 3}, res.getResource("gbuffer_pbr"),      {.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
         data.output = res.getResource("lighting_out");
     }, [&](lighting_data &data, VkCommandBuffer cb){
-        auto const &out = data.output.getc();
-
         auto const &pipeline = data.pipeline.getc();
 
         VkExtent2D extent = swapchain->createInfo.imageExtent;
@@ -785,7 +789,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         std::array<VkRenderingAttachmentInfo, 1> colorAttachmentInfos = {
             VkRenderingAttachmentInfo{
                 .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                .imageView = out.view,
+                .imageView = data.output->view,
                 .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                 .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
@@ -1042,6 +1046,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         uniformBuffer.free(frameIndex);
         uniformBuffer.realloc();
 
+        // FIXME: multiple frames in flight are not considered by descriptor manager
         descManager.update(frameIndex);
         for(auto e : sReg.view<ResourceDirty>()) {
             e.erase<ResourceDirty>();
@@ -1068,6 +1073,10 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
         //                                   This is so dumb
         renderGraph.setResource("swapchain", swapchain->images[imageIndex]);
+        for(auto const &passName : renderGraph.getPassStack()) {
+            auto const &pass = renderGraph.getPass(passName);
+            pass->storage->postCompile(renderGraph);
+        }
 
         // Record command buffer
         // FUUUUCK
