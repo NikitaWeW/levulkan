@@ -88,19 +88,31 @@ public:
 };
 
 struct ResourceDirty {};
-struct ResourceDescriptorUpdateInfo {
-    VkImageLayout imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    VkDeviceSize bufferSize = VK_WHOLE_SIZE;
+struct ImageDescriptorWrite {
+    RestrictedEntity<vk::Image> resource;
+    VkImageLayout layout;
+};
+struct BufferDescriptorWrite {
+    RestrictedEntity<vk::Buffer> resource;
+    VkDeviceSize offset = 0;
+    VkDeviceSize size = VK_WHOLE_SIZE;
+};
+struct DescriptorWrite {
+    RestrictedEntity<vk::Pipeline> dstPipeline;
+    uint dstSet = 0;
+    uint dstBinding = 0;
+    uint dstFrame = 0;
+    uint dstElement = 0;
+
+    std::vector<ImageDescriptorWrite> imageInfo;
+    std::vector<BufferDescriptorWrite> bufferInfo;
 };
 class DescriptorManager {
 private:
-    // Oh god not again
-    std::map<Entity, std::map<vk::DescriptorBinding, std::vector<Entity>>> mPipelineResources;
-    std::map<std::pair<Entity, vk::DescriptorBinding>, ResourceDescriptorUpdateInfo> mInfos;
+    std::vector<DescriptorWrite> mWrites;
 public:
-    void addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, RestrictedEntityAny<vk::Image, vk::Buffer> resource, ResourceDescriptorUpdateInfo info);
-    void addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, std::vector<Entity> resources, ResourceDescriptorUpdateInfo info);
-    void erase(Entity pipeline, vk::DescriptorBinding binding);
+    void addResource(DescriptorWrite write);
+    void erase(Entity pipeline, vk::DescriptorBinding binding, uint frame);
     void update(uint frame = 0, bool force = false);
 };
 

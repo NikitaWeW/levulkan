@@ -384,6 +384,11 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     allocator.end();
 
     auto images = allocator.getProcessedImages();
+    std::vector<ImageDescriptorWrite> imageInfos;
+    imageInfos.reserve(images.size());
+    for(auto eImage : images) {
+        imageInfos.emplace_back(eImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
 
     DescriptorManager descManager;
 
@@ -583,8 +588,23 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             data.pipeline = e;
             e.emplace<DebugName>("gbuffer_pipeline");
             vk::allocateDescriptors(data.pipeline.getc());
-            descManager.addResource(data.pipeline, {0, 0}, uniformBuffer.getBuffer(), {.bufferSize = sizeof(UniformBuffer)});
-            descManager.addResource(data.pipeline, {1, 0}, {images}, {.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+            descManager.addResource({
+                .dstPipeline = data.pipeline,
+                .dstSet = 0,
+                .dstBinding = 0,
+                .dstFrame = 0,
+                .bufferInfo = {{
+                    .resource = uniformBuffer.getBuffer(),
+                    .size = sizeof(UniformBuffer)
+                }}
+            });
+            descManager.addResource({
+                .dstPipeline = data.pipeline,
+                .dstSet = 1,
+                .dstBinding = 0,
+                .dstFrame = 0,
+                .imageInfo = imageInfos
+            });
         }
         assert(data.shader.valid() && data.shader.get<vk::Shader>().valid);
         assert(data.pipeline.valid() && data.pipeline.get<vk::Pipeline>().valid);
@@ -771,15 +791,60 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             data.pipeline = e;
             e.emplace<DebugName>("lighting_pipeline");
             vk::allocateDescriptors(data.pipeline.getc());
-            descManager.addResource(data.pipeline, {1, 0}, uniformBuffer.getBuffer(), {.bufferSize = sizeof(MatrixData::CameraData)});
+            descManager.addResource({
+                .dstPipeline = data.pipeline,
+                .dstSet = 1,
+                .dstBinding = 0,
+                .dstFrame = 0,
+                .bufferInfo = {{
+                    .resource = uniformBuffer.getBuffer(),
+                    .size = sizeof(MatrixData::CameraData)
+                }}
+            });
+            descManager.addResource({
+                .dstPipeline = data.pipeline,
+                .dstSet = 0,
+                .dstBinding = 0,
+                .dstFrame = 0,
+                .imageInfo = {{
+                    .resource = res.getResource("gbuffer_albedo"),
+                    .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                }}
+            });
+            descManager.addResource({
+                .dstPipeline = data.pipeline,
+                .dstSet = 0,
+                .dstBinding = 1,
+                .dstFrame = 0,
+                .imageInfo = {{
+                    .resource = res.getResource("gbuffer_position"),
+                    .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                }}
+            });
+            descManager.addResource({
+                .dstPipeline = data.pipeline,
+                .dstSet = 0,
+                .dstBinding = 2,
+                .dstFrame = 0,
+                .imageInfo = {{
+                    .resource = res.getResource("gbuffer_normal"),
+                    .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                }}
+            });
+            descManager.addResource({
+                .dstPipeline = data.pipeline,
+                .dstSet = 0,
+                .dstBinding = 3,
+                .dstFrame = 0,
+                .imageInfo = {{
+                    .resource = res.getResource("gbuffer_pbr"),
+                    .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                }}
+            });
         }
         assert(data.shader.valid() && data.shader.get<vk::Shader>().valid);
         assert(data.pipeline.valid() && data.pipeline.get<vk::Pipeline>().valid);
 
-        descManager.addResource(data.pipeline, {0, 0}, res.getResource("gbuffer_albedo"),   {.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-        descManager.addResource(data.pipeline, {0, 1}, res.getResource("gbuffer_position"), {.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-        descManager.addResource(data.pipeline, {0, 2}, res.getResource("gbuffer_normal"),   {.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-        descManager.addResource(data.pipeline, {0, 3}, res.getResource("gbuffer_pbr"),      {.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
         data.output = res.getResource("lighting_out");
     }, [&](lighting_data &data, VkCommandBuffer cb){
         auto const &pipeline = data.pipeline.getc();
@@ -955,6 +1020,16 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     assert(initRes.queueFamilies.presentQueue.has_value());
     vkGetDeviceQueue(device, initRes.queueFamilies.presentQueue.value(), 0, &presentQueue);
 
+    // FIXME: on resize:
+    // vkCmdDraw(): the combined image sampler descriptor [VkDescriptorSet 0x7d000000007d, Set 0, Binding 2, Index 0, variable "uNormal"] is using imageView VkImageView 0x0 that is invalid or has been destroyed.
+    // The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are accessed as described by descriptor validity by the VkPipeline bound to the pipeline bind point used by this command and the bound VkPipeline was not created with VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT (https://docs.vulkan.org/spec/latest/chapters/drawing.html#VUID-vkCmdDraw-None-08114)
+    // At: src/main.cpp:901
+
+    // FIXME: Depth buffer seems to be ignored
+
+    // FIXME: Invalid entity identifier at exit
+    // At: src/vk/Swapchain.cpp:181 from src/main.cpp:1297
+
     LOG_INFO("Starting rendering.");
 
     bool shouldResize = false;
@@ -978,13 +1053,14 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
             vk::resizeSwapchain(swapchain.getc(), windowExtent);
  
-            for(auto e : sReg.view<vk::Image, ResizeToSwapchain>())
-            {
+            for(auto e : sReg.view<vk::Image, ResizeToSwapchain>()) {
+
                 auto &image = e.get<vk::Image>();
                 vk::destroy(image);
                 image.createInfo.image.dimensions.width = windowExtent.width;
                 image.createInfo.image.dimensions.height = windowExtent.height;
                 image = vk::makeImage(image.createInfo);
+                e.tryEmplace<ResourceDirty>();
             }
 
             shouldResize = false;
@@ -1046,7 +1122,6 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         uniformBuffer.free(frameIndex);
         uniformBuffer.realloc();
 
-        // FIXME: multiple frames in flight are not considered by descriptor manager
         descManager.update(frameIndex);
         for(auto e : sReg.view<ResourceDirty>()) {
             e.erase<ResourceDirty>();
