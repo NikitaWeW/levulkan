@@ -140,75 +140,6 @@ std::vector<std::string> const &RenderGraphResult::getPassStack() const {
     return mImpl->passStack;
 }
 
-static std::string makeHtmlTimeline(RenderGraphResultImpl const &renderGraph) {
-    std::string html;
-    html.reserve(8192);
-
-    html += "<style>"
-              "table { border-collapse: collapse; font-family: monospace; font-size: 14px; }"
-              "th, td { padding: 10px 15px; text-align: center; border: 1px solid #e0e0e0; }"
-              "th { background-color: #f5f5f5; font-weight: bold; }"
-              ".res-name { text-align: left; font-weight: bold; background-color: #fafafa; border-right: 2px solid #ccc; }"
-              ".line-active { border-left: none; border-right: none; color: white; font-weight: bold; }"
-              ".line-start { border-left: 1px solid #e0e0e0; border-top-left-radius: 4px; border-bottom-left-radius: 4px; }"
-              ".line-end { border-right: 1px solid #e0e0e0; border-top-right-radius: 4px; border-bottom-right-radius: 4px; }"
-              ".read { background-color: #279657; }"
-              ".write { background-color: #c42b30; }"
-              ".active { background-color: #bfb272; }"
-              ".inactive { background-color: #ffffff; color: #eeeeee; }"
-            "</style>";
-
-    html += "<table><thead><tr><th>Resource / Pass</th>";
-    for(auto const &[_, pass] : renderGraph.passes) {
-        html += "<th>" + pass.name + "</th>";
-    }
-    html += "</tr></thead><tbody>";
-
-    for(auto const &[_, resource] : renderGraph.resources) {
-        html += "<tr><td class=\"res-name\">" + resource.name + "</td>";
-
-        for(uint col = 0; col < renderGraph.passStack.size(); ++col) {
-            if(col >= resource.lifetimeBegin && col <= resource.lifetimeEnd) {
-                auto const &passName = renderGraph.passStack.at(col);
-                enum class Access { Read, Write, None } access = Access::None;
-                if(resource.written.name == passName) {
-                    access = Access::Write;
-                } else {
-                    for(auto const &[name, _] : resource.read) {
-                        if(name == passName) {
-                            access = Access::Read;
-                            break;
-                        }
-                    }
-                }
-                 
-
-                std::string classList = "line-active";
-                if(col == resource.lifetimeBegin) classList += " line-start";
-                if(col == resource.lifetimeEnd) classList += " line-end";
-                
-                std::string label = "-";
-                if(access == Access::Read) {
-                    classList += " read";
-                    label = "R";
-                } else if(access == Access::Write) {
-                    classList += " write";
-                    label = "W";
-                } else {
-                    classList += " active";
-                }
-
-                html += "<td class= &quot " + classList + " &quot >" + label + "</td>";
-            } else {
-                html += "<td class= &quot inactive &quot >&middot;</td>";
-            }
-        }
-        html += "</tr>";
-    }
-
-    html += "</tbody></table>";
-    return html;
-}
 static std::string collapseAttributes(std::vector<std::string> const &attributes) {
     std::string res;
     for(auto const &attrib : attributes)
@@ -234,19 +165,18 @@ std::string RenderGraphResult::dumpGraphviz(int indent, GraphvizSettings setting
 
         ss << newline(indent) << "\"" << passName << "\" " << nodeAttributes << ";";
         
-        for(auto const &[resourceName, _] : pass.reads) {
-
+        for(auto [resourceName, _] : pass.reads) {
             auto &resource = mImpl->resources.at(resourceName);
-            ss << newline(indent) << fmt::format("\"{}\" -> \"{}\" [label=\"{}\"]{}", resource.written.name, passName, resource.eResource, edgeAttributes);
+            resourceName.erase(std::remove(resourceName.begin(), resourceName.end(), '\"'), resourceName.end());
+            ss << newline(indent) << fmt::format("\"{}\" -> \"{}\" [label=\"{}\"]{}", resource.written.name, passName, resourceName, edgeAttributes);
         }
     }
 
-    ss << newline(indent) << "Legend [";
-    ss << newline(indent*2) << "shape=none";
-    ss << newline(indent*2) << "pinned=true";
-    ss << newline(indent*2) << "pos=0,5!";
-    ss << newline(indent*2) << "label=\"" << makeHtmlTimeline(*mImpl) << "\";";
-    ss << newline(indent) << "];";
+    // ss << newline(indent) << "subgraph Legend {";
+    // ss << newline(indent*2) << "pinned=cluster;";
+    // ss << newline(indent*2) << "lp=\"0,5!\";";
+    // ss << newline(indent*2) << "A [label=<" << makeHtmlTimeline(*mImpl) << ">;]";
+    // ss << newline(indent) << "}";
 
     // std::string title;
     // for(auto index : mPassStack)

@@ -20,7 +20,20 @@ struct ModelInstance {
 };
 
 struct VulkanMaterial {
-    ::Material::Properties properties;
+    struct Properties {
+        glm::vec3 ambient;
+        float _pad0;
+        glm::vec4 albedo{1.0f};
+        glm::vec3 specular;
+        float _pad1;
+        glm::vec3 emission;
+        float _pad2;
+
+        float shininess;
+        float metallic = 1.0f;
+        float roughness = 1.0f;
+        float ior;
+    } properties;
     // Texture2D array indices
     struct Textures
     {
@@ -110,6 +123,7 @@ struct DescriptorWrite {
 class DescriptorManager {
 private:
     std::vector<DescriptorWrite> mWrites;
+    std::map<Entity, std::unordered_set<uint>> mFrameUsage;
 public:
     void addResource(DescriptorWrite write);
     void erase(Entity pipeline, vk::DescriptorBinding binding, uint frame);

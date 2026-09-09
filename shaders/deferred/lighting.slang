@@ -45,5 +45,6 @@ float4 fsMain(VsOut in) {
     oColor.rgb = reinhard(oColor.rgb);
     // Gamma correction
     oColor.rgb = pow(oColor.rgb, float3(1.0/2.2));
+    oColor.rgb = normal;
     return oColor;
 }

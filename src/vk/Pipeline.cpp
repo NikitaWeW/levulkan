@@ -494,15 +494,15 @@ void vk::allocateDescriptors(vk::Pipeline &pipeline, DescriptorAllocationInfo ci
         }
     }
 }
-void vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite> const &writes, uint32_t frame) {
+bool vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite> const &writes, uint32_t frame) {
     if(frame >= pipeline.descriptorSets.sets.size()) {
         LOG_ERROR("vk::writeDescriptors: Frame {} is outside of descriptor frames with size of {}!", frame, pipeline.descriptorSets.sets.size());
         LOG_WARN("Have you forgot to call vk::allocateDescriptors?");
-        return;
+        return false;
     }
     if(pipeline.descriptorSets.sets.empty()) {
         // LOG_ERROR("Pipeline doesn't have any descriptor sets!");
-        return;
+        return false;
     }
 
     assert(pipeline.valid);
@@ -533,20 +533,21 @@ void vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite>
     }
 
     vkUpdateDescriptorSets(pipeline.device, descWrites.size(), descWrites.data(), 0, nullptr);
+
+    return true;
 }
-void vk::bindDescriptorSet(VkCommandBuffer cb, Pipeline const &pipeline, uint32_t set, uint32_t frame, std::vector<uint32_t> offsets) {
+bool vk::bindDescriptorSet(VkCommandBuffer cb, Pipeline const &pipeline, uint32_t set, uint32_t frame, std::vector<uint32_t> offsets) {
     if(frame >= pipeline.descriptorSets.sets.size()) {
-        LOG_ERROR("vk::bindDescriptorSet: Frame {} is outside of descriptor frames with size of {}!", frame, pipeline.descriptorSets.sets.size());
-        LOG_WARN("Have you forgot to call vk::allocateDescriptors?");
-        return;
+        LOG_ERROR("vk::bindDescriptorSet: Frame {} is outside of descriptor frames with size of {}! (Have you forgot to call vk::allocateDescriptors?)", frame, pipeline.descriptorSets.sets.size());
+        return false;
     }
     if(pipeline.descriptorSets.sets.empty()) {
         LOG_ERROR("Pipeline doesent have any descriptor sets!");
-        return;
+        return false;
     }
     if(!pipeline.descriptorSets.sets.at(frame).contains(set)) {
-        LOG_WARN("Pipeline doesent contain set {}!", set);
-        return;
+        // LOG_WARN("Pipeline doesent contain set {}!", set);
+        return false;
     }
 
     assert(pipeline.valid);
@@ -576,6 +577,8 @@ void vk::bindDescriptorSet(VkCommandBuffer cb, Pipeline const &pipeline, uint32_
     }
 
     vkCmdBindDescriptorSets2(cb, &bindInfo);
+
+    return true;
 }
 
 void vk::destroy(Pipeline &pipeline) {

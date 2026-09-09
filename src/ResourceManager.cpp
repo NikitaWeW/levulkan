@@ -219,7 +219,15 @@ void ResourceAllocator::processModel(Entity eModel) {
             .normal       = processImage(Entity{&eModel.reg(), mesh.material.textures.normal      }),
             .displacement = processImage(Entity{&eModel.reg(), mesh.material.textures.displacement}),
         };
-        vulkanMesh.material.properties = mesh.material.properties;
+        
+        vulkanMesh.material.properties.ambient   = mesh.material.properties.ambient;
+        vulkanMesh.material.properties.albedo    = mesh.material.properties.albedo;
+        vulkanMesh.material.properties.specular  = mesh.material.properties.specular;
+        vulkanMesh.material.properties.emission  = mesh.material.properties.emission;
+        vulkanMesh.material.properties.shininess = mesh.material.properties.shininess;
+        vulkanMesh.material.properties.metallic  = mesh.material.properties.metallic;
+        vulkanMesh.material.properties.roughness = mesh.material.properties.roughness;
+        vulkanMesh.material.properties.ior       = mesh.material.properties.ior;
     }
 }
 void ResourceAllocator::begin() {
@@ -241,33 +249,16 @@ void ResourceAllocator::end() {
     CHECK_VK_RES(vkWaitForFences(mAllocInfo.device, 1, &mFence, true, UINT64_MAX));
 }
 
-// void DescriptorManager::addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, RestrictedEntityAny<vk::Image, vk::Buffer> resource, ResourceDescriptorUpdateInfo info) {
-//     addResource(pipeline, binding, std::vector<Entity>{resource}, info);
-// }
-// void DescriptorManager::addResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, std::vector<Entity> resources, ResourceDescriptorUpdateInfo info) {
-// }
-// void addImageResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, RestrictedEntity<vk::Image> resource, VkImageLayout layout) {
-
-// }
-// void DescriptorManager::addImageResource(RestrictedEntity<vk::Pipeline> pipeline, vk::DescriptorBinding binding, std::vector<Entity> resources, VkImageLayout layout) {
-//     assert(!resources.empty());
-//     for(uint i = 1; i < resources.size(); ++i) {
-//         auto e = resources[i];
-//         assert(e.valid());
-//         assert(e.contains<vk::Image>());
-//     }
-//     assert(layout != VK_IMAGE_LAYOUT_UNDEFINED && "layout required for image resources");
-    
-//     mPipelineResources[pipeline][binding] = resources;
-//     LOG_TRACE("Adding {} {} resources to binding (set={}, binding={}) to pipeline {}", resources.size(), type == ResourceType::Image ? "image" : "buffer", binding.set, binding.binding, static_cast<Entity const &>(pipeline));
-
-//     if(!pipeline.contains<ResourceDirty>())
-//         pipeline.emplace<ResourceDirty>();
-// }
 void DescriptorManager::addResource(DescriptorWrite write) {
     assert(!write.imageInfo.empty() || !write.bufferInfo.empty());
     mWrites.emplace_back(write);
     write.dstPipeline.tryEmplace<ResourceDirty>();
+    for(auto const &res : write.imageInfo) {
+        mFrameUsage[res.resource].emplace(write.dstFrame);
+    }
+    for(auto const &res : write.bufferInfo) {
+        mFrameUsage[res.resource].emplace(write.dstFrame);
+    }
 }
 void DescriptorManager::erase(Entity pipeline, vk::DescriptorBinding binding, uint frame) {
     for(uint i = 0; i < mWrites.size(); ++i) {
@@ -275,6 +266,21 @@ void DescriptorManager::erase(Entity pipeline, vk::DescriptorBinding binding, ui
         if(write.dstPipeline == pipeline && write.dstSet == binding.set && write.dstBinding == binding.binding && write.dstFrame == frame) {
             std::swap(write, mWrites.back());
             mWrites.pop_back();
+            
+            for(auto const &res : write.imageInfo) {
+                if(!mFrameUsage.contains(res.resource))
+                    continue;
+                mFrameUsage.at(res.resource).erase(write.dstFrame);
+                if(mFrameUsage.at(res.resource).empty())
+                    mFrameUsage.erase(res.resource);
+            }
+            for(auto const &res : write.bufferInfo) {
+                if(!mFrameUsage.contains(res.resource))
+                    continue;
+                mFrameUsage.at(res.resource).erase(write.dstFrame);
+                if(mFrameUsage.at(res.resource).empty())
+                    mFrameUsage.erase(res.resource);
+            }
         }
     }
 }
@@ -287,22 +293,26 @@ void DescriptorManager::update(uint frame, bool force) {
         }
 
         Entity ePipeline = write.dstPipeline;
-
         bool dirty = force || ePipeline.contains<ResourceDirty>();
         if(!dirty) {
             for(auto const &info : write.imageInfo) {
                 if(info.resource.contains<ResourceDirty>()) {
                     dirty = true;
+                    LOG_TRACE("Resource {} is dirty!", Entity(info.resource));
                     break;
                 }
             }
             for(auto const &info : write.bufferInfo) {
                 if(info.resource.contains<ResourceDirty>()) {
+                    LOG_TRACE("Resource {} is dirty!", Entity(info.resource));
                     dirty = true;
                     break;
                 }
             }
         }
+
+        if(sReg.view<ResourceDirty>().size())
+            LOG_TRACE("Pipeline {} dirty {}", ePipeline, dirty);
 
         if(!dirty) {
             continue;

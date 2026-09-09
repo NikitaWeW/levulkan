@@ -491,6 +491,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     // Complex pass dependencies
     // Resource aliasing
     // History resources
+    // Per frame in flight resource descriptors
+    // Compute buffers
     RenderGraphBuilder builder;
     builder.setAllocInfo(ALLOCATION_INFO, sReg);
     builder.setQueueFamilies(initRes.queueFamilies);
@@ -577,7 +579,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                     .depth = DEPTH_ATTACHMENT_FORMAT,
                 },
                 .depthStencil = {
-                    .depthTestEnable = true
+                    .depthTestEnable = true,
+                    .depthWriteEnable = true
                 },
                 .blending = {
                     .attachments = {ALPHA_BLENDING},
@@ -878,9 +881,9 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
         VkViewport vp{
             .x = 0,
-            .y = 0,
+            .y = static_cast<float>(extent.height),
             .width = static_cast<float>(extent.width),
-            .height = static_cast<float>(extent.height),
+            .height = -static_cast<float>(extent.height),
             .minDepth = 0.0f,
             .maxDepth = 1.0f
         };
@@ -1020,6 +1023,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     assert(initRes.queueFamilies.presentQueue.has_value());
     vkGetDeviceQueue(device, initRes.queueFamilies.presentQueue.value(), 0, &presentQueue);
 
+    // FIXME: ResourceDirty flag removes too early for resources that are used in multiple frames.
+
     // FIXME: on resize:
     // vkCmdDraw(): the combined image sampler descriptor [VkDescriptorSet 0x7d000000007d, Set 0, Binding 2, Index 0, variable "uNormal"] is using imageView VkImageView 0x0 that is invalid or has been destroyed.
     // The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are accessed as described by descriptor validity by the VkPipeline bound to the pipeline bind point used by this command and the bound VkPipeline was not created with VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT (https://docs.vulkan.org/spec/latest/chapters/drawing.html#VUID-vkCmdDraw-None-08114)
@@ -1029,6 +1034,10 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
     // FIXME: Invalid entity identifier at exit
     // At: src/vk/Swapchain.cpp:181 from src/main.cpp:1297
+
+    // Also probably recompiling is broken
+
+    // TODO: Better shader/pipeline creation + better uniform buffer
 
     LOG_INFO("Starting rendering.");
 
@@ -1048,13 +1057,12 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         
         // Resize swapchain
         if(shouldResize) {
-            LOG_WARN("Resizing the viewport to {}x{}", windowExtent.width, windowExtent.height);
+            LOG_WARN("Resizing the swapchain and {} image resources to {}x{}", sReg.view<vk::Image, ResizeToSwapchain>().size(), windowExtent.width, windowExtent.height);
             CHECK_VK_RES(vkDeviceWaitIdle(device));
 
             vk::resizeSwapchain(swapchain.getc(), windowExtent);
  
             for(auto e : sReg.view<vk::Image, ResizeToSwapchain>()) {
-
                 auto &image = e.get<vk::Image>();
                 vk::destroy(image);
                 image.createInfo.image.dimensions.width = windowExtent.width;
@@ -1118,14 +1126,6 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         // Wait on fence
         CHECK_VK_RES(vkWaitForFences(device, 1, &fences[frameIndex], true, UINT64_MAX));
         CHECK_VK_RES(vkResetFences(device, 1, &fences[frameIndex]));
-        
-        uniformBuffer.free(frameIndex);
-        uniformBuffer.realloc();
-
-        descManager.update(frameIndex);
-        for(auto e : sReg.view<ResourceDirty>()) {
-            e.erase<ResourceDirty>();
-        }
 
         // Acquire next image
         auto imageAcquireRes = vkAcquireNextImageKHR(device, swapchain->swapchain, UINT64_MAX, presentSemaphores[frameIndex], nullptr, &imageIndex);
@@ -1151,6 +1151,19 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         for(auto const &passName : renderGraph.getPassStack()) {
             auto const &pass = renderGraph.getPass(passName);
             pass->storage->postCompile(renderGraph);
+        }
+
+        uniformBuffer.free(frameIndex);
+        uniformBuffer.realloc();
+
+        if(sReg.view<ResourceDirty>().size())
+            LOG_TRACE("{} resources are dirty! {}", sReg.view<ResourceDirty>().size(), sReg.view<ResourceDirty>());
+
+        // FIXME: writes are added only for frame 0
+        descManager.update(0);
+        // FIXME: shit
+        for(auto e : sReg.view<ResourceDirty>()) {
+            e.erase<ResourceDirty>();
         }
 
         // Record command buffer
@@ -1231,7 +1244,6 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         usedCommandBuffers.clear();
 
         // Submit command buffer
-        // TODO: figure this out
         VkPipelineStageFlags waitStages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         VkSubmitInfo submitInfo{
             .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -1288,12 +1300,16 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         }
     }
     for(auto e : sReg.view<vk::Image>()) {
-        vk::destroy(e.get<vk::Image>());
-        e.destroy();
+        if(e.get<vk::Image>().owns) {
+            vk::destroy(e.get<vk::Image>());
+            e.destroy();
+        }
     }
     for(auto e : sReg.view<vk::Buffer>()) {
-        vk::destroy(e.get<vk::Buffer>());
-        e.destroy();
+        if(e.get<vk::Buffer>().owns) {
+            vk::destroy(e.get<vk::Buffer>());
+            e.destroy();
+        }
     }
     for(auto e : sReg.view<vk::Pipeline>()) {
         vk::destroy(e.get<vk::Pipeline>());
@@ -1303,9 +1319,10 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         vk::destroy(e.get<vk::Shader>());
         e.destroy();
     }
-    
-    vk::destroy(swapchain.getc());
-    swapchain.destroy();
+    for(auto e : sReg.view<vk::Swapchain>()) {
+        vk::destroy(e.get<vk::Swapchain>());
+        e.destroy();
+    }
 
     LOG_INFO("Exiting");
     return 0;
