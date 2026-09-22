@@ -1,7 +1,7 @@
 #include "common/MatrixData.slang"
 
 struct UniformBuffer {
-    CameraMatrixData cameraMatrixData; // Inverted
+    CameraData  cameraMatrixData; // Inverted
 };
 
 [[vk::binding(0, 1)]]
@@ -33,8 +33,8 @@ float4 fsMain(VsOut in) {
     
     // Temporary phong lighting
     const float3 sunDir = mul(uBuffer.cameraMatrixData.viewMat, float4(0.5, -1, 1, 0)).xyz;
+    const float3 V = float3(0, 0, -1);
     float3 L = -normalize(sunDir);
-    float3 V = float3(0, 0, -1);
     float3 R = reflect(-L, normal);
     float3 diffuse = float3(max(dot(normal, L), 0.0025));
     float3 specular = float3(pow(max(dot(R, V), 0.0), 16.0) * 0.75) * 0;

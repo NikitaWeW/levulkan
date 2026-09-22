@@ -4,9 +4,9 @@
 #endif
 
 #ifdef _WIN32
-    #include <Windows.h>
+#include <Windows.h>
 #else
-    #include <dlfcn.h>
+#include <dlfcn.h>
 #endif
 
 #include <cassert>
@@ -21,18 +21,15 @@ public:
 #ifdef ENABLE_RENDERDOC
 #ifdef _WIN32
         // At init, on windows
-        if(HMODULE mod = GetModuleHandleA("renderdoc.dll"))
-        {
-            pRENDERDOC_GetAPI RENDERDOC_GetAPI =
-                (pRENDERDOC_GetAPI)GetProcAddress(mod, "RENDERDOC_GetAPI");
+        if(HMODULE mod = GetModuleHandleA("renderdoc.dll")) {
+            pRENDERDOC_GetAPI RENDERDOC_GetAPI = (pRENDERDOC_GetAPI) GetProcAddress(mod, "RENDERDOC_GetAPI");
 #else
         // At init, on linux/android.
         // For android replace librenderdoc.so with libVkLayer_GLES_RenderDoc.so
-        if(void *mod = dlopen("librenderdoc.so", RTLD_NOW | RTLD_NOLOAD))
-        {
-            pRENDERDOC_GetAPI RENDERDOC_GetAPI = (pRENDERDOC_GetAPI)dlsym(mod, "RENDERDOC_GetAPI");
+        if(void *mod = dlopen("librenderdoc.so", RTLD_NOW | RTLD_NOLOAD)) {
+            pRENDERDOC_GetAPI RENDERDOC_GetAPI = (pRENDERDOC_GetAPI) dlsym(mod, "RENDERDOC_GetAPI");
 #endif
-            int ret = RENDERDOC_GetAPI(eRENDERDOC_API_Version_1_6_0, (void **)&mApi);
+            int ret = RENDERDOC_GetAPI(eRENDERDOC_API_Version_1_6_0, (void **) &mApi);
             assert(ret == 1);
         }
 #endif // #ifdef ENABLE_RENDERDOC
