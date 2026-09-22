@@ -185,9 +185,9 @@ static Entity makeWindow(Registry &reg, std::string_view name) {
     return eWindow;
 }
 static VkCommandPool createCommandPool(uint32_t index, VkDevice device) {
-    VkCommandPoolCreateInfo commandPoolCI{
-        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, .queueFamilyIndex = index
-    };
+    VkCommandPoolCreateInfo commandPoolCI{ .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = index };
     VkCommandPool commandPool;
     vkCreateCommandPool(device, &commandPoolCI, nullptr, &commandPool);
     return commandPool;
@@ -384,11 +384,13 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     DescriptorManager descManager;
 
     vk::RingBuffer uniformBuffer(sReg,
-        { .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        {
+            .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
             .allocInfo = ALLOCATION_INFO,
             .size = static_cast<uint32_t>(64 * 1e6), // 64MB
             .map = true,
-            .name = "uniform_buffer" });
+            .name = "uniform_buffer",
+        });
 
     VkPhysicalDeviceProperties properties;
     vkGetPhysicalDeviceProperties(initRes.physicalDevice, &properties);
@@ -499,43 +501,46 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         VK_QUEUE_GRAPHICS_BIT,
         [&](RenderPassBuilder &builder) {
             auto extent = swapchain.get<vk::Swapchain>().createInfo.imageExtent;
-            builder.addImageResource("gbuffer_albedo",
-                {.imageInfo =
-                        {
-                            .format = VK_FORMAT_R8G8B8A8_UNORM,
-                            .dimensions = {extent.width, extent.height},
-                            .view = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT},
-                        },
-                    .resizeToSwapchain = true});
-            builder.addImageResource("gbuffer_position",
-                {.imageInfo =
-                        {
-                            .format = VK_FORMAT_R8G8B8A8_UNORM,
-                            .dimensions = {extent.width, extent.height},
-                            .view = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT},
-                        },
-                    .resizeToSwapchain = true});
-            builder.addImageResource("gbuffer_normal",
-                {.imageInfo =
-                        {
-                            .format = VK_FORMAT_R16G16B16A16_SFLOAT,
-                            .dimensions = {extent.width, extent.height},
-                            .view = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT},
-                        },
-                    .resizeToSwapchain = true});
-            builder.addImageResource("gbuffer_pbr",
-                {.imageInfo =
-                        {
-                            .format = VK_FORMAT_R8G8B8A8_UNORM,
-                            .dimensions = {extent.width, extent.height},
-                            .view = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT},
-                        },
-                    .resizeToSwapchain = true});
-            builder.addImageResource("gbuffer_depth",
-                { .imageInfo = { .format = DEPTH_ATTACHMENT_FORMAT,
-                      .dimensions = { extent.width, extent.height },
-                      .view = { .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT } },
-                    .resizeToSwapchain = true });
+            builder.addImageResource("gbuffer_albedo", {
+                .imageInfo = {
+                    .format = VK_FORMAT_R8G8B8A8_UNORM,
+                    .dimensions = {extent.width, extent.height},
+                    .view = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT},
+                },
+                .resizeToSwapchain = true,
+            });
+            builder.addImageResource("gbuffer_position", {
+                .imageInfo = {
+                    .format = VK_FORMAT_R8G8B8A8_UNORM,
+                    .dimensions = {extent.width, extent.height},
+                    .view = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT},
+                },
+                .resizeToSwapchain = true,
+            });
+            builder.addImageResource("gbuffer_normal", {
+                .imageInfo = {
+                    .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                    .dimensions = {extent.width, extent.height},
+                    .view = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT},
+                },
+                .resizeToSwapchain = true,
+            });
+            builder.addImageResource("gbuffer_pbr", {
+                .imageInfo = {
+                    .format = VK_FORMAT_R8G8B8A8_UNORM,
+                    .dimensions = {extent.width, extent.height},
+                    .view = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT},
+                },
+                .resizeToSwapchain = true,
+            });
+            builder.addImageResource("gbuffer_depth", { 
+                .imageInfo = { 
+                    .format = DEPTH_ATTACHMENT_FORMAT,
+                    .dimensions = { extent.width, extent.height },
+                    .view = { .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT }, 
+                },
+                .resizeToSwapchain = true, 
+            });
 
             builder.attachResourceWrite("gbuffer_albedo", COLOR_ATTACHMENT_TRAITS);
             builder.attachResourceWrite("gbuffer_position", COLOR_ATTACHMENT_TRAITS);
@@ -632,59 +637,75 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             uniformBufferData.uMatrixData.camera.viewMat = camera.viewMat;
 
             std::array<VkRenderingAttachmentInfo, 4> colorAttachmentInfos = {
-                VkRenderingAttachmentInfo{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                VkRenderingAttachmentInfo{
+                    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                     .imageView = albedo.view,
                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                    .clearValue{ .color{ { 0.0f, 0.0f, 0.2f, 1.0f } } } },
-                VkRenderingAttachmentInfo{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                    .clearValue{ .color{ { 0.0f, 0.0f, 0.2f, 1.0f } } },
+                },
+                VkRenderingAttachmentInfo{
+                    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                     .imageView = position.view,
                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                    .clearValue{ .color{ { 0.0f, 0.0f, 0.0f, 0.0f } } } },
-                VkRenderingAttachmentInfo{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                    .clearValue{ .color{ { 0.0f, 0.0f, 0.0f, 0.0f } } },
+                },
+                VkRenderingAttachmentInfo{
+                    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                     .imageView = normal.view,
                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                    .clearValue{ .color{ { 0.5f, 0.5f, 0.5f, 0.0f } } } },
-                VkRenderingAttachmentInfo{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                    .clearValue{ .color{ { 0.5f, 0.5f, 0.5f, 0.0f } } },
+                },
+                VkRenderingAttachmentInfo{
+                    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                     .imageView = pbr.view,
                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                    .clearValue{ .color{ { 0.0f, 0.0f, 0.0f, 0.0f } } } },
+                    .clearValue{ .color{ { 0.0f, 0.0f, 0.0f, 0.0f } } },
+                },
             };
-            VkRenderingAttachmentInfo depthAttachmentInfo{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            VkRenderingAttachmentInfo depthAttachmentInfo{
+                .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                 .imageView = depth.view,
                 .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                 .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                 .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-                .clearValue = { .depthStencil = { 1.0f, 0 } } };
+                .clearValue = { .depthStencil = { 1.0f, 0 } },
+            };
 
-            VkRenderingInfo renderingInfo{.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-                .renderArea =
-                    {
-                        .offset = {0, 0},
-                        .extent = extent,
-                    },
+            VkRenderingInfo renderingInfo{
+                .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+                .renderArea = {
+                    .offset = {0, 0},
+                    .extent = extent,
+                },
                 .layerCount = 1,
                 .colorAttachmentCount = colorAttachmentInfos.size(),
                 .pColorAttachments = colorAttachmentInfos.data(),
-                .pDepthAttachment = &depthAttachmentInfo};
+                .pDepthAttachment = &depthAttachmentInfo,
+            };
 
             vkCmdBeginRendering(cb, &renderingInfo);
 
-            VkViewport vp{ .x = 0,
+            VkViewport vp{
+                .x = 0,
                 .y = 0,
                 .width = static_cast<float>(extent.width),
                 .height = static_cast<float>(extent.height),
                 .minDepth = 0.0f,
-                .maxDepth = 1.0f };
+                .maxDepth = 1.0f,
+            };
             vkCmdSetViewport(cb, 0, 1, &vp);
-            VkRect2D scissor{ .extent{ .width = window->size.x, .height = window->size.y } };
+            VkRect2D scissor{
+                .offset = { 0, 0 },
+                .extent{ .width = window->size.x, .height = window->size.y },
+            };
             vkCmdSetScissor(cb, 0, 1, &scissor);
 
             vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
@@ -742,14 +763,14 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         VK_QUEUE_GRAPHICS_BIT,
         [&](RenderPassBuilder &builder) {
             auto extent = swapchain->createInfo.imageExtent;
-            builder.addImageResource("lighting_out",
-                {.imageInfo =
-                        {
-                            .format = VK_FORMAT_R16G16B16A16_SFLOAT,
-                            .dimensions = {extent.width, extent.height},
-                            .view = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT},
-                        },
-                    .resizeToSwapchain = true});
+            builder.addImageResource("lighting_out", {
+                .imageInfo = {
+                    .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                    .dimensions = {extent.width, extent.height},
+                    .view = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT},
+                },
+                .resizeToSwapchain = true,
+            });
             builder.attachResourceRead("gbuffer_albedo", SHADER_READ_TRAITS);
             builder.attachResourceRead("gbuffer_position", SHADER_READ_TRAITS);
             builder.attachResourceRead("gbuffer_normal", SHADER_READ_TRAITS);
@@ -770,11 +791,10 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 };
                 vk::GraphicsPipelineCreateInfo pipelineCi{
                     .dynamicState = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR},
-                    .attachments =
-                        {
-                            .color = {VK_FORMAT_R16G16B16A16_SFLOAT},
-                            .depth = DEPTH_ATTACHMENT_FORMAT,
-                        },
+                    .attachments = {
+                        .color = {VK_FORMAT_R16G16B16A16_SFLOAT},
+                        .depth = DEPTH_ATTACHMENT_FORMAT,
+                    },
                     .blending = {
                         .attachments = {NO_BLENDING},
                     },
@@ -784,31 +804,41 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 data.pipeline = e;
                 e.emplace<DebugName>("lighting_pipeline");
                 vk::allocateDescriptors(data.pipeline.getc());
-                descManager.addResource({ .dstPipeline = data.pipeline,
+                descManager.addResource({
+                    .dstPipeline = data.pipeline,
                     .dstSet = 1,
                     .dstBinding = 0,
                     .dstFrame = 0,
-                    .bufferInfo = { { .resource = uniformBuffer.getBuffer(), .size = sizeof(MatrixData::CameraData) } } });
-                descManager.addResource({ .dstPipeline = data.pipeline,
+                    .bufferInfo = { { .resource = uniformBuffer.getBuffer(), .size = sizeof(MatrixData::CameraData) } },
+                });
+                descManager.addResource({
+                    .dstPipeline = data.pipeline,
                     .dstSet = 0,
                     .dstBinding = 0,
                     .dstFrame = 0,
-                    .imageInfo = { { .resource = res.getResource("gbuffer_albedo"), .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } } });
-                descManager.addResource({ .dstPipeline = data.pipeline,
+                    .imageInfo = { { .resource = res.getResource("gbuffer_albedo"), .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } },
+                });
+                descManager.addResource({
+                    .dstPipeline = data.pipeline,
                     .dstSet = 0,
                     .dstBinding = 1,
                     .dstFrame = 0,
-                    .imageInfo = { { .resource = res.getResource("gbuffer_position"), .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } } });
-                descManager.addResource({ .dstPipeline = data.pipeline,
+                    .imageInfo = { { .resource = res.getResource("gbuffer_position"), .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } },
+                });
+                descManager.addResource({
+                    .dstPipeline = data.pipeline,
                     .dstSet = 0,
                     .dstBinding = 2,
                     .dstFrame = 0,
-                    .imageInfo = { { .resource = res.getResource("gbuffer_normal"), .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } } });
-                descManager.addResource({ .dstPipeline = data.pipeline,
+                    .imageInfo = { { .resource = res.getResource("gbuffer_normal"), .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } },
+                });
+                descManager.addResource({
+                    .dstPipeline = data.pipeline,
                     .dstSet = 0,
                     .dstBinding = 3,
                     .dstFrame = 0,
-                    .imageInfo = { { .resource = res.getResource("gbuffer_pbr"), .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } } });
+                    .imageInfo = { { .resource = res.getResource("gbuffer_pbr"), .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } },
+                });
             }
             assert(data.shader.valid() && data.shader.get<vk::Shader>().valid);
             assert(data.pipeline.valid() && data.pipeline.get<vk::Pipeline>().valid);
@@ -829,27 +859,33 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                     .clearValue{ .color{ { 0.0f, 0.0f, 0.0f, 0.0f } } } },
             };
 
-            VkRenderingInfo renderingInfo{.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-                .renderArea =
-                    {
-                        .offset = {0, 0},
-                        .extent = extent,
-                    },
+            VkRenderingInfo renderingInfo{
+                .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+                .renderArea = {
+                    .offset = {0, 0},
+                    .extent = extent,
+                },
                 .layerCount = 1,
                 .colorAttachmentCount = colorAttachmentInfos.size(),
                 .pColorAttachments = colorAttachmentInfos.data(),
-                .pDepthAttachment = nullptr};
+                .pDepthAttachment = nullptr,
+            };
 
             vkCmdBeginRendering(cb, &renderingInfo);
 
-            VkViewport vp{ .x = 0,
+            VkViewport vp{
+                .x = 0,
                 .y = static_cast<float>(extent.height),
                 .width = static_cast<float>(extent.width),
                 .height = -static_cast<float>(extent.height),
                 .minDepth = 0.0f,
-                .maxDepth = 1.0f };
+                .maxDepth = 1.0f,
+            };
             vkCmdSetViewport(cb, 0, 1, &vp);
-            VkRect2D scissor{ .extent{ .width = window->size.x, .height = window->size.y } };
+            VkRect2D scissor{
+                .offset = { 0, 0 },
+                .extent{ .width = window->size.x, .height = window->size.y },
+            };
             vkCmdSetScissor(cb, 0, 1, &scissor);
 
             vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
@@ -893,25 +929,37 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             VkImageBlit2 region{
                 .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
                 .srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
-                .srcOffsets = { { 0, 0, 0 }, { static_cast<int32_t>(src.createInfo.image.dimensions.width),
-                                                 static_cast<int32_t>(src.createInfo.image.dimensions.height), 1 } },
+                .srcOffsets = { 
+                    { 0, 0, 0 }, 
+                    { static_cast<int32_t>(src.createInfo.image.dimensions.width), static_cast<int32_t>(src.createInfo.image.dimensions.height), 1 }, 
+                },
                 .dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
-                .dstOffsets = { { 0, 0, 0 }, { static_cast<int32_t>(dst.createInfo.image.dimensions.width),
-                                                 static_cast<int32_t>(dst.createInfo.image.dimensions.height), 1 } },
+                .dstOffsets = { 
+                    { 0, 0, 0 }, 
+                    { static_cast<int32_t>(dst.createInfo.image.dimensions.width), static_cast<int32_t>(dst.createInfo.image.dimensions.height), 1, }, 
+                },
             };
-            VkBlitImageInfo2 blit{ .sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
+            VkBlitImageInfo2 blit{
+                .sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
                 .srcImage = src.image,
                 .srcImageLayout = TRANSFER_SRC_TRAITS.imageTraits.layout,
                 .dstImage = dst.image,
                 .dstImageLayout = TRANSFER_DST_TRAITS.imageTraits.layout,
                 .regionCount = 1,
                 .pRegions = &region,
-                .filter = VK_FILTER_NEAREST };
+                .filter = VK_FILTER_NEAREST,
+            };
             vkCmdBlitImage2(cb, &blit);
 
             // Prepare for presentation
-            vk::insertImageMemoryBarrier(cb, dst.image, TRANSFER_DST_TRAITS.access, 0, TRANSFER_DST_TRAITS.imageTraits.layout,
-                VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, TRANSFER_DST_TRAITS.stages, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+            vk::insertImageMemoryBarrier(cb,
+                dst.image,
+                TRANSFER_DST_TRAITS.access,
+                0,
+                TRANSFER_DST_TRAITS.imageTraits.layout,
+                VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                TRANSFER_DST_TRAITS.stages,
+                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
         }
     );
 
@@ -957,14 +1005,19 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         VkSemaphoreCreateInfo semaphoreCI{ .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, .flags = 0 };
         vkCreateSemaphore(device, &semaphoreCI, nullptr, &presentSemaphores[i]);
 
-        VkFenceCreateInfo fenceCI{ .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = VK_FENCE_CREATE_SIGNALED_BIT };
+        VkFenceCreateInfo fenceCI{
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+        };
 
         CHECK_VK_RES(vkCreateFence(device, &fenceCI, nullptr, &fences[i]));
     }
 
     renderSemaphores.resize(swapchain->images.size());
     for(auto &semaphore : renderSemaphores) {
-        VkSemaphoreCreateInfo semaphoreCI{ .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+        VkSemaphoreCreateInfo semaphoreCI{
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        };
         vkCreateSemaphore(device, &semaphoreCI, nullptr, &semaphore);
     }
 
