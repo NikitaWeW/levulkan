@@ -96,17 +96,17 @@ static aiNodeAnim const *findNodeAnim(aiAnimation const *animation, std::string_
 }
 
 // FIXME: probably wrong.
-static void calculateMissingPrimitives(Mesh &mesh) {
-    assert(!mesh.geometry.positions.empty());
+static void calculateMissingPrimitives(Mesh::Geometry &mesh) {
+    assert(!mesh.positions.empty());
 
-    bool indexed = !mesh.geometry.indices.empty();
-    if(mesh.geometry.texCoords.empty()) {
+    bool indexed = !mesh.indices.empty();
+    if(mesh.texCoords.empty()) {
         MODEL_LOADER_TRACE("Calculating missing texcoords");
-        mesh.geometry.texCoords.resize(mesh.geometry.positions.size());
-        for(size_t i = 0; i < (indexed ? mesh.geometry.indices.size() : mesh.geometry.positions.size()); ++i) {
-            unsigned index = indexed ? mesh.geometry.indices[i] : i;
+        mesh.texCoords.resize(mesh.positions.size());
+        for(size_t i = 0; i < (indexed ? mesh.indices.size() : mesh.positions.size()); ++i) {
+            unsigned index = indexed ? mesh.indices[i] : i;
 
-            mesh.geometry.texCoords[index] = std::array<glm::vec2, 6>{
+            mesh.texCoords[index] = std::array<glm::vec2, 6>{
                 glm::vec2{ 0, 0 },
                 glm::vec2{ 0, 1 },
                 glm::vec2{ 1, 1 },
@@ -117,35 +117,35 @@ static void calculateMissingPrimitives(Mesh &mesh) {
         }
     }
 
-    if(mesh.geometry.normals.empty()) {
+    if(mesh.normals.empty()) {
         MODEL_LOADER_TRACE("Calculating missing normals");
-        mesh.geometry.normals.resize(mesh.geometry.positions.size());
-        for(size_t i = 0; i < (indexed ? mesh.geometry.indices.size() : mesh.geometry.positions.size()); i += 3) {
-            size_t i0 = indexed ? mesh.geometry.indices[i + 0] : i + 0;
-            size_t i1 = indexed ? mesh.geometry.indices[i + 1] : i + 1;
-            size_t i2 = indexed ? mesh.geometry.indices[i + 2] : i + 2;
+        mesh.normals.resize(mesh.positions.size());
+        for(size_t i = 0; i + 2 < (indexed ? mesh.indices.size() : mesh.positions.size()); i += 3) {
+            size_t i0 = indexed ? mesh.indices[i + 0] : i + 0;
+            size_t i1 = indexed ? mesh.indices[i + 1] : i + 1;
+            size_t i2 = indexed ? mesh.indices[i + 2] : i + 2;
 
-            glm::vec3 e1 = mesh.geometry.positions[i1] - mesh.geometry.positions[i0];
-            glm::vec3 e2 = mesh.geometry.positions[i2] - mesh.geometry.positions[i0];
+            glm::vec3 e1 = mesh.positions[i1] - mesh.positions[i0];
+            glm::vec3 e2 = mesh.positions[i2] - mesh.positions[i0];
             glm::vec3 normal = glm::normalize(glm::cross(e1, e2));
-            mesh.geometry.normals[i0] = normal;
-            mesh.geometry.normals[i1] = normal;
-            mesh.geometry.normals[i2] = normal;
+            mesh.normals[i0] = normal;
+            mesh.normals[i1] = normal;
+            mesh.normals[i2] = normal;
         }
     }
 
-    if(mesh.geometry.tangents.empty()) {
+    if(mesh.tangents.empty()) {
         MODEL_LOADER_TRACE("Calculating missing tangents");
-        mesh.geometry.tangents.resize(mesh.geometry.positions.size());
-        for(size_t i = 0; i < (indexed ? mesh.geometry.indices.size() : mesh.geometry.positions.size()); i += 3) {
-            size_t i0 = indexed ? mesh.geometry.indices[i + 0] : i + 0;
-            size_t i1 = indexed ? mesh.geometry.indices[i + 1] : i + 1;
-            size_t i2 = indexed ? mesh.geometry.indices[i + 2] : i + 2;
+        mesh.tangents.resize(mesh.positions.size());
+        for(size_t i = 0; i + 2 < (indexed ? mesh.indices.size() : mesh.positions.size()); i += 3) {
+            size_t i0 = indexed ? mesh.indices[i + 0] : i + 0;
+            size_t i1 = indexed ? mesh.indices[i + 1] : i + 1;
+            size_t i2 = indexed ? mesh.indices[i + 2] : i + 2;
 
-            glm::vec3 edge1 = mesh.geometry.positions[i1] - mesh.geometry.positions[i0];
-            glm::vec3 edge2 = mesh.geometry.positions[i2] - mesh.geometry.positions[i0];
-            glm::vec2 deltaUV1 = mesh.geometry.texCoords[i1] - mesh.geometry.texCoords[i0];
-            glm::vec2 deltaUV2 = mesh.geometry.texCoords[i2] - mesh.geometry.texCoords[i0];
+            glm::vec3 edge1 = mesh.positions[i1] - mesh.positions[i0];
+            glm::vec3 edge2 = mesh.positions[i2] - mesh.positions[i0];
+            glm::vec2 deltaUV1 = mesh.texCoords[i1] - mesh.texCoords[i0];
+            glm::vec2 deltaUV2 = mesh.texCoords[i2] - mesh.texCoords[i0];
 
             float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
             glm::vec3 tangent = {
@@ -153,14 +153,58 @@ static void calculateMissingPrimitives(Mesh &mesh) {
                 f * (deltaUV2.y * edge1.y - deltaUV1.y * edge2.y),
                 f * (deltaUV2.y * edge1.z - deltaUV1.y * edge2.z),
             };
-            glm::vec3 normal = mesh.geometry.normals[i0];
+            glm::vec3 normal = mesh.normals[i0];
             tangent = glm::normalize(tangent - normal * glm::dot(normal, tangent));
 
-            mesh.geometry.tangents[i0] = tangent;
-            mesh.geometry.tangents[i1] = tangent;
-            mesh.geometry.tangents[i2] = tangent;
+            mesh.tangents[i0] = tangent;
+            mesh.tangents[i1] = tangent;
+            mesh.tangents[i2] = tangent;
         }
     }
+}
+static ModelLoaderOptions::WindingOrder flipWindingOrder(ModelLoaderOptions::WindingOrder order, bool flip) {
+    if(!flip)
+        return order;
+
+    if(order == ModelLoaderOptions::WindingOrder::CCW)
+        return ModelLoaderOptions::WindingOrder::CW;
+    if(order == ModelLoaderOptions::WindingOrder::CW)
+        return ModelLoaderOptions::WindingOrder::CCW;
+
+    return order;
+}
+static void setWindingOrder(Mesh::Geometry &mesh, ModelLoaderOptions::WindingOrder windingOrder) {
+    if(windingOrder == ModelLoaderOptions::WindingOrder::Keep) {
+        return;
+    }
+
+    MODEL_LOADER_TRACE("Setting winding order to {}", windingOrder == ModelLoaderOptions::WindingOrder::CCW ? "CCW" : "CW");
+    uint debugChanged = 0;
+
+    for(size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        auto const &iA = mesh.indices[i + 0];
+        auto &iB = mesh.indices[i + 1];
+        auto &iC = mesh.indices[i + 2];
+
+        auto const &A = mesh.positions[iA];
+        auto const &B = mesh.positions[iB];
+        auto const &C = mesh.positions[iC];
+        auto const &N = mesh.normals[iA];
+
+        ModelLoaderOptions::WindingOrder triangleOrder;
+        if(glm::dot(glm::cross(B - A, C - A), N) < 0) {
+            triangleOrder = ModelLoaderOptions::WindingOrder::CW;
+        } else {
+            triangleOrder = ModelLoaderOptions::WindingOrder::CCW;
+        }
+
+        if(triangleOrder != windingOrder) {
+            std::swap(iB, iC);
+            ++debugChanged;
+        }
+    }
+
+    MODEL_LOADER_TRACE("{} triangles flipped!", debugChanged);
 }
 static void optimizeMesh(Mesh &mesh) {
     Mesh oldMesh = mesh;
@@ -168,10 +212,12 @@ static void optimizeMesh(Mesh &mesh) {
 
     size_t index_count = indexed ? oldMesh.geometry.indices.size() : oldMesh.geometry.positions.size();
     size_t vertex_count = indexed ? oldMesh.geometry.positions.size() : index_count;
-    std::vector<meshopt_Stream> streams = { meshopt_Stream{ oldMesh.geometry.positions.data(), sizeof(glm::vec3), sizeof(glm::vec3) },
+    std::vector<meshopt_Stream> streams = {
+        meshopt_Stream{ oldMesh.geometry.positions.data(), sizeof(glm::vec3), sizeof(glm::vec3) },
         meshopt_Stream{ oldMesh.geometry.texCoords.data(), sizeof(glm::vec2), sizeof(glm::vec2) },
         meshopt_Stream{ oldMesh.geometry.normals.data(), sizeof(glm::vec3), sizeof(glm::vec3) },
-        meshopt_Stream{ oldMesh.geometry.tangents.data(), sizeof(glm::vec3), sizeof(glm::vec3) } };
+        meshopt_Stream{ oldMesh.geometry.tangents.data(), sizeof(glm::vec3), sizeof(glm::vec3) },
+    };
 
     if(!oldMesh.geometry.boneIDs.empty()) {
         streams.emplace_back(meshopt_Stream{ oldMesh.geometry.boneIDs.data(), sizeof(glm::ivec4), sizeof(glm::ivec4) });
@@ -184,12 +230,12 @@ static void optimizeMesh(Mesh &mesh) {
     mesh.geometry.indices.resize(index_count);
     meshopt_remapIndexBuffer(mesh.geometry.indices.data(), indexed ? oldMesh.geometry.indices.data() : nullptr, index_count, remap.data());
     mesh.geometry.positions.resize(new_vertex_count);
-    meshopt_remapVertexBuffer(mesh.geometry.positions.data(), streams[0].data, vertex_count, streams[0].size, remap.data());
     mesh.geometry.texCoords.resize(new_vertex_count);
-    meshopt_remapVertexBuffer(mesh.geometry.texCoords.data(), streams[1].data, vertex_count, streams[1].size, remap.data());
     mesh.geometry.normals.resize(new_vertex_count);
-    meshopt_remapVertexBuffer(mesh.geometry.normals.data(), streams[2].data, vertex_count, streams[2].size, remap.data());
     mesh.geometry.tangents.resize(new_vertex_count);
+    meshopt_remapVertexBuffer(mesh.geometry.positions.data(), streams[0].data, vertex_count, streams[0].size, remap.data());
+    meshopt_remapVertexBuffer(mesh.geometry.texCoords.data(), streams[1].data, vertex_count, streams[1].size, remap.data());
+    meshopt_remapVertexBuffer(mesh.geometry.normals.data(), streams[2].data, vertex_count, streams[2].size, remap.data());
     meshopt_remapVertexBuffer(mesh.geometry.tangents.data(), streams[3].data, vertex_count, streams[3].size, remap.data());
     if(!oldMesh.geometry.boneIDs.empty()) {
         mesh.geometry.boneIDs.resize(new_vertex_count);
@@ -204,7 +250,7 @@ static void optimizeMesh(Mesh &mesh) {
         MODEL_LOADER_TRACE("Optimized mesh. Had {} indices and {} vertices. Has {} indices and {} vertices", oldMesh.geometry.indices.size(),
             oldMesh.geometry.positions.size(), mesh.geometry.indices.size(), mesh.geometry.positions.size());
 }
-static void moveMesh(Mesh::Geometry &primitives, glm::mat4 const &mat) {
+static void transformMesh(Mesh::Geometry &primitives, glm::mat4 const &mat) {
     if(mat == glm::mat4{ 1.0f })
         return;
 
@@ -212,9 +258,12 @@ static void moveMesh(Mesh::Geometry &primitives, glm::mat4 const &mat) {
 
     glm::mat4 normalMat = glm::inverse(glm::transpose(mat));
 
-    for(auto &position : primitives.positions) position = mat * glm::vec4(position, 1);
-    for(auto &normal : primitives.normals) normal = normalMat * glm::vec4(normal, 0);
-    for(auto &tangent : primitives.tangents) tangent = normalMat * glm::vec4(tangent, 0);
+    for(auto &position : primitives.positions)
+        position = mat * glm::vec4(position, 1);
+    for(auto &normal : primitives.normals)
+        normal = normalMat * glm::vec4(normal, 0);
+    for(auto &tangent : primitives.tangents)
+        tangent = normalMat * glm::vec4(tangent, 0);
 }
 
 static void extractVertexData(aiMesh const *aimesh, Mesh &mesh) {
@@ -229,6 +278,7 @@ static void extractVertexData(aiMesh const *aimesh, Mesh &mesh) {
     }
     for(unsigned i = 0; i < aimesh->mNumFaces; ++i) {
         aiFace face = aimesh->mFaces[i];
+        assert(face.mNumIndices == 3); // Assimp should have triangulated the faces
         for(unsigned j = 0; j < face.mNumIndices; ++j) {
             mesh.geometry.indices.push_back(face.mIndices[j]);
         }
@@ -237,6 +287,7 @@ static void extractVertexData(aiMesh const *aimesh, Mesh &mesh) {
 static void extractBoneData(aiMesh const *aimesh, Mesh &mesh, Model::Skeleton &skeleton) {
     // i hate it -- april 2025
     // it works -- october 2025
+    // i hate my life -- september 2026
     glm::ivec4 boneIDs{ -1 };
     mesh.geometry.boneIDs.resize(mesh.geometry.positions.size(), boneIDs);
     glm::vec4 weights{ 0 };
@@ -350,221 +401,37 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg) {
             .srgb = false,
         });
     if(!tile)
-        tile = mRegistry->create(Texture{
-            .bitmap =
-                Bitmap<unsigned char>{
-                    .pixels =
-                        {
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                            125,
-                            125,
-                            125,
-                            255,
-                            255,
-                            255,
-                        },
+        tile = mRegistry ->create(Texture{
+            .bitmap = Bitmap<unsigned char>{
+                .pixels = { 
+                        // clang-format off
+                        255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 
+                        128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 
+                        255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 
+                        128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 
+                        255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 
+                        128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 
+                        255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 
+                        128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255 
+                        // clang-format on
+                    },
                     .numComponents = 3,
-                    .size = {8, 8},
+                    .size = { 8, 8 },
                 },
-            .path = "default/tile",
-            .srgb = true,
-        });
+                .path = "default/tile",
+                .srgb = true,
+            }
+        );
 
     mDefaultMaterial = {
-        .textures =
-            {
-                .albedo = tile,
-                .metallic = black,
-                .roughness = black,
-                .ambient = white,
-                .normal = normal,
-                .displacement = black,
-            },
+        .textures = {
+            .albedo = tile,
+            .metallic = black,
+            .roughness = black,
+            .ambient = white,
+            .normal = normal,
+            .displacement = black,
+        },
         .properties = {
             .ambient = {0.1f, 0.1f, 0.1f},
             .albedo = {1.0f, 1.0f, 1.0f, 1.0f},
@@ -574,8 +441,8 @@ ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg) {
             .shininess = 32.0f,
             .metallic = 1.0f,
             .roughness = 1.0f,
-            .ior = 1.5f
-        }
+            .ior = 1.5f,
+        },
     };
 }
 
@@ -689,13 +556,14 @@ Mesh ModelLoaderImpl::processMesh(aiMesh const *aimesh, glm::mat4 const &transfo
         setMissingTextures(mesh.material.textures, mDefaultMaterial.textures);
     }
 
-    calculateMissingPrimitives(mesh);
+    calculateMissingPrimitives(mesh.geometry);
+    setWindingOrder(mesh.geometry, flipWindingOrder(mOptions.windingOrder, mOptions.flipHandiness));
     optimizeMesh(mesh);
 
     // Apply transformation only for meshes.
     // Models with bones should use the bone transformations.
     if(!aimesh->HasBones())
-        moveMesh(mesh.geometry, transform);
+        transformMesh(mesh.geometry, transform);
 
     return mesh;
 }
@@ -722,8 +590,8 @@ void processAnimationNode(Animation &result, aiAnimation const *animation, Model
         }
         for(unsigned i = 0; i < nodeAnim->mNumRotationKeys; ++i) {
             auto const &key = nodeAnim->mRotationKeys[i];
-            keyframes.orientations.emplace_back(Animation::OrientationKey{
-                .value = glm::normalize(toQuat(key.mValue)), .timeTicks = static_cast<float>(key.mTime) });
+            keyframes.orientations.emplace_back(Animation::OrientationKey{ .value = glm::normalize(toQuat(key.mValue)),
+                .timeTicks = static_cast<float>(key.mTime) });
         }
         for(unsigned i = 0; i < nodeAnim->mNumScalingKeys; ++i) {
             auto const &key = nodeAnim->mScalingKeys[i];
@@ -847,8 +715,9 @@ ecs::entity ModelLoaderImpl::load() {
 
     // TODO: morph targets
 
-    return mRegistry->create(std::move(*mModel));
+    auto eModel = mRegistry->create(std::move(*mModel));
     mModel = nullptr;
+    return eModel;
 }
 
 constexpr unsigned ASSIMP_FLAGS = aiProcess_SplitLargeMeshes | aiProcess_GenNormals | aiProcess_GenUVCoords | aiProcess_FindInvalidData |
@@ -888,7 +757,11 @@ ecs::entity ModelLoader::loadFromFile(std::string_view path, ModelLoaderOptions 
     if(options.flipUVs) {
         flags |= aiProcess_FlipUVs;
     }
-    MODEL_LOADER_TRACE("Flip uvs: {}; flip winding order: {}", static_cast<bool>(flags & aiProcess_FlipUVs), static_cast<bool>(flags & aiProcess_FlipWindingOrder));
+    if(options.flipHandiness) {
+        flags |= aiProcess_MakeLeftHanded;
+    }
+    MODEL_LOADER_TRACE("Flip uvs: {}; flip winding order: {}", static_cast<bool>(flags & aiProcess_FlipUVs),
+        static_cast<bool>(flags & aiProcess_FlipWindingOrder));
     aiScene const *scene = importer.ReadFile(std::string{ path }, flags);
 
     if(!scene) {
@@ -927,7 +800,8 @@ ecs::entity ModelLoader::loadFromMemory(void const *data, size_t size, ModelLoad
     if(options.flipUVs) {
         flags |= aiProcess_FlipUVs;
     }
-    MODEL_LOADER_TRACE("Flip uvs: {}; flip winding order: {}", static_cast<bool>(flags & aiProcess_FlipUVs), static_cast<bool>(flags & aiProcess_FlipWindingOrder));
+    MODEL_LOADER_TRACE("Flip uvs: {}; flip winding order: {}", static_cast<bool>(flags & aiProcess_FlipUVs),
+        static_cast<bool>(flags & aiProcess_FlipWindingOrder));
     aiScene const *scene = importer.ReadFileFromMemory(data, size, flags);
 
     if(!scene) {

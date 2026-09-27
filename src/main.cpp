@@ -74,7 +74,8 @@ static std::string printTexture(Entity e) {
     LOG_INFO("Skeleton: ");
     LOG_INFO("  Bone map size / number of bones: {}", model.skeleton.boneMap.size());
     if(model.skeleton.boneMap.size() <= 30)
-        for(auto const &[name, id] : model.skeleton.boneMap) LOG_INFO("    [\"{}\": {}]", name, id);
+        for(auto const &[name, id] : model.skeleton.boneMap)
+            LOG_INFO("    [\"{}\": {}]", name, id);
 
     LOG_INFO("Animations: {}", model.animations.size());
     for(auto const &animation : model.animations) {
@@ -116,9 +117,13 @@ static std::string printTexture(Entity e) {
         LOG_INFO("  IOR:           {}", mesh.material.properties.ior);
     }
 }
-static Entity loadTexture(std::string_view path, TextureLoaderOptions options = { }, bool required = true) {
+static Entity loadTexture(std::string_view path, bool required = true, bool flip = false) {
     static TextureLoader loader(sReg.getReg());
 
+    TextureLoaderOptions options{
+        .flip = flip,
+        .desiredChannels = 4,
+    };
     auto eTexture = Entity{ &sReg, loader.loadFromFile(path, options) };
     if(!required && !eTexture.valid())
         return eTexture;
@@ -132,10 +137,14 @@ static Entity loadTexture(std::string_view path, TextureLoaderOptions options = 
 
     return eTexture;
 }
-static Entity
-loadModel(std::string_view path, std::optional<Material::Textures> textures = { }, ModelLoaderOptions options = { }, bool required = true) {
+static Entity loadModel(std::string_view path, std::optional<Material::Textures> textures = { }, bool required = true, bool flipTextures = false) {
     static ModelLoader loader(sReg.getReg());
 
+    ModelLoaderOptions options{
+        .flipUVs = flipTextures,
+        .flipHandiness = true, // ??
+        .windingOrder = ModelLoaderOptions::WindingOrder::CCW,
+    };
     auto eModel = Entity{ &sReg, loader.loadFromFile(path, options) };
     if(!required && !eModel.valid())
         return eModel;
@@ -161,10 +170,48 @@ loadModel(std::string_view path, std::optional<Material::Textures> textures = { 
         if(textures->displacement == INVALID_ENTITY)
             textures->displacement = defaultMaterial.textures.displacement;
 
-        for(auto &mesh : model.meshes) mesh.material.textures = textures.value();
+        for(auto &mesh : model.meshes)
+            mesh.material.textures = textures.value();
     }
 
     return eModel;
+}
+static bool loadModelTo(std::string_view path, std::vector<Entity> &to, std::optional<Material::Textures> textures = { }) {
+    auto e = loadModel(path, textures, false);
+    if(e) {
+        to.emplace_back(e);
+    }
+
+    return e;
+}
+static void dumpModels(std::string_view dir) {
+    for(DirectEntity<Model> e : sReg.view<Model>()) {
+        for(uint i = 0; i < e->meshes.size(); ++i) {
+            auto const &mesh = e->meshes[i].geometry;
+            std::ofstream s(dir.data() + ("/" + std::filesystem::path(e->path).stem().string() + "_") + std::to_string(i) + ".obj");
+            if(!s) {
+                continue;
+            }
+
+            for(auto const &position : mesh.positions) {
+                s << "v " << position.x << " " << position.y << " " << position.z << "\n";
+            }
+            s << "\n";
+            for(auto const &normal : mesh.normals) {
+                s << "n " << normal.x << " " << normal.y << " " << normal.z << "\n";
+            }
+            s << "\n";
+            for(auto const &uv : mesh.texCoords) {
+                s << "t " << uv.x << " " << uv.y << "\n";
+            }
+            s << "\n";
+
+            for(uint j = 0; j < mesh.indices.size(); j += 3) {
+                s << "f " << mesh.indices[j + 0] + 1 << " " << mesh.indices[j + 1] + 1 << " " << mesh.indices[j + 2] + 1 << "\n";
+            }
+            s << "\n";
+        }
+    }
 }
 static Transform lookat(glm::vec3 pos, glm::vec3 center) {
     auto dir = glm::normalize(center - pos);
@@ -201,6 +248,7 @@ static VkCommandPool createCommandPool(uint32_t index, VkDevice device) {
     return fence;
 }
 static void assetGrid(std::vector<Entity> const &props, glm::uvec3 dimensions, glm::vec3 offset, float distance) {
+    assert(!props.empty());
     static std::random_device dev;
     static std::mt19937 rng(dev());
     std::uniform_int_distribution<std::mt19937::result_type> distP(0, props.size() - 1);
@@ -321,15 +369,17 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     VkSharingMode const SHARING_MODE = initRes.queueFamilies.uniqueFamilies.size() == 1 ? VK_SHARING_MODE_EXCLUSIVE : VK_SHARING_MODE_CONCURRENT;
     LOG_TRACE("SHARING_MODE={}", string_VkSharingMode(SHARING_MODE));
 
-    DirectEntity<vk::Swapchain> swapchain = sReg.create(vk::makeSwapchain({.alloc =
-                                                                               {
-                                                                                   .device = device,
-                                                                                   .physicalDevice = initRes.physicalDevice,
-                                                                                   .surface = initRes.surface,
-                                                                               },
-                                                            .size = {window->size.x, window->size.y},
-                                                            .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                                                            .registry = &sReg}),
+    DirectEntity<vk::Swapchain> swapchain = sReg.create(vk::makeSwapchain(
+        {
+            .alloc = {
+                .device = device,
+                .physicalDevice = initRes.physicalDevice,
+                .surface = initRes.surface,
+            },
+            .size = {window->size.x, window->size.y},
+            .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            .registry = &sReg,
+        }),
         DebugName("swapchain_" + (window.contains<DebugName>() ? window.get<DebugName>().name : "")));
 
     VkCommandPool commandPool = createCommandPool(initRes.queueFamilies.indices.at(VK_QUEUE_GRAPHICS_BIT), device);
@@ -340,13 +390,19 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     ////////////////////////////////////////////////////////////////
 
     { // Scene
-        const auto prototypeTextures = Material::Textures{ .albedo = loadTexture("assets/textures/prototype/texture_03.png", { }, false) };
-        const auto suzanne = loadModel("assets/models/suzanne.glb", prototypeTextures);
-        const auto cube = loadModel("assets/models/cube.glb", prototypeTextures);
-        const auto sphere = loadModel("assets/models/sphere.glb", prototypeTextures);
-        const auto teapot = loadModel("assets/models/teapot.glb", prototypeTextures);
+        const auto prototypeTextures = Material::Textures{ .albedo = loadTexture("assets/textures/prototype/texture_03.png", false) };
+        std::vector<Entity> props;
+        // FIXME: Winding order is inverted
+        // setWindingOrder seems to be flipped though the winding order is already wrong before its executed (the logic seems correct ??)
+        // Models are most probably correct
+        // cpu and gpu data matches
+        // loader seems fine
+        // Coordinate system mismatch?
+        loadModelTo("assets/models/suzanne.glb", props, prototypeTextures);
+        loadModelTo("assets/models/cube.glb", props, prototypeTextures);
+        loadModelTo("assets/models/sphere.glb", props, prototypeTextures);
+        loadModelTo("assets/models/teapot.glb", props, prototypeTextures);
 
-        const std::vector<Entity> props{ suzanne, cube, sphere, teapot };
         const glm::uvec3 numProps = { 10, 3, 5 };
         const float distance = 2;
         const glm::vec3 offset = { 0, -1, -5 };
@@ -358,8 +414,12 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             sReg.create(ModelInstance{ props[i] }, Transform{ .position = startPos + static_cast<float>(i) * step });
         }
 
-        const auto cubes = loadModel("assets/models/deccer_cubes/SM_Deccer_Cubes_Textured_Complex.gltf");
-        sReg.create(ModelInstance{ cubes }, Transform{ .position = { -10, 0, 10 } });
+        const auto cubes = loadModel("assets/models/deccer_cubes/SM_Deccer_Cubes_Textured_Complex.gltf", { }, false);
+        if(cubes) {
+            sReg.create(ModelInstance{ cubes }, Transform{ .position = { -10, 0, 10 } });
+        }
+
+        dumpModels("tmp/models");
     }
 
     ////////////////////////////////////////////////////////////////
@@ -631,7 +691,6 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
             VkExtent2D extent = swapchain->createInfo.imageExtent;
 
-            // Update matrix data
             UniformBuffer uniformBufferData;
             uniformBufferData.uMatrixData.camera.projMat = camera.projMat;
             uniformBufferData.uMatrixData.camera.viewMat = camera.viewMat;
@@ -1267,11 +1326,14 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
     ////////////////////////////////////////////////////////////////
 
+    // FIXME: "Some allocations were not freed before destruction of this memory block!"
+
     for(uint i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
         vkDestroySemaphore(device, presentSemaphores[i], nullptr);
         vkDestroyFence(device, fences[i], nullptr);
     }
-    for(auto &semaphore : renderSemaphores) vkDestroySemaphore(device, semaphore, nullptr);
+    for(auto &semaphore : renderSemaphores)
+        vkDestroySemaphore(device, semaphore, nullptr);
 
     vkDestroyCommandPool(device, commandPool, nullptr);
 

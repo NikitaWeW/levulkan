@@ -195,8 +195,7 @@ void ResourceAllocator::processModel(Entity eModel) {
     auto &model = eModel.get<Model>();
     eModel.emplace<VulkanModel>();
     auto &vulkanModel = eModel.get<VulkanModel>();
-    for(uint i = 0; i < model.meshes.size(); ++i)
-    {
+    for(uint i = 0; i < model.meshes.size(); ++i) {
         auto const &mesh = model.meshes[i];
         auto &vulkanMesh = vulkanModel.meshes.emplace_back();
         
@@ -208,7 +207,7 @@ void ResourceAllocator::processModel(Entity eModel) {
             .uv   = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.texCoords, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
             .norm = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.normals,   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
             .tan  = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.tangents,  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
-            .idx  = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.indices,   VK_BUFFER_USAGE_INDEX_BUFFER_BIT),
+            .idx  = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.indices,   VK_BUFFER_USAGE_INDEX_BUFFER_BIT ),
         };
 
         vulkanMesh.material.textures = {

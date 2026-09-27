@@ -33,7 +33,7 @@ CPMAddPackage(
     GIT_TAG 3.4
     GITHUB_REPOSITORY "glfw/glfw"
 )
-CPMAddPackage("gh:nikitawew/nicecs#5eaa7")
+CPMAddPackage("gh:nikitawew/nicecs#02403c8a")
 CPMAddPackage("gh:zeux/meshoptimizer@1.0")
 CPMAddPackage(URI "gh:gabime/spdlog@1.17.0" FORCE ON)
 CPMAddPackage("gh:g-truc/glm#1.0.2")

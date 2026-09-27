@@ -99,7 +99,7 @@ struct Mesh
         std::vector<glm::vec2> texCoords;
         std::vector<glm::vec3> normals;
         std::vector<glm::vec3> tangents;
-        std::vector<unsigned> indices;
+        std::vector<uint32_t>  indices;
 
         // optional
         std::vector<glm::vec4> boneIDs;
