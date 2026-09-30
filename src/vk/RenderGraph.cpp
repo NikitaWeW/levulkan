@@ -60,7 +60,7 @@ void RenderGraph::clear() {
     mResourceNameToIndex.clear();
 }
 
-void RenderGraph::setResource(std::string const &name, RestrictedEntity_T<std::logical_or<>, vk::Image, vk::Buffer> resource) {
+void RenderGraph::setResource(std::string const &name, RestrictedEntity_t<std::logical_or<>, vk::Image, vk::Buffer> resource) {
     auto index = mResourceNameToIndex.contains(name) ? mResourceNameToIndex.at(name) : (mResourceNameToIndex[name] = mNextIndex++);
     mResources[index] = resource;
 }
@@ -108,9 +108,9 @@ void RenderGraph::validate(uint32_t passIndex) {
         {
             auto const &resource = mResources.get(resourceIndex);
             VALIDATION_ASSERT(resource.valid());
-            if(resource.has<vk::Image>())
+            if(resource.contains<vk::Image>())
                 VALIDATION_ASSERT(dependency.traits.imageTraits.valid());
-            if(resource.has<vk::Buffer>())
+            if(resource.contains<vk::Buffer>())
                 VALIDATION_ASSERT(dependency.traits.bufferTraits.valid());
         }
     }
@@ -124,9 +124,9 @@ void RenderGraph::validate(uint32_t passIndex) {
         {
             auto const &resource = mResources.get(resourceIndex);
             VALIDATION_ASSERT(resource.valid());
-            if(resource.has<vk::Image>())
+            if(resource.contains<vk::Image>())
                 VALIDATION_ASSERT(dependent.traits.imageTraits.valid());
-            if(resource.has<vk::Buffer>())
+            if(resource.contains<vk::Buffer>())
                 VALIDATION_ASSERT(dependent.traits.bufferTraits.valid());
         }
     }

@@ -31,6 +31,7 @@
  .                  --     :-                            
 */
 #pragma once
+#include "fs/IFilesystem.hpp"
 #include "vulkan.h"
 #include "spirv-tools/optimizer.hpp"
 #include "spirv-tools/libspirv.hpp"
@@ -57,6 +58,7 @@ enum class SpirvVersion {
 };
 struct ShaderCreateInfo {
     ShaderBackend backend = ShaderBackend::NONE; ///< The source language.
+    fs::IFilesystem *filesystem = nullptr; ///< Optional pointer to the filesystem containing #src and / or #bin.
     std::string src; ///< The path to the source. Can be empty to disable shader compilation. If src is a directory, the files inside the directory are collected as stages. The source can be split using #stage directives otherwise.
     std::string bin; ///< The path to the binary root directory. Can be empty to disable writing and collecting shader binaries.
     VkDevice device = VK_NULL_HANDLE; ///< The logical device. Leave null to not create shader modules.

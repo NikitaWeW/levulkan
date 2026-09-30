@@ -2,6 +2,7 @@
 #include "Utility.hpp"
 #include "Logging.hpp"
 #include "nlohmann/json.hpp"
+#include "fs/NativeFilesystem.hpp"
 
 #ifdef SHADER_ENABLE_GLSL
 #include "glslang/Public/ShaderLang.h"
@@ -13,12 +14,10 @@
 #include "slang-com-ptr.h"
 #endif
 
-#include <filesystem>
 #include <set>
 #include <ranges>
 
 using namespace vk;
-namespace fs = std::filesystem;
 using namespace nlohmann;
 
 /// @brief Default include class for normal include convention
@@ -40,7 +39,11 @@ protected:
     std::vector<std::string> mSystemDirectoryStack;
     int mSystemDirectoryCount = 0;
     std::set<std::string> mIncludedFiles;
+    fs::IFilesystem *mFilesystem = nullptr;
 public:
+    void setFilesystem(fs::IFilesystem *filesystem) {
+        mFilesystem = filesystem;
+    }
     void pushLocal(std::string_view dir) {
         mLocalDirectoryStack.emplace_back(dir);
         mLocalDirectoryCount = (int) mLocalDirectoryStack.size();
@@ -62,6 +65,8 @@ public:
     
     std::string resolveInclude(std::string_view headerName, std::string_view includerName, int externalDirectoryCount, int depth, std::vector<std::string> &stack)
     {
+        assert(mFilesystem);
+
         // Discard popped include directories, and
         // initialize when at parse-time first level.
         stack.resize(depth + externalDirectoryCount);
@@ -72,7 +77,7 @@ public:
         for(auto it = stack.rbegin(); it != stack.rend(); ++it) {
             std::string path = *it + '/' + headerName.data();
             std::replace(path.begin(), path.end(), '\\', '/');
-            if(fs::exists(path)) {
+            if(mFilesystem->exists(path)) {
                 stack.push_back(getDirectory(path));
                 mIncludedFiles.insert(path);
                 return path;
@@ -161,56 +166,48 @@ static const std::unordered_map<uint32_t, spv_target_env> gVulkanVersionToSpvTar
     {VK_API_VERSION_1_4, spv_target_env::SPV_ENV_VULKAN_1_4},
 };
 
-template<typename T = char>
-static std::vector<T> readFileBinary(std::string_view filename)  {
-    std::ifstream file(std::string{filename}, std::ios::ate | std::ios::binary);
-
-    if(!file.is_open()) 
+template<typename T = std::byte>
+static std::vector<T> readFileBinary(fs::IFilesystem *filesystem, std::string_view filename)  {
+    assert(filesystem);
+    if(!filesystem->exists(filename)) 
     {
         LOG_ERROR("Failed to open file \"{}\"", filename);
         return {};
     }
 
-    size_t fileSize = static_cast<size_t>(file.tellg());
+    fs::FileHandle file = filesystem->open(filename);
+
+    size_t fileSize = file->size();
     std::vector<T> buffer((fileSize + sizeof(T) - 1) / sizeof(T));
 
-    file.seekg(0);
-    file.read(reinterpret_cast<char *>(buffer.data()), fileSize);
+    file->seekg(0);
+    file->read(reinterpret_cast<char *>(buffer.data()), fileSize);
 
     return buffer;
 }
-static std::string readFileString(std::string_view filename)  {
-    std::ifstream file(std::string{filename});
-
-    if(!file.is_open()) 
+static std::string readFileString(fs::IFilesystem *filesystem, std::string_view filename)  {
+    assert(filesystem);
+    if(!filesystem->exists(filename)) 
     {
         LOG_ERROR("Failed to open file \"{}\"", filename);
         return {};
     }
 
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+    auto bin = readFileBinary<char>(filesystem, filename);
+    return std::string(bin.data(), bin.size());
 }
-static void writeFileBinary(std::string_view filename, char const *data, size_t size) {
-    auto dir = fs::path(filename).parent_path().string();
-    if(!dir.empty())
-        std::filesystem::create_directories(dir);
-    std::ofstream file(std::string{filename}, std::ios::out | std::ios::binary | std::ios::trunc);
-    assert(file);
-
-    file.write(data, size);
+static void writeFileBinary(fs::IFilesystem *filesystem, std::string_view filename, char const *data, size_t size) {
+    filesystem->createDirectories(fs::Path(filename).parentPath());
+    fs::FileHandle file = filesystem->open(filename, fs::FileOpenMode::Truncate);
+    assert(file.isOpen());
+    file->write(data, size);
 }
-static void writeFileString(std::string_view filename, std::string_view str) {
-    auto dir = fs::path(filename).parent_path().string();
-    if(!dir.empty())
-        std::filesystem::create_directories(dir);
-    std::ofstream file(std::string{filename}, std::ios::out | std::ios::trunc);
-    assert(file);
-
-    file << str;
+static void writeFileString(fs::IFilesystem *filesystem, std::string_view filename, std::string_view str) {
+    writeFileBinary(filesystem, filename, str.data(), str.size());
 }
 static void collectBinaries(Shader &program, json const &metadata) {
+    assert(program.createInfo.filesystem);
+    auto &fs = program.createInfo.filesystem;
     for(auto const &entry : metadata["binaries"])
     {
         auto stage      = entry["stage"].get<std::string>();
@@ -218,7 +215,7 @@ static void collectBinaries(Shader &program, json const &metadata) {
         auto name       = entry["name"].get<std::string>();
         auto entryPoint = entry["entry"].get<std::string>();
 
-        assert(fs::exists(binPath));
+        assert(fs->exists(binPath));
         assert(gVulkanStageStringToEnum.contains(stage));
 
         uint32_t binIndex = 0;
@@ -230,7 +227,7 @@ static void collectBinaries(Shader &program, json const &metadata) {
         if(binIndex >= program.binaries.size())
             program.binaries.emplace_back(Shader::Binary{
                 .path = binPath,
-                .spirv = readFileBinary<uint32_t>(binPath),
+                .spirv = readFileBinary<uint32_t>(fs, binPath),
             });
 
         
@@ -246,12 +243,18 @@ static void writeBinaries(Shader &program, std::vector<std::string> const &inclu
     json metadata;
     metadata["src"] = program.createInfo.src;
     metadata["includes"] = includes;
-    fs::remove_all(program.createInfo.bin);
+    
+    assert(program.createInfo.filesystem);
+    auto &fs = program.createInfo.filesystem;
+
+    if(fs->exists(program.createInfo.bin))
+        fs->remove(program.createInfo.bin);
+
     for(uint i = 0; i < program.binaries.size(); ++i)
     {
         auto &bin = program.binaries[i];
-        bin.path = fs::path(program.createInfo.bin)/(std::to_string(i) + ".spv");
-        writeFileBinary(bin.path, reinterpret_cast<char const *>(bin.spirv.data()), bin.spirv.size() * sizeof(bin.spirv[0]));
+        bin.path = (fs::Path(program.createInfo.bin)/(std::to_string(i) + ".spv")).string();
+        writeFileBinary(fs, bin.path, reinterpret_cast<char const *>(bin.spirv.data()), bin.spirv.size() * sizeof(bin.spirv[0]));
     }
 
     for(auto const &desc : program.binDescriptors)
@@ -265,18 +268,21 @@ static void writeBinaries(Shader &program, std::vector<std::string> const &inclu
         entry["stage"]   = string_VkShaderStageFlagBits(desc.stage);
     }
 
-    writeFileString((fs::path(program.createInfo.bin)/METADATA_FILENAME).string(), metadata.dump(4));
     metadata["lastTimeWrite"] = std::chrono::file_clock::now().time_since_epoch().count();
+    writeFileString(fs, (fs::Path(program.createInfo.bin)/METADATA_FILENAME).string(), metadata.dump(4));
 }
 static bool isOutdated(Shader &program, json const &metadata) {
-    if(!fs::exists(program.createInfo.bin))
+    if(!program.createInfo.filesystem->exists(program.createInfo.bin))
         return false;
     if(program.createInfo.force)
         return true;
 
+    assert(program.createInfo.filesystem);
+    auto &fs = program.createInfo.filesystem;
+
     bool outdated = false; 
     auto binWriteTime = metadata["lastTimeWrite"];
-    if(fs::exists(program.createInfo.src) && fs::exists(program.createInfo.bin))
+    if(fs->exists(program.createInfo.src) && fs->exists(program.createInfo.bin))
     {
         if(metadata["src"].get<std::string>() != program.createInfo.src)
             return true;
@@ -289,11 +295,11 @@ static bool isOutdated(Shader &program, json const &metadata) {
             outdated = (std::filesystem::last_write_time(include.get<std::string>()).time_since_epoch().count() > binWriteTime);
         }
 
-        if(fs::is_directory(program.createInfo.src)) {
-            for(auto dirEntry : fs::recursive_directory_iterator(program.createInfo.src)) {
+        if(fs->isDirectory(program.createInfo.src)) {
+            for(auto dirEntry : fs->getContents(program.createInfo.src)) {
                 if(outdated)
                     return true;
-                outdated = dirEntry.last_write_time().time_since_epoch().count() > binWriteTime;
+                outdated = fs->lastTimeWrite(dirEntry).time_since_epoch().count() > binWriteTime;
             }
         }
     }
@@ -302,25 +308,27 @@ static bool isOutdated(Shader &program, json const &metadata) {
 }
 static std::vector<ShaderStage> collectSources(Shader &program) {
     std::vector<ShaderStage> stages;
-    assert(fs::exists(program.createInfo.src) && fs::is_directory(program.createInfo.src));
+    assert(program.createInfo.filesystem);
+    auto &fs = program.createInfo.filesystem;
+    assert(fs->exists(program.createInfo.src) && fs->isDirectory(program.createInfo.src));
 
-    for(auto dirEntry : fs::recursive_directory_iterator(program.createInfo.src)) {
-        if(fs::is_directory(dirEntry))
+    for(auto dirEntry : fs->getContents(program.createInfo.src)) {
+        if(fs->isDirectory(dirEntry))
             continue;
 
-        auto extension = dirEntry.path().extension().string();
+        auto extension = dirEntry.extension();
         if(!extension.empty())
             extension.erase(0, 1);
         
         if(!gExtensionToVulkanEnum.contains(extension)) {
-            LOG_WARN("Unknown file in source tree \"{}\": \"{}\"", program.createInfo.src, dirEntry.path().string());
+            LOG_WARN("Unknown file in source tree \"{}\": \"{}\"", program.createInfo.src, dirEntry.string());
             continue;
         }
 
         stages.emplace_back(ShaderStage{
-            .source = readFileString(dirEntry.path().string()),
-            .name   = dirEntry.path().stem().string(),
-            .sourceFile   = dirEntry.path().string(),
+            .source = readFileString(fs, dirEntry.string()),
+            .name   = dirEntry.stem(),
+            .sourceFile   = dirEntry.string(),
             .stage  = gExtensionToVulkanEnum.at(extension),
         });
     }
@@ -461,7 +469,7 @@ static void printUsage() {
     LOG_ERROR("Valid stage names: {}", names);
     LOG_ERROR("#stage all will make a preamble for each shader");
 }
-class GlslIncluder : protected DirStackFileIncluder, public glslang::TShader::Includer {
+class GlslIncluder : public DirStackFileIncluder, public glslang::TShader::Includer {
 public:
     GlslIncluder() = default;
 
@@ -663,7 +671,7 @@ static TBuiltInResource InitResources() {
 static std::vector<ShaderStage> splitGlslSources(Shader &program) {
     std::vector<ShaderStage> stages(1);
     uint32_t currentStage = 0; // 0 - preamble
-    auto source = readFileString(program.createInfo.src);
+    auto source = readFileString(program.createInfo.filesystem, program.createInfo.src);
     std::istringstream stream(source);
 
     size_t lineNum = 1;
@@ -746,12 +754,16 @@ static bool compileGlsl(Shader &program, std::vector<std::string> &outIncludes) 
         ~GlslangProcess() { glslang::FinalizeProcess(); }
     } process;
 
+    assert(program.createInfo.filesystem);
+    auto &fs = program.createInfo.filesystem;
+
     GlslIncluder includer;
+    includer.setFilesystem(fs);
     for(auto const &dir : program.createInfo.includeDirs | std::views::reverse)
         includer.pushExternalLocalDirectory(dir);
     for(auto const &dir : program.createInfo.systemIncludeDirs | std::views::reverse)
         includer.pushExternalSystemDirectory(dir);
-    includer.pushExternalLocalDirectory(fs::path(program.createInfo.src).parent_path().string());
+    includer.pushExternalLocalDirectory(fs::Path(program.createInfo.src).parentPath().string());
 
     glslang::TProgram glslProgram;
     EShMessages messages = EShMessages(EShMsgSpvRules | EShMsgVulkanRules);
@@ -759,8 +771,9 @@ static bool compileGlsl(Shader &program, std::vector<std::string> &outIncludes) 
     static auto resources = InitResources();
 
     std::vector<ShaderStage> sources;
-    assert(fs::exists(program.createInfo.src));
-    if(fs::is_directory(program.createInfo.src)) {
+
+    assert(fs->exists(program.createInfo.src));
+    if(fs->isDirectory(program.createInfo.src)) {
         sources = collectSources(program);
     } else {
         sources = splitGlslSources(program);
@@ -892,7 +905,10 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
     if(!globalSession.session)
         return false;
 
-    if(fs::is_directory(program.createInfo.src)) {
+    assert(program.createInfo.filesystem);
+    auto &fs = program.createInfo.filesystem;
+    assert(fs->exists(program.createInfo.src));
+    if(fs->isDirectory(program.createInfo.src)) {
         LOG_ERROR("Slang shader src path \"{}\" can not be a directory!", program.createInfo.src);
         return false;
     }
@@ -944,13 +960,12 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
     globalSession->createSession(sessionDesc, session.writeRef());
 
     std::vector<ShaderStage> sources;
-    assert(fs::exists(program.createInfo.src));
-    if(fs::is_directory(program.createInfo.src)) {
+    if(fs->isDirectory(program.createInfo.src)) {
         sources = collectSources(program);
     } else {
         sources.emplace_back(ShaderStage{
-            .source = readFileString(program.createInfo.src),
-            .name = fs::path(program.createInfo.src).stem().string(),
+            .source = readFileString(fs, program.createInfo.src),
+            .name = fs::Path(program.createInfo.src).stem(),
             .sourceFile = program.createInfo.src,
             .stage = VK_SHADER_STAGE_ALL,
         });
@@ -960,6 +975,7 @@ static bool compileSlang(Shader &program, std::vector<std::string> &outIncludes)
     DirStackFileIncluder includerToParseIncludePathsBecauseSlangsIFilesystemIsUndocumentedPieceOfFuckingUnbelievableDumpsterFireAndSegfaultsForNoReasonAndWhyDontTheyJustAddAWayToAddACustomIncluderWithoutThisMessMaybeIDontWantToLoadShadersFromFileMaybeTheyAreInMemoryAlreadyAnywayItsNotTheCompilersResponsibility;
     auto &includer = includerToParseIncludePathsBecauseSlangsIFilesystemIsUndocumentedPieceOfFuckingUnbelievableDumpsterFireAndSegfaultsForNoReasonAndWhyDontTheyJustAddAWayToAddACustomIncluderWithoutThisMessMaybeIDontWantToLoadShadersFromFileMaybeTheyAreInMemoryAlreadyAnywayItsNotTheCompilersResponsibility;
 
+    includer.setFilesystem(fs);
     for(auto const &dir : program.createInfo.includeDirs)
         includer.pushLocal(dir);
     for(auto const &dir : program.createInfo.systemIncludeDirs)
@@ -1123,22 +1139,29 @@ Shader vk::makeShader(ShaderCreateInfo const &ci) {
     Shader program;
     program.createInfo = ci;
 
-    auto metadataPath = fs::path(program.createInfo.bin)/METADATA_FILENAME;
-    if(fs::exists(program.createInfo.bin) && !fs::exists(metadataPath))
+    std::unique_ptr<fs::IFilesystem> nativeFilesystem;
+    auto &fs = program.createInfo.filesystem;
+    if(!fs) {
+        nativeFilesystem = std::unique_ptr<fs::IFilesystem>(new fs::NativeFilesystem("."));
+        fs = nativeFilesystem.get();
+    }
+
+    auto metadataPath = fs::Path(program.createInfo.bin)/METADATA_FILENAME;
+    if(fs->exists(program.createInfo.bin) && !fs->exists(metadataPath))
     {
-        LOG_ERROR("Missing {} in {}!", metadataPath.filename().string(), program.createInfo.bin);
+        LOG_ERROR("Missing {} in {}!", metadataPath.filename(), program.createInfo.bin);
         return program;
     }
 
     json metadata;
-    if(fs::exists(metadataPath))
+    if(fs->exists(metadataPath))
     {
-        metadata = json::parse(readFileString(metadataPath.string()));
+        metadata = json::parse(readFileString(fs, metadataPath.string()));
         assert(!metadata.empty());
     }
 
-    bool canCompile = fs::exists(program.createInfo.src);
-    bool canCollect = fs::exists(program.createInfo.bin);
+    bool canCompile = fs->exists(program.createInfo.src);
+    bool canCollect = fs->exists(program.createInfo.bin);
     bool canWrite   = !program.createInfo.bin.empty();
     bool outdated   = isOutdated(program, metadata);
 
@@ -1197,6 +1220,8 @@ Shader vk::makeShader(ShaderCreateInfo const &ci) {
         LOG_WARN("Not creating shader modules for \"{}\"/\"{}\", because device is VK_NULL_HANDLE.", program.createInfo.src, program.createInfo.bin);
     }
 
+    if(!ci.filesystem)
+        program.createInfo.filesystem = nullptr;
     program.valid = true;
     return program;
 }

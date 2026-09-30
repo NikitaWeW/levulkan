@@ -90,7 +90,7 @@ struct GraphicsPipelineCreateInfo {
     struct Blending {
         bool logicOpEnable = false;
         VkLogicOp logicOp;
-        std::vector<VkPipelineColorBlendAttachmentState> attachments;
+        std::vector<VkPipelineColorBlendAttachmentState> attachments; // If size is 1, all the attachments are filled with the first element
         struct {
             float r = 0, g = 0, b = 0, a = 0;
         } constant;
@@ -159,8 +159,8 @@ Pipeline makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout, Com
 Pipeline makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout, RaytracingPipelineCreateInfo const &ci);
 
 void allocateDescriptors(vk::Pipeline &pipeline, DescriptorAllocationInfo ci = {});
-void writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite> const &writes, uint frame = 0);
-void bindDescriptorSet(VkCommandBuffer cb, Pipeline const &pipeline, uint32_t set, uint32_t frame = 0, std::vector<uint32_t> offsets = {});
+bool writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite> const &writes, uint frame = 0);
+bool bindDescriptorSet(VkCommandBuffer cb, Pipeline const &pipeline, uint32_t set, uint32_t frame = 0, std::vector<uint32_t> offsets = {});
 
 void destroy(Pipeline &pipeline);
 

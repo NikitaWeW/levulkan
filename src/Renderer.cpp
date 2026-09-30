@@ -1,398 +1,703 @@
 #include "Renderer.hpp"
-#include <filesystem>
 
-template<typename T>
-static VkFormat getBitmapFormat(Bitmap<T> const& bmp, bool srgb) {
-    if constexpr (std::is_same_v<T, uint8_t>)
-    {
-        switch (bmp.numComponents)
-        {
-            case 1: return srgb ? VK_FORMAT_R8_SRGB       : VK_FORMAT_R8_UNORM;
-            case 2: return srgb ? VK_FORMAT_R8G8_SRGB     : VK_FORMAT_R8G8_UNORM;
-            case 3: return srgb ? VK_FORMAT_R8G8B8_SRGB   : VK_FORMAT_R8G8B8_UNORM;
-            case 4: return srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-        }
-    }
-    else if constexpr (std::is_same_v<T, uint16_t>)
-    {
-        switch (bmp.numComponents)
-        {
-            case 1: return VK_FORMAT_R16_UNORM;
-            case 2: return VK_FORMAT_R16G16_UNORM;
-            case 3: return VK_FORMAT_R16G16B16_UNORM;
-            case 4: return VK_FORMAT_R16G16B16A16_UNORM;
-        }
-    }
-    else if constexpr (std::is_same_v<T, uint32_t>)
-    {
-        switch (bmp.numComponents)
-        {
-            case 1: return VK_FORMAT_R32_UINT;
-            case 2: return VK_FORMAT_R32G32_UINT;
-            case 3: return VK_FORMAT_R32G32B32_UINT;
-            case 4: return VK_FORMAT_R32G32B32A32_UINT;
-        }
-    }
-    else if constexpr (std::is_same_v<T, float>)
-    {
-        switch (bmp.numComponents)
-        {
-            case 1: return VK_FORMAT_R32_SFLOAT;
-            case 2: return VK_FORMAT_R32G32_SFLOAT;
-            case 3: return VK_FORMAT_R32G32B32_SFLOAT;
-            case 4: return VK_FORMAT_R32G32B32A32_SFLOAT;
-        }
-    }
-    else if constexpr (std::is_same_v<T, double>)
-    {
-        switch (bmp.numComponents)
-        {
-            case 1: return VK_FORMAT_R64_SFLOAT;
-            case 2: return VK_FORMAT_R64G64_SFLOAT;
-            case 3: return VK_FORMAT_R64G64B64_SFLOAT;
-            case 4: return VK_FORMAT_R64G64B64A64_SFLOAT;
-        }
-    }
+enum class NodeState { None = 0, Visited, Added };
 
-    LOG_ERROR("Unsupported Bitmap format");
-    return VK_FORMAT_UNDEFINED;
-}
-static VkFence createFence(VkDevice dev) {
-    VkFence fence = nullptr;
-    VkFenceCreateInfo fenceCI{
-        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+struct Pass {
+    std::string name;
+    uint index = 0; // Number in the pass stack
+    std::vector<ResourceUsage> reads;
+    std::vector<ResourceUsage> writes;
+    std::vector<Barrier> barriers;
+    VkQueueFlagBits queue;
+    std::unique_ptr<IRenderPassStorage> storage;
+};
+struct ResourceAllocationInfo {
+    VkImageUsageFlags imageUsage = 0;
+    VkBufferUsageFlags bufferUsage = 0;
+    VkDeviceSize bufferSize = 0;
+};
+struct ResourceCreateInfo {
+    enum Type { External, Image, Buffer } type;
+    union {
+        // Entity external; // Already an entity
+        RenderGraphImageCreateInfo image;
+        RenderGraphBufferCreateInfo buffer;
     };
-    CHECK_VK_RES(vkCreateFence(dev, &fenceCI, nullptr, &fence));
-    return fence;
-}
-static VkQueueFlagBits shaderStageToQueue(VkShaderStageFlagBits stage) {
-    switch(stage) {
-    case VK_SHADER_STAGE_VERTEX_BIT:
-    case VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT:
-    case VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT:
-    case VK_SHADER_STAGE_GEOMETRY_BIT:
-    case VK_SHADER_STAGE_FRAGMENT_BIT:
-    case VK_SHADER_STAGE_ALL_GRAPHICS:
-    case VK_SHADER_STAGE_TASK_BIT_EXT:
-    case VK_SHADER_STAGE_MESH_BIT_EXT:
-            return VK_QUEUE_GRAPHICS_BIT;
+};
+struct ResourceInfo {
+    std::string name;
 
-    case VK_SHADER_STAGE_COMPUTE_BIT:
-            return VK_QUEUE_COMPUTE_BIT;
-            
-    case VK_SHADER_STAGE_RAYGEN_BIT_KHR:
-    case VK_SHADER_STAGE_ANY_HIT_BIT_KHR:
-    case VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR:
-    case VK_SHADER_STAGE_MISS_BIT_KHR:
-    case VK_SHADER_STAGE_INTERSECTION_BIT_KHR:
-    case VK_SHADER_STAGE_CALLABLE_BIT_KHR:
-            return VK_QUEUE_COMPUTE_BIT;
-            
-    default: return static_cast<VkQueueFlagBits>(0);
-    }
-}
+    Entity eResource; // Contains at least ResourceCreateInfo
 
-ResourceAllocator::ResourceAllocator(vk::AllocationCreateInfo const &allocInfo, VkCommandPool commandPool, VkQueue queue) {
-    mAllocInfo = allocInfo;
+    // Indices in the pass stack
+    uint lifetimeBegin = std::numeric_limits<uint>::max();
+    uint lifetimeEnd = 0;
 
-    VkCommandBufferAllocateInfo commandBufferAllocInfo{
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = commandPool,
-        .commandBufferCount = 1,
-    };
-    CHECK_VK_RES(vkAllocateCommandBuffers(mAllocInfo.device, &commandBufferAllocInfo, &mCommandBuffer));
-    mFence = createFence(mAllocInfo.device);
-    mQueue = queue;
-}
-ResourceAllocator::~ResourceAllocator() {
-    vkDestroyFence(mAllocInfo.device, mFence, nullptr);
-}
-uint32_t ResourceAllocator::processImage(Entity eImage) {
-    assert(eImage.valid() && (eImage.has<Texture2D>()) && "Invalid model!");
-    assert(mCommandBuffer && "ResourceAllocator uninitialized! (Make sure to not use the default constructor)");
-    if(!eImage.has<vk::Image>() && eImage.has<Texture2D>())
-    {
-        auto &image = eImage.get<Texture2D>();
+    std::vector<ResourceUsage> read;
+    ResourceUsage written;
+};
+// To pass intermediate data between functions
+struct RenderGraphImpl {
+    vk::AllocationCreateInfo allocInfo;
+    Registry *reg = nullptr;
+    vk::QueueFamilies queueFamilies;
 
-        if(image.bitmap.numComponents == 3)
-            LOG_WARN("Making R32G32B32 texture2D \"{}\". Maybe change it to 32 bits or something...", image.path);
+    std::unordered_set<Entity> resourcePool;
+    std::unordered_map<std::string, NodeState> nodeState;
+    std::unordered_map<std::string, Pass> passes;
+    std::unordered_map<std::string, ResourceInfo> resources;
+    std::vector<std::string> passStack;
+};
 
-        VkSamplerAddressMode addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        switch(image.addressMode)
-        {
-            case Texture2D::AddressMode::Repeat:            addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;               break;
-            case Texture2D::AddressMode::MirroredRepeat:    addressMode = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;      break;
-            case Texture2D::AddressMode::ClampToEdge:       addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;        break;
-            case Texture2D::AddressMode::ClampToBorder:     addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;      break;
-            case Texture2D::AddressMode::MirrorClampToEdge: addressMode = VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE; break;
-            default: LOG_WARN("Unknown address mode in e{}!", eImage.id()); break;
+struct RenderGraphResultImpl {
+    std::unordered_map<std::string, RenderPass> passes;
+    std::unordered_map<std::string, ResourceInfo> resources;
+    std::vector<std::string> passStack;
+};
+struct PleaseKeepTheImageContents {};
+
+void RenderPassBuilder::addExternalResource(std::string_view name, RestrictedEntityAny<vk::Image, vk::Buffer> eResource, bool keep) {
+    mExternalResources[std::string(name)] = eResource;
+    if(eResource.contains<vk::Image>()) {
+        if(keep && !eResource.contains<PleaseKeepTheImageContents>()) {
+            eResource.emplace<PleaseKeepTheImageContents>();
+        } else if(!keep && eResource.contains<PleaseKeepTheImageContents>()) {
+            eResource.erase<PleaseKeepTheImageContents>();
         }
-        vk::ImageCreateInfo ci{
-            .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
-            .allocInfo = mAllocInfo,
-            .imageType = VK_IMAGE_TYPE_2D,
-            .commandBuffer = mCommandBuffer,
-            .format = getBitmapFormat(image.bitmap, image.srgb),
-            .dimensions = {
-                .width = image.bitmap.size.x,
-                .height = image.bitmap.size.y,
-                .mipLevels = image.numMipLevels
-            },
-            .sampler = {
-                .magFilter = image.linearSampling ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
-                .minFilter = image.linearSampling ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
-                .mipmapMode = image.linearSampling ? VK_SAMPLER_MIPMAP_MODE_NEAREST : VK_SAMPLER_MIPMAP_MODE_LINEAR,
-                .addressModeU = addressMode,
-                .addressModeV = addressMode,
-                .addressModeW = addressMode,
-                .anisotropyEnable = image.linearSampling,
-            },
-            .view = {
-                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                .viewType = VK_IMAGE_VIEW_TYPE_2D
-            },
-            .data = image.bitmap.pixels.data(),
-            .name = image.path
-        };
-        eImage.emplace<vk::Image>(vk::makeImage(ci));
-        eImage.emplace<ImageIndex>(mProcessedImages.size());
-        mProcessedImages.emplace_back(eImage);
-
-        vk::insertImageMemoryBarrier(mCommandBuffer, eImage.get<vk::Image>().image,
-            VK_ACCESS_TRANSFER_READ_BIT,
-            VK_ACCESS_SHADER_READ_BIT,
-            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
-            {VK_IMAGE_ASPECT_COLOR_BIT, 0, ci.dimensions.mipLevels, 0, 1}
-        );
-
-        LOG_TRACE("Allocated image e{} \"{}\" {}x{}, {} {} mips of type {} format {} usage {} filter {} address mode {}", 
-            eImage.id(), 
-            image.path, 
-            image.bitmap.size.x, image.bitmap.size.y,
-            image.srgb ? "srgb" : "linear",
-            image.numMipLevels,
-            string_VkImageViewType(eImage.get<vk::Image>().createInfo.view.viewType), 
-            string_VkFormat(eImage.get<vk::Image>().createInfo.format),
-            string_VkImageUsageFlags(eImage.get<vk::Image>().createInfo.usage),
-            string_VkFilter(ci.sampler.minFilter),
-            string_VkSamplerAddressMode(ci.sampler.addressModeU)
-        );
     }
-    // TODO: cubemaps
-
-    return eImage.get<ImageIndex>().index;
 }
-void ResourceAllocator::processModel(Entity eModel) {
-    assert(eModel.valid() && eModel.has<Model>() && "Invalid model!");
-    if(eModel.has<VulkanModel>())
+void RenderPassBuilder::addImageResource(std::string_view name, RenderGraphImageCreateInfo info) {
+    mImageResources[std::string(name)] = info;
+}
+void RenderPassBuilder::addBufferResource(std::string_view name, RenderGraphBufferCreateInfo info) {
+    mBufferResources[std::string(name)] = info;
+}
+void RenderPassBuilder::attachResourceRead(std::string_view resourceName, ResourceTraits traits) {
+    mReads.emplace_back(std::string(resourceName), traits);
+}
+void RenderPassBuilder::attachResourceWrite(std::string_view resourceName, ResourceTraits traits) {
+    mWrites.emplace_back(std::string(resourceName), traits);
+}
+
+void RenderGraphBuilder::setAllocInfo(vk::AllocationCreateInfo const &allocInfo, Registry &reg) {
+    this->allocInfo = allocInfo;
+    this->reg = &reg;
+}
+void RenderGraphBuilder::setQueueFamilies(vk::QueueFamilies const &queueFamilies) {
+    this->queueFamilies = queueFamilies;
+}
+
+RenderGraphResult::RenderGraphResult(RenderGraphResultImpl *data) {
+    mImpl = data;
+}
+RenderGraphResult::~RenderGraphResult() {
+    if(mImpl)
+        delete mImpl;
+}
+RenderGraphResult::RenderGraphResult(RenderGraphResult &&rhs) {
+    *this = std::move(rhs);
+}
+RenderGraphResult &RenderGraphResult::operator=(RenderGraphResult &&rhs) {
+    std::swap(mImpl, rhs.mImpl);
+    return *this;
+}
+bool RenderGraphResult::success() const {
+    return mImpl;
+}
+void RenderGraphResult::setResource(std::string_view name, Entity eResource) {
+    assert(success());
+
+    if(!mImpl->resources.contains(std::string(name))) {
+        LOG_ERROR("Render graph does not contain resource \"{}\"", name);
         return;
-
-    auto &model = eModel.get<Model>();
-    eModel.emplace<VulkanModel>();
-    auto &vulkanModel = eModel.get<VulkanModel>();
-    for(uint i = 0; i < model.meshes.size(); ++i)
-    {
-        auto const &mesh = model.meshes[i];
-        auto &vulkanMesh = vulkanModel.meshes.emplace_back();
-        
-        vulkanMesh.meshIndex = i;
-        vulkanMesh.indexCount = mesh.geometry.indices.size();
-
-        vulkanMesh.buffers = {
-            .pos  = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.positions, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
-            .uv   = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.texCoords, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
-            .norm = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.normals,   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
-            .tan  = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.tangents,  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
-            .idx  = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.indices,   VK_BUFFER_USAGE_INDEX_BUFFER_BIT),
-        };
-
-        vulkanMesh.material.textures = {
-            .albedo       = processImage(Entity{&eModel.reg(), mesh.material.textures.albedo      }),
-            .metallic     = processImage(Entity{&eModel.reg(), mesh.material.textures.metallic    }),
-            .roughness    = processImage(Entity{&eModel.reg(), mesh.material.textures.roughness   }),
-            .ambient      = processImage(Entity{&eModel.reg(), mesh.material.textures.ambient     }),
-            .normal       = processImage(Entity{&eModel.reg(), mesh.material.textures.normal      }),
-            .displacement = processImage(Entity{&eModel.reg(), mesh.material.textures.displacement}),
-        };
-        vulkanMesh.material.properties = mesh.material.properties;
     }
-}
-void ResourceAllocator::begin() {
-    VkCommandBufferBeginInfo beginInfo{
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
-    };
-    CHECK_VK_RES(vkBeginCommandBuffer(mCommandBuffer, &beginInfo));
-}
-void ResourceAllocator::end() {
-    vkEndCommandBuffer(mCommandBuffer);
 
-    VkSubmitInfo submitInfo{
-        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .commandBufferCount = 1,
-        .pCommandBuffers = &mCommandBuffer,
-    };
-    CHECK_VK_RES(vkQueueSubmit(mQueue, 1, &submitInfo, mFence));
-    CHECK_VK_RES(vkWaitForFences(mAllocInfo.device, 1, &mFence, true, UINT64_MAX));
+    mImpl->resources.at(std::string(name)).eResource = eResource;
 }
-RenderManager::RenderManager(vk::AllocationCreateInfo allocInfo, SimpleShaderCreateInfo shaderInfo, RestrictedEntity<vk::Swapchain> swapchain, VkPhysicalDevice device) {
-    mAllocInfo  = allocInfo;
-    mSwapchain  = swapchain;
-    mShaderCreateInfo = shaderInfo;
+Entity RenderGraphResult::getResource(std::string_view name) const {
+    assert(success());
 
-    std::vector<VkFormat> depthFormatList{ VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM_S8_UINT };
-    for(VkFormat &format : depthFormatList) {
-        VkFormatProperties2 formatProperties{ .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2 };
-        vkGetPhysicalDeviceFormatProperties2(device, format, &formatProperties);
-        if(formatProperties.formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
-            mDepthFormat = format;
+    if(!mImpl->resources.contains(std::string(name))) {
+        LOG_ERROR("Render graph does not contain resource \"{}\"", name);
+        return Entity();
+    }
+
+    return mImpl->resources.at(std::string(name)).eResource;
+}
+RenderPass const *RenderGraphResult::getPass(std::string_view name) const {
+    assert(success());
+
+    if(!mImpl->passes.contains(std::string(name))) {
+        LOG_ERROR("Render graph does not contain pass \"{}\"", name);
+        return nullptr;
+    }
+
+    return &mImpl->passes.at(std::string(name));
+}
+std::vector<std::string> const &RenderGraphResult::getPassStack() const {
+    assert(success());
+
+    return mImpl->passStack;
+}
+
+static std::string collapseAttributes(std::vector<std::string> const &attributes) {
+    std::string res;
+    for(auto const &attrib : attributes)
+        res.append("[").append(attrib).append("]");
+    return res;
+}
+std::string RenderGraphResult::dumpGraphviz(int indent, GraphvizSettings settings) const {
+    assert(success());
+
+    std::stringstream ss;
+    auto newline = [indent](int i){ return (indent >= 0) ? ("\n" + std::string(i, ' ')) : " "; };
+    
+    ss << "digraph RenderGraph {";
+    for(auto const &attrib : settings.graphAttributes)
+        ss << newline(indent) << attrib << ";";
+
+    std::string nodeAttributes = collapseAttributes(settings.nodeAttributes);
+    std::string edgeAttributes = collapseAttributes(settings.edgeAttributes);
+
+    for(auto passName : mImpl->passStack) {
+        auto const &pass = mImpl->passes.at(passName);
+        passName.erase(std::remove(passName.begin(), passName.end(), '\"'), passName.end());
+
+        ss << newline(indent) << "\"" << passName << "\" " << nodeAttributes << ";";
+        
+        for(auto [resourceName, _] : pass.reads) {
+            auto &resource = mImpl->resources.at(resourceName);
+            resourceName.erase(std::remove(resourceName.begin(), resourceName.end(), '\"'), resourceName.end());
+            ss << newline(indent) << fmt::format("\"{}\" -> \"{}\" [label=\"{}\"]{}", resource.written.name, passName, resourceName, edgeAttributes);
+        }
+    }
+
+    // ss << newline(indent) << "subgraph Legend {";
+    // ss << newline(indent*2) << "pinned=cluster;";
+    // ss << newline(indent*2) << "lp=\"0,5!\";";
+    // ss << newline(indent*2) << "A [label=<" << makeHtmlTimeline(*mImpl) << ">;]";
+    // ss << newline(indent) << "}";
+
+    // std::string title;
+    // for(auto index : mPassStack)
+    //     title.append(mPasses.get(index).name).append(" -> ");
+    // title.erase(title.size() - std::string_view(" -> ").size());
+    // ss << newline(indent) << newline(indent) << "label = \"" << title << "\";";
+
+    ss << newline(0) << "}";
+
+    return ss.str();
+}
+
+bool setupRenderGraph(RenderGraphBuilder &&builder, RenderGraphImpl &renderGraph) {
+    assert(builder.fresh && "Cannot use same RenderGraphBuilder twice!");
+    builder.fresh = false;
+    if(builder.allocInfo.has_value()) {
+        renderGraph.reg = std::move(builder.reg);
+        renderGraph.allocInfo = std::move(builder.allocInfo.value());
+    }
+    assert(builder.queueFamilies.has_value() && "Forgot to call RenderGraphBuilder::setQueueFamilies?");
+    renderGraph.queueFamilies = std::move(builder.queueFamilies.value());
+    for(auto &&[passName, pass] : builder.passes) {
+        if(renderGraph.passes.contains(passName)) {
+            LOG_ERROR("Render graph already contains pass \"{}\"", passName);
+            return false;
+        }
+
+        auto &renderGraphPass = renderGraph.passes[passName] = {
+            .name = std::move(pass.name),
+            .queue = std::move(pass.queue),
+            .storage = std::move(pass.storage),
+        };
+
+        LOG_TRACE("Adding pass {} queue {}", renderGraphPass.name, string_VkQueueFlagBits(renderGraphPass.queue));
+
+        RenderPassBuilder passBuilder;
+        renderGraphPass.storage->setup(passBuilder);
+        for(auto const &[name, eResource] : passBuilder.mExternalResources) {
+            LOG_TRACE("  External resource {} {}", name, eResource);
+            if(renderGraph.resources.contains(name) && renderGraph.resources.at(name).eResource.valid()) {
+                LOG_ERROR("Resoure \"{}\" already exists (error in pass \"{}\")", name, renderGraphPass.name); 
+                return false;
+            }
+
+            auto &resourceInfo = renderGraph.resources[name];
+            resourceInfo.name = name;
+            resourceInfo.eResource = eResource;
+            resourceInfo.eResource.emplace<ResourceCreateInfo>(
+                ResourceCreateInfo::Type::External
+            );
+        }
+        for(auto const &[name, info] : passBuilder.mImageResources) {
+            LOG_TRACE("  Image resource {} {} {} {}x{}x{} resize to swapchain {}", name, string_VkFormat(info.imageInfo.format), string_VkImageType(info.imageInfo.imageType),  info.imageInfo.dimensions.width, info.imageInfo.dimensions.height, info.imageInfo.dimensions.depth, info.resizeToSwapchain);
+            if(renderGraph.resources.contains(name) && renderGraph.resources.at(name).eResource.valid()) {
+                LOG_ERROR("Resoure \"{}\" already exists (error in pass \"{}\")", name, renderGraphPass.name); 
+                return false;
+            }
+
+            auto &resourceInfo = renderGraph.resources[name];
+            resourceInfo.name = name;
+            resourceInfo.eResource = renderGraph.reg->create(ResourceCreateInfo{
+                .type = ResourceCreateInfo::Type::Image,
+                .image = info
+            });
+        }
+        for(auto const &[name, info] : passBuilder.mBufferResources) {
+            LOG_TRACE("  Buffer resource {} {} bytes", name, info.size);
+            if(renderGraph.resources.contains(name) && renderGraph.resources.at(name).eResource.valid()) {
+                LOG_ERROR("Resoure \"{}\" already exists (error in pass \"{}\")", name, renderGraphPass.name); 
+                return false;
+            }
+
+            auto &resourceInfo = renderGraph.resources[name];
+            resourceInfo.name = name;
+            resourceInfo.eResource = renderGraph.reg->create(ResourceCreateInfo{
+                .type = ResourceCreateInfo::Type::Buffer,
+                .buffer = info
+            });
+        }
+        for(auto const &[name, traits] : passBuilder.mWrites) {
+            LOG_TRACE("  Writes {} {}", name, string_VkAccessFlags2(traits.access));
+            auto &resourceInfo = renderGraph.resources[name];
+
+            if(!resourceInfo.written.name.empty()) {
+                LOG_ERROR("Cannot write to resource \"{}\" more than once!(error in pass \"{}\")", name, renderGraphPass.name);
+                return false;
+            }
+            resourceInfo.name = name;
+            resourceInfo.written = {renderGraphPass.name, traits};
+
+            renderGraphPass.writes.emplace_back(name, traits);
+        }
+        for(auto const &[name, traits] : passBuilder.mReads) {
+            LOG_TRACE("  Reads {} {}", name, string_VkAccessFlags2(traits.access));
+            auto &resourceInfo = renderGraph.resources[name];
+            if(resourceInfo.written.name == renderGraphPass.name) {
+                LOG_ERROR("Cannot read and write to the same resource \"{}\". Use different names!(error in pass \"{}\")", name, renderGraphPass.name);
+                return false;
+            }
+
+            resourceInfo.name = name;
+            resourceInfo.read.emplace_back(renderGraphPass.name, traits);
+
+            renderGraphPass.reads.emplace_back(name, traits);
+        }
+    }
+
+    for(auto const &[_, pass] : renderGraph.passes) {
+        for(auto const &[res, _] : pass.writes) {
+            if(!(renderGraph.resources.contains(res) && renderGraph.resources.at(res).eResource.valid())) {
+                LOG_ERROR("Pass \"{}\" writes to unknown resource \"{}\"", pass.name, res);
+                return false;
+            }
+        }
+        for(auto const &[res, _] : pass.reads) {
+            if(!(renderGraph.resources.contains(res) && renderGraph.resources.at(res).eResource.valid())) {
+                LOG_ERROR("Pass \"{}\" reads from unknown resource \"{}\"", pass.name, res);
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+// Simplified version of vk::RenderGraph's processPass
+static bool processPass(std::string const &passName, RenderGraphImpl &renderGraph, uint depth, bool backtrack = false) {
+    assert(!passName.empty());
+
+    if(depth == 0) {
+        LOG_ERROR("Cycle detected!");
+        return false;
+    }
+
+    auto &nodeState = renderGraph.nodeState[passName];
+    if(nodeState != NodeState::None)
+        return true;
+
+    auto &pass = renderGraph.passes.at(passName);
+
+    // Cull passes results of which are not used anywhere, 
+    // Unless the resource is external
+    bool used = false;
+    for(auto const &resource : pass.writes) {
+        auto const &info = renderGraph.resources.at(resource.name);
+        if(!info.read.empty() || info.eResource.get<ResourceCreateInfo>().type == ResourceCreateInfo::External) {
+            used = true;
             break;
         }
     }
-    if(mDepthFormat == VK_FORMAT_UNDEFINED)
-    {
-        LOG_ERROR("Failed to pick depth image format!");
-        mDepthFormat = depthFormatList.at(0);
+    if(!used) {
+        return true;
+    }
+
+    for(auto const &resource : pass.reads) {
+        auto const &info = renderGraph.resources.at(resource.name);
+        if(!processPass(info.written.name, renderGraph, depth - 1, true)) {
+            return false;
+        }
+    }
+
+    if(nodeState != NodeState::Added) {
+        nodeState = NodeState::Added;
+        pass.index = renderGraph.passStack.size();
+        renderGraph.passStack.emplace_back(pass.name);
+        if(backtrack)
+            return true;
+    }
+
+    for(auto const &resource : pass.writes) {
+        auto const &info = renderGraph.resources.at(resource.name);
+        for(auto const &[dependencyName, _] : info.read)
+            if(!processPass(dependencyName, renderGraph, depth - 1, backtrack))
+                return false;
+    }
+
+    return true;
+}
+static std::string printDependencies(Pass const &pass) {
+    std::string reads;
+    for(auto [name, traits] : pass.reads)
+        reads.append(name).append("; ");
+    if(reads.empty())
+        reads = "none";
+    std::string writes;
+    for(auto [name, traits] : pass.writes)
+        reads.append(name).append("; ");
+    if(writes.empty())
+        writes = "none";
+
+    return fmt::format("reads {:>40} | writes {:>40}", reads, writes);
+}
+static void calculateLifetimes(RenderGraphImpl &renderGraph) {
+    for(auto &[_, resource] : renderGraph.resources) {
+        for(auto const &[passName, traits] : resource.read) {
+            auto const &pass = renderGraph.passes.at(passName);
+            resource.lifetimeEnd = std::max(resource.lifetimeEnd, pass.index);
+        }
+        if(!resource.written.name.empty()) {
+            auto const &pass = renderGraph.passes.at(resource.written.name);
+            resource.lifetimeBegin = std::min(resource.lifetimeBegin, pass.index);
+        }
     }
 }
-RenderManager::~RenderManager() {
-    for(auto &pass : mRenderGraph.getPassesRange()) {
-        vk::destroy(pass.shader);
-    }
+static bool isCompatible(RenderGraphImageCreateInfo const &first, RenderGraphImageCreateInfo const &second) {
+    return // oh god here we go again
+        first.resizeToSwapchain == second.resizeToSwapchain &&
+        first.imageInfo.imageType == second.imageInfo.imageType &&
+        first.imageInfo.format == second.imageInfo.format &&
+        first.imageInfo.dimensions.width == second.imageInfo.dimensions.width &&
+        first.imageInfo.dimensions.height == second.imageInfo.dimensions.height &&
+        first.imageInfo.dimensions.depth == second.imageInfo.dimensions.depth &&
+        first.imageInfo.dimensions.mipLevels == second.imageInfo.dimensions.mipLevels &&
+        first.imageInfo.dimensions.arrayLayers == second.imageInfo.dimensions.arrayLayers &&
+        first.imageInfo.dimensions.samples == second.imageInfo.dimensions.samples &&
+       (first.imageInfo.sampler.flags & second.imageInfo.sampler.flags) &&
+        first.imageInfo.sampler.magFilter == second.imageInfo.sampler.magFilter &&
+        first.imageInfo.sampler.minFilter == second.imageInfo.sampler.minFilter &&
+        first.imageInfo.sampler.mipmapMode == second.imageInfo.sampler.mipmapMode &&
+        first.imageInfo.sampler.addressModeU == second.imageInfo.sampler.addressModeU &&
+        first.imageInfo.sampler.addressModeV == second.imageInfo.sampler.addressModeV &&
+        first.imageInfo.sampler.addressModeW == second.imageInfo.sampler.addressModeW &&
+        std::abs(first.imageInfo.sampler.mipLodBias - second.imageInfo.sampler.mipLodBias) <= 1e-6 &&
+        first.imageInfo.sampler.anisotropyEnable == second.imageInfo.sampler.anisotropyEnable &&
+        std::abs(first.imageInfo.sampler.maxAnisotropy - second.imageInfo.sampler.maxAnisotropy) <= 1e-6 &&
+        first.imageInfo.sampler.compareEnable == second.imageInfo.sampler.compareEnable &&
+        first.imageInfo.sampler.compareOp == second.imageInfo.sampler.compareOp &&
+        std::abs(first.imageInfo.sampler.minLod - second.imageInfo.sampler.minLod) <= 1e-6 &&
+        first.imageInfo.sampler.borderColor == second.imageInfo.sampler.borderColor &&
+        std::abs(first.imageInfo.sampler.customBorderColor.r - second.imageInfo.sampler.customBorderColor.r) <= 1e-6 &&
+        std::abs(first.imageInfo.sampler.customBorderColor.g - second.imageInfo.sampler.customBorderColor.g) <= 1e-6 &&
+        std::abs(first.imageInfo.sampler.customBorderColor.b - second.imageInfo.sampler.customBorderColor.b) <= 1e-6 &&
+        std::abs(first.imageInfo.sampler.customBorderColor.a - second.imageInfo.sampler.customBorderColor.a) <= 1e-6 &&
+        first.imageInfo.sampler.unnormalizedCoordinates == second.imageInfo.sampler.unnormalizedCoordinates;
+
 }
-Entity RenderManager::addColorResource(std::string_view name, glm::uvec2 size) {
-    vk::ImageCreateInfo ci{
-        .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        .imageType = VK_IMAGE_TYPE_2D,
-        .format = VK_FORMAT_R8G8B8A8_UNORM,
-        .view = {
-            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-            .viewType = VK_IMAGE_VIEW_TYPE_2D
-        },
-    };
-
-    return addImageResource(name, size, ci);
-}
-Entity RenderManager::addDepthStencilResource(std::string_view name, glm::uvec2 size) {
-    vk::ImageCreateInfo ci{
-        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        .imageType = VK_IMAGE_TYPE_2D,
-        .format = mDepthFormat,
-        .view = {
-            .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
-            .viewType = VK_IMAGE_VIEW_TYPE_2D
-        },
-    };
-
-    return addImageResource(name, size, ci);
-}
-Entity RenderManager::addBufferResource(std::string_view name, uint32_t size, void const *data, VkBufferUsageFlags usage) {
-    vk::BufferCreateInfo ci{
-        .usage = usage,
-        .allocInfo = mAllocInfo,
-        .data = data,
-        .size = size,
-        .name = std::string(name),
-    };
-
-    Entity res = sReg.create();
-
-    res.emplace<vk::Buffer>(vk::makeBuffer(ci));
-    mRenderGraph.setResource(std::string(name), res);
-
-    return res;
-}
-// void RenderManager::addResource(RestrictedAnyEntity<vk::Image, vk::Buffer> eResource) {
-//     auto name = eResource.has<vk::Image>() ? eResource.get<vk::Image>().name() : eResource.get<vk::Buffer>().name();
-//     mRenderGraph.setResource(name, eResource);
-// }
-vk::Pipeline RenderManager::makePipeline(SimpleRenderPass const &pass, VkQueueFlagBits queue) {
-    vk::PipelineLayoutCreateInfo layout{
-        // .
-    };
-    
-    // if(queue == VK_QUEUE_GRAPHICS_BIT) {
-    //     vk::GraphicsPipelineCreateInfo ci{
-    //         .layout = layout,
-    //         .dynamicState = pass.pipeline.dynamicState,
-    //         .input
-    //     };
-    // }
-    return {};
-}
-// void RenderManager::addPass(SimpleRenderPass const &pass) {
-//     vk::Shader shader = makeShader(pass.shader);
-
-//     if(!shader.valid || shader.binDescriptors.empty()) {
-//         LOG_ERROR("Failed to compile shader {}", pass.shader);
-//     }
-
-//     auto queue = shaderStageToQueue(shader.binDescriptors[0].stage);
-
-//     mRenderGraph.addPass(vk::RenderPass{
-//         .name     = pass.name,
-//         .reads    = pass.reads,
-//         .writes   = pass.writes,
-//         .queue    = queue,
-//         .callback = pass.callback,
-//         .shader   = std::move(shader),
-//         .pipeline = makePipeline(pass, queue),
-//     });
-// }
-
-
-Entity RenderManager::addImageResource(std::string_view name, glm::uvec2 size, vk::ImageCreateInfo ci) {
-    Entity res = sReg.create();
-
-    ci.name = name;
-    ci.allocInfo = mAllocInfo;
-
-    if(size == glm::uvec2{0, 0}) {
-        res.emplace<ResizeToSwapchain>();
-        ci.dimensions = {mSwapchain.get<vk::Swapchain>().createInfo.imageExtent.width, mSwapchain.get<vk::Swapchain>().createInfo.imageExtent.height};
+// Additionally checks the type of an external resource
+static ResourceCreateInfo::Type getResourceType(RestrictedEntityAny<ResourceCreateInfo> e) {
+    auto const &ci = e.get<ResourceCreateInfo>();
+    if(ci.type == ResourceCreateInfo::External) {
+        assert(e.contains<vk::Image>() || e.contains<vk::Buffer>());
+        return e.contains<vk::Image>() ? ResourceCreateInfo::Image : ResourceCreateInfo::Buffer;
     } else {
-        ci.dimensions = {size.x, size.y};
+        return ci.type;
+    }
+}
+static Entity findPoolResource(ResourceCreateInfo const &ci, RenderGraphImpl &renderGraph, VkImageUsageFlags usage = 0) {
+    for(auto poolRes : renderGraph.resourcePool) {
+        assert(poolRes.contains<ResourceCreateInfo>());
+        auto type = getResourceType(poolRes);
+
+        if(type != ci.type)
+            continue;
+
+        // External resources must mach the usage
+        if(poolRes.contains<vk::Image>() && (poolRes.get<vk::Image>().createInfo.usage & usage) != usage) {
+            continue;
+        }
+
+        auto const &poolCi = poolRes.get<ResourceCreateInfo>();
+
+        if(ci.type == ResourceCreateInfo::Image && !isCompatible(ci.image, poolCi.image)) {
+            continue;
+        }
+
+        renderGraph.resourcePool.erase(poolRes);
+        return poolRes;
     }
 
-    res.emplace<vk::Image>(vk::makeImage(ci));
-    mRenderGraph.setResource(std::string(name), res);
-
-    return res;
+    return Entity();
 }
-namespace fs = std::filesystem;
-vk::Shader RenderManager::makeShader(std::string_view name) {
-    auto src = fs::path(mShaderCreateInfo.srcPrefix)/name;
-    if(!fs::exists(src))
-        LOG_ERROR("{} doesent exist!", src.string());
+static void aliasResources(RenderGraphImpl &renderGraph) {
+    LOG_TRACE("Aliasing resources");
+    for(uint i = 0; i < renderGraph.passStack.size(); ++i) {
+        auto const &pass = renderGraph.passes.at(renderGraph.passStack.at(i));
 
-    auto extension = src.extension().string();
-    vk::ShaderBackend backend = vk::ShaderBackend::NONE;
-    if(extension == ".glsl")
-        backend = vk::ShaderBackend::GLSL;
-    else if(extension == ".slang")
-        backend = vk::ShaderBackend::SLANG;
-    else if(fs::is_directory(src))
-        backend = vk::ShaderBackend::GLSL;
+        LOG_TRACE("  Processing pass {}", pass.name);
 
-    if(backend == vk::ShaderBackend::NONE)
-        LOG_ERROR("Cannot deduce shader backend for {}", src.string());
+        // Allocate
+        for(auto const &[resourceName, traits] : pass.writes) {
+            auto &resource = renderGraph.resources.at(resourceName);
+            auto &e = resource.eResource;
+            auto ci = e.get<ResourceCreateInfo>();
 
-    vk::ShaderCreateInfo ci{
-        .backend           = backend,
-        .src               = src.string(),
-        .bin               = (fs::path(mShaderCreateInfo.binPrefix)/name).string(),
-        .device            = mAllocInfo.device,
-        .targetVersion     = mShaderCreateInfo.targetVersion,
-        .spirvVersion      = mShaderCreateInfo.spirvVersion,
-        .includeDirs       = mShaderCreateInfo.includeDirs,
-        .systemIncludeDirs = mShaderCreateInfo.systemIncludeDirs,
-        .definitions       = mShaderCreateInfo.definitions,
-        .debugInfo         = true,
-        .optimize          = true,
+            // TODO: external resources are not used before their lifetimes
+            if(ci.type == ResourceCreateInfo::External)
+                continue;
+
+            e.destroy();
+            e = findPoolResource(ci, renderGraph);
+
+            if(!e.valid()) {
+                assert(renderGraph.reg && "Should have called RenderGraphBuilder::setAllocInfo!");
+                e = renderGraph.reg->create(ci, DebugName(resourceName));
+                LOG_TRACE("    Adding new pool resource {} for {} {}", e, resourceName, string_VkAccessFlagBits2(traits.access));
+            } else {
+                LOG_TRACE("    Found pool resource {} for resource {} {}", e, resourceName, string_VkAccessFlagBits2(traits.access));
+                e.get<DebugName>().name += "," + resourceName;
+            }
+
+            if(!e.contains<ResourceAllocationInfo>()) {
+                e.emplace<ResourceAllocationInfo>();
+            }
+
+            auto &allocInfo = e.get<ResourceAllocationInfo>();
+            allocInfo.imageUsage |= traits.imageTraits.usage;
+            allocInfo.bufferUsage |= traits.bufferTraits.usage;
+            allocInfo.bufferSize = std::max<VkDeviceSize>(allocInfo.bufferSize, traits.bufferTraits.size + traits.bufferTraits.offset);
+        }
+
+        // Free
+        for(auto const &[resourceName, traits] : pass.reads) {
+            auto &resource = renderGraph.resources.at(resourceName);
+            auto const &ci = resource.eResource.get<ResourceCreateInfo>();
+
+            if(resource.eResource.contains<ResourceAllocationInfo>()) {
+                auto &allocInfo = resource.eResource.get<ResourceAllocationInfo>();
+                if(ci.type == ResourceCreateInfo::Image) {
+                    allocInfo.imageUsage |= traits.imageTraits.usage;
+                } else {
+                    allocInfo.bufferUsage |= traits.bufferTraits.usage;
+                }
+            }
+
+            // Might use external resources if the contents are not used next frame
+            if(resource.eResource.contains<PleaseKeepTheImageContents>())
+                continue;
+
+            LOG_TRACE("    Freeing resource {} {}", resource.name, resource.eResource);
+
+            if(resource.lifetimeEnd <= i)
+                renderGraph.resourcePool.emplace(resource.eResource);
+        }
+    }
+}
+static void allocateResources(RenderGraphImpl &renderGraph) {
+    LOG_TRACE("Allocating resources");
+    if(!renderGraph.reg)
+        return;
+    for(auto &e : renderGraph.reg->view<ResourceCreateInfo, ResourceAllocationInfo>()) {
+        auto const &ci = e.get<ResourceCreateInfo>();
+        auto allocInfo = e.get<ResourceAllocationInfo>();
+        e.erase<ResourceAllocationInfo>();
+
+        assert(ci.type != ResourceCreateInfo::External);
+
+        if(ci.type == ResourceCreateInfo::Image) {
+            LOG_TRACE("  Allocating image resource {} for {}", static_cast<Entity &>(e), string_VkImageUsageFlags(allocInfo.imageUsage));
+            assert(allocInfo.imageUsage != 0);
+            vk::ImageCreateInfo imageCreateInfo{
+                .usage = allocInfo.imageUsage   ,
+                .allocInfo = renderGraph.allocInfo,
+                .image = ci.image.imageInfo,
+            };
+            if(e.contains<DebugName>())
+                imageCreateInfo.name = e.get<DebugName>().name;
+            if(ci.image.resizeToSwapchain)
+                e.emplace<ResizeToSwapchain>();
+
+            e.emplace<vk::Image>(vk::makeImage(imageCreateInfo));
+            assert(e.get<vk::Image>().image);
+            assert(e.get<vk::Image>().view);
+            e.emplace<RenderGraphResource>();
+        } else {
+            LOG_TRACE("  Allocating buffer resource {} for {} {} bytes", static_cast<Entity &>(e), string_VkBufferUsageFlags(allocInfo.bufferUsage), allocInfo.bufferSize);
+            assert(allocInfo.bufferUsage != 0);
+            assert(allocInfo.bufferSize != 0);
+            vk::BufferCreateInfo bufferCreateInfo{
+                .usage = allocInfo.bufferUsage,
+                .allocInfo = renderGraph.allocInfo,
+                .size = allocInfo.bufferSize,
+                .map = false,
+            };
+            if(e.contains<DebugName>())
+                bufferCreateInfo.name = e.get<DebugName>().name;
+
+            e.emplace<vk::Buffer>(vk::makeBuffer(bufferCreateInfo));
+        }
+    }
+}
+static bool buildBarriers(RenderGraphImpl &renderGraph) {
+    std::unordered_map<Entity, Barrier::Scope> lastScope;
+    for(auto const &passName : renderGraph.passStack) {
+        auto const &pass = renderGraph.passes.at(passName);
+        for(auto const &[resourceName, traits] : pass.reads) {
+            auto const &resource = renderGraph.resources.at(resourceName);
+
+            uint32_t queue = VK_QUEUE_FAMILY_IGNORED;
+            if(!renderGraph.queueFamilies.indices.contains(pass.queue)) {
+                LOG_ERROR("Pass \"{}\" needs queue {} which is not in queue families provided to the frame graph!", pass.name, string_VkQueueFlagBits(pass.queue));
+                return false;
+            } else {
+                queue = renderGraph.queueFamilies.indices.at(pass.queue);
+            }
+            lastScope[resource.eResource] = {
+                .layout = traits.imageTraits.layout,
+                .bufferUsage = traits.bufferTraits.usage,
+                .imageUsage = traits.imageTraits.usage,
+                .queueIndex = queue,
+                .access = traits.access,
+                .stages = traits.stages,
+
+            };
+        }
+    }
+
+    std::unordered_map<Entity, Barrier::Scope> resourceState;
+    for(auto const &passName : renderGraph.passStack) {
+        auto &pass = renderGraph.passes.at(passName);
+        pass.barriers.reserve(pass.reads.size() + pass.writes.size());
+        uint32_t queue = renderGraph.queueFamilies.indices.at(pass.queue);
+
+        for(auto const &[resourceName, traits] : pass.reads) {
+            auto const &resource = renderGraph.resources.at(resourceName);
+            bool history = resource.eResource.contains<PleaseKeepTheImageContents>() && !resourceState.contains(resource.eResource);
+            auto &state = resourceState[resource.eResource];
+            auto prevState = history ? lastScope.at(resource.eResource) : state;
+
+            state = {
+                .layout = traits.imageTraits.layout,
+                .bufferUsage = traits.bufferTraits.usage,
+                .imageUsage = traits.imageTraits.usage,
+                .queueIndex = queue,
+                .access = traits.access,
+                .stages = traits.stages,
+
+            };
+            pass.barriers.emplace_back(Barrier{
+                .resource = resource.name,
+                .src = prevState,
+                .dst = state,
+                .subresourceRange = traits.imageTraits.subresourceRange,
+                .offset = traits.bufferTraits.offset,
+                .size = traits.bufferTraits.size,
+            });
+        }
+        for(auto const &[resourceName, traits] : pass.writes)
+        {
+            auto const &resource = renderGraph.resources.at(resourceName);
+            auto &state = resourceState[resource.eResource];
+            auto prevState = state;
+            
+            state = {
+                .layout = traits.imageTraits.layout,
+                .bufferUsage = traits.bufferTraits.usage,
+                .imageUsage = traits.imageTraits.usage,
+                .queueIndex = queue,
+                .access = traits.access,
+                .stages = traits.stages,
+            };
+            pass.barriers.emplace_back(Barrier{
+                .resource = resource.name,
+                .src = prevState,
+                .dst = state,
+                .subresourceRange = traits.imageTraits.subresourceRange,
+                .offset = traits.bufferTraits.offset,
+                .size = traits.bufferTraits.size,
+            });
+        }
+    }
+
+    return true;
+}
+
+RenderGraphResult buildRenderGraph(RenderGraphBuilder &&builder) {
+    RenderGraphImpl renderGraph;
+
+    if(!setupRenderGraph(std::move(builder), renderGraph)) {
+        LOG_ERROR("Failed to set up render graph!");
+        return RenderGraphResult(nullptr);
+    }
+
+    // TODO: better validation
+
+    for(auto const &[_, pass] : renderGraph.passes) {
+        if(pass.reads.empty()) {
+            if(!processPass(pass.name, renderGraph, renderGraph.passes.size() * 4)) {
+                LOG_ERROR("Failed to order render graph!");
+                return RenderGraphResult(nullptr);
+            }
+        }
+    }
+
+    LOG_TRACE("Pass stack:");
+    for(uint32_t i = 0; i < renderGraph.passStack.size(); ++i)
+    {
+        auto passName = renderGraph.passStack[i];
+        auto const &pass = renderGraph.passes.at(passName);
+        LOG_TRACE("{:>2}) {:>15}: {}", i, passName, printDependencies(pass));
+    }
+
+    calculateLifetimes(renderGraph);
+    aliasResources(renderGraph);
+    allocateResources(renderGraph);
+
+    if(!buildBarriers(renderGraph)) {
+        LOG_ERROR("Failed to build barriers!");
+        return RenderGraphResult(nullptr);
+    }
+
+    RenderGraphResultImpl *res = new RenderGraphResultImpl{
+        .resources = renderGraph.resources,
+        .passStack = renderGraph.passStack,
     };
 
-    return vk::makeShader(ci);
+    for(auto &&[name, pass] : renderGraph.passes) {
+        res->passes[name] = {
+            .name = std::move(pass.name),
+            .reads = std::move(pass.reads),
+            .writes = std::move(pass.writes),
+            .barriers = std::move(pass.barriers),
+            .queue = std::move(pass.queue),
+            .storage = std::move(pass.storage),
+        };
+    }
+
+    RenderGraphResult result(res);
+
+    for(auto &[_, pass] : res->passes) {
+        pass.storage->postCompile(result);
+    }
+    
+    return result;
 }
