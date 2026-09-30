@@ -1108,7 +1108,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
         // Resize swapchain
         if(shouldResize) {
-            LOG_WARN("Resizing the swapchain and {} image resources to {}x{}",
+            LOG_INFO("Resizing the swapchain and {} image resources to {}x{}",
                 sReg.view<vk::Image, ResizeToSwapchain>().size(),
                 windowExtent.width,
                 windowExtent.height);
