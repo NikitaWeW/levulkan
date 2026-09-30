@@ -122,6 +122,9 @@ Image vk::makeImage(ImageCreateInfo const &ci) {
     CHECK_VK_RES(vmaCreateImage(image.createInfo.allocInfo.allocator, &imageCreateInfo, &image.allocationInfo, &image.image, &image.allocation,
         nullptr));
 
+    if(!image.createInfo.name.empty())
+        vmaSetAllocationName(image.createInfo.allocInfo.allocator, image.allocation, image.createInfo.name.c_str());
+
     if(image.createInfo.data)
         writeImage(image, ci);
 
@@ -208,6 +211,9 @@ Buffer vk::makeBuffer(BufferCreateInfo const &ci) {
     CHECK_VK_RES(vmaCreateBuffer(ci.allocInfo.allocator, &buffer.bufferCreateInfo, &buffer.allocationInfo, &buffer.buffer, &buffer.allocation,
         nullptr));
 
+    if(!buffer.createInfo.name.empty())
+        vmaSetAllocationName(buffer.createInfo.allocInfo.allocator, buffer.allocation, buffer.createInfo.name.c_str());
+
     if(ci.data || ci.map)
         CHECK_VK_RES(vmaMapMemory(buffer.allocator, buffer.allocation, &buffer.mapped));
     if(ci.data)
@@ -227,7 +233,7 @@ Buffer vk::makeBuffer(BufferCreateInfo const &ci) {
 }
 
 bool vk::Image::valid() const {
-    bool sampled = createInfo.usage & VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER || createInfo.usage & VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    bool sampled = createInfo.usage & VK_IMAGE_USAGE_SAMPLED_BIT;
     if(sampled && !sampler)
         return false;
 

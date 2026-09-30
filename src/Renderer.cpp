@@ -527,7 +527,7 @@ static void allocateResources(RenderGraphImpl &renderGraph) {
             LOG_TRACE("  Allocating image resource {} for {}", static_cast<Entity &>(e), string_VkImageUsageFlags(allocInfo.imageUsage));
             assert(allocInfo.imageUsage != 0);
             vk::ImageCreateInfo imageCreateInfo{
-                .usage = allocInfo.imageUsage,
+                .usage = allocInfo.imageUsage   ,
                 .allocInfo = renderGraph.allocInfo,
                 .image = ci.image.imageInfo,
             };

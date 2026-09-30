@@ -1089,18 +1089,6 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
     // FIXME: ResourceDirty flag removes too early for resources that are used in multiple frames.
 
-    // FIXME: on resize:
-    // vkCmdDraw(): the combined image sampler descriptor [VkDescriptorSet 0x7d000000007d, Set 0, Binding 2, Index 0, variable "uNormal"] is using imageView VkImageView 0x0 that is invalid or has been destroyed.
-    // The Vulkan spec states: Descriptors in each bound descriptor set, specified via vkCmdBindDescriptorSets, must be valid if they are accessed as described by descriptor validity by the VkPipeline bound to the pipeline bind point used by this command and the bound VkPipeline was not created with VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT (https://docs.vulkan.org/spec/latest/chapters/drawing.html#VUID-vkCmdDraw-None-08114)
-    // At: src/main.cpp:901
-
-    // FIXME: Depth buffer seems to be ignored
-
-    // FIXME: Invalid entity identifier at exit
-    // At: src/vk/Swapchain.cpp:181 from src/main.cpp:1297
-
-    // Also probably recompiling is broken
-
     // TODO: Better shader/pipeline creation + better uniform buffer
 
     LOG_INFO("Starting rendering.");
@@ -1346,29 +1334,43 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             vk::destroy(mesh.buffers.idx);
         }
     }
-    for(auto e : sReg.view<vk::Image>()) {
-        if(e.get<vk::Image>().owns) {
-            vk::destroy(e.get<vk::Image>());
-            e.destroy();
+    for(DirectEntity<vk::Image> e : sReg.view<vk::Image>()) {
+        if(e->owns) {
+            LOG_TRACE("= Destroying {} {} (valid: {} owns: {})", static_cast<Entity>(e), e->createInfo.name, e->valid(), e->owns);
+            vk::destroy(*e);
+            e.erase<decltype(e)::Component>();
+            if(e.empty())
+                e.destroy();
         }
     }
-    for(auto e : sReg.view<vk::Buffer>()) {
-        if(e.get<vk::Buffer>().owns) {
-            vk::destroy(e.get<vk::Buffer>());
-            e.destroy();
+    for(DirectEntity<vk::Buffer> e : sReg.view<vk::Buffer>()) {
+        if(e->owns) {
+            LOG_TRACE("= Destroying {} {} (valid: {} owns: {})", static_cast<Entity>(e), e->createInfo.name, e->valid(), e->owns);
+            vk::destroy(*e);
+            e.erase<decltype(e)::Component>();
+            if(e.empty())
+                e.destroy();
         }
     }
-    for(auto e : sReg.view<vk::Pipeline>()) {
-        vk::destroy(e.get<vk::Pipeline>());
-        e.destroy();
+    for(DirectEntity<vk::Pipeline> e : sReg.view<vk::Pipeline>()) {
+        LOG_TRACE("= Destroying {}", static_cast<Entity>(e));
+        vk::destroy(*e);
+        e.erase<decltype(e)::Component>();
+        if(e.empty())
+            e.destroy();
     }
-    for(auto e : sReg.view<vk::Shader>()) {
-        vk::destroy(e.get<vk::Shader>());
-        e.destroy();
+    for(DirectEntity<vk::Shader> e : sReg.view<vk::Shader>()) {
+        LOG_TRACE("= Destroying {} {}", static_cast<Entity>(e), e->createInfo.src);
+        vk::destroy(*e);
+        e.erase<decltype(e)::Component>();
+        if(e.empty())
+            e.destroy();
     }
-    for(auto e : sReg.view<vk::Swapchain>()) {
-        vk::destroy(e.get<vk::Swapchain>());
-        e.destroy();
+    for(DirectEntity<vk::Swapchain> e : sReg.view<vk::Swapchain>()) {
+        vk::destroy(*e);
+        e.erase<decltype(e)::Component>();
+        if(e.empty())
+            e.destroy();
     }
 
     LOG_INFO("Exiting");

@@ -1,6 +1,6 @@
 #include "Init.hpp"
-#include "Utility.hpp"
 #include "Logging.hpp"
+#include "Utility.hpp"
 #include "vk/Resource.hpp"
 using namespace vk;
 
@@ -22,16 +22,14 @@ static VkSurfaceFormatKHR chooseSwapSurfaceFormat(SwapchainCreateInfo const ci) 
     std::vector<VkSurfaceFormatKHR> formats(formatCount);
     vkGetPhysicalDeviceSurfaceFormatsKHR(ci.alloc.physicalDevice, ci.alloc.surface, &formatCount, formats.data());
 
-    for(auto const &format : formats)
-    {
-        if(format.format == VK_FORMAT_B8G8R8A8_SRGB && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
-        {
+    for(auto const &format : formats) {
+        if(format.format == VK_FORMAT_B8G8R8A8_SRGB && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
             return format;
         }
     }
 
     LOG_ERROR("Failed to find swap surface format!");
-    return formats.size() > 0 ? formats[0] : VkSurfaceFormatKHR{};
+    return formats.size() > 0 ? formats[0] : VkSurfaceFormatKHR{ };
 }
 static VkPresentModeKHR chooseSwapPresentMode(SwapchainCreateInfo const ci) {
     uint32_t presentModeCount;
@@ -39,7 +37,7 @@ static VkPresentModeKHR chooseSwapPresentMode(SwapchainCreateInfo const ci) {
     std::vector<VkPresentModeKHR> presentModes(presentModeCount);
     vkGetPhysicalDeviceSurfacePresentModesKHR(ci.alloc.physicalDevice, ci.alloc.surface, &presentModeCount, presentModes.data());
 
-    for(const auto& availablePresentMode : presentModes) {
+    for(const auto &availablePresentMode : presentModes) {
         if(availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
             return availablePresentMode;
     }
@@ -48,8 +46,7 @@ static VkPresentModeKHR chooseSwapPresentMode(SwapchainCreateInfo const ci) {
 }
 static void getImages(Swapchain &swapchain, Registry &reg) {
     // FIXME: what the hell is this
-    for(auto &view : swapchain.images)
-    {
+    for(auto &view : swapchain.images) {
         vkDestroyImageView(swapchain.alloc.device, view.get<vk::Image>().view, nullptr);
         reg.destroy(view);
     }
@@ -62,9 +59,9 @@ static void getImages(Swapchain &swapchain, Registry &reg) {
     std::vector<VkImageView> imageViews;
     vkGetSwapchainImagesKHR(swapchain.alloc.device, swapchain.swapchain, &imageCount, images.data());
     imageViews.resize(imageCount);
-    
+
     for(size_t i = 0; i < imageCount; i++) {
-        
+
         VkImageViewCreateInfo createInfo{
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
             .image = images[i],
@@ -88,8 +85,7 @@ static void getImages(Swapchain &swapchain, Registry &reg) {
         CHECK_VK_RES(vkCreateImageView(swapchain.alloc.device, &createInfo, nullptr, &imageViews[i]));
     }
 
-    for(uint i = 0; i < imageCount; ++i)
-    {
+    for(uint i = 0; i < imageCount; ++i) {
         auto eImage = swapchain.images.emplace_back(reg.create(vk::Image{
             .image = images[i],
             .view = imageViews[i],
@@ -117,20 +113,19 @@ static void getImages(Swapchain &swapchain, Registry &reg) {
         }));
         eImage.emplace<DebugName>(eImage.get<vk::Image>().createInfo.name);
         VkDebugUtilsObjectNameInfoEXT name_info{
-            .sType        = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
-            .objectType   = VK_OBJECT_TYPE_IMAGE,
+            .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+            .objectType = VK_OBJECT_TYPE_IMAGE,
             .objectHandle = (uint64_t) images[i],
-            .pObjectName  = eImage.get<vk::Image>().createInfo.name.c_str(),
+            .pObjectName = eImage.get<vk::Image>().createInfo.name.c_str(),
         };
         vkSetDebugUtilsObjectNameEXT(swapchain.alloc.device, &name_info);
     }
 }
 
 Swapchain vk::makeSwapchain(SwapchainCreateInfo const &ci) {
-    if(!ci.alloc.surface)
-    {
+    if(!ci.alloc.surface) {
         LOG_ERROR("No surface provided for swapchain creation!");
-        return {};
+        return { };
     }
     assert(ci.registry);
     Swapchain swapchain;
@@ -138,7 +133,7 @@ Swapchain vk::makeSwapchain(SwapchainCreateInfo const &ci) {
     swapchain.sharingMode = ci.sharingMode;
 
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(ci.alloc.physicalDevice, ci.alloc.surface, &swapchain.capabilities);
-    
+
     auto format = chooseSwapSurfaceFormat(ci);
     swapchain.createInfo = {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
@@ -156,7 +151,8 @@ Swapchain vk::makeSwapchain(SwapchainCreateInfo const &ci) {
         .clipped = VK_TRUE,
         .oldSwapchain = VK_NULL_HANDLE,
     };
-    LOG_TRACE("Making swapchain. Present mode: {}, surface format: {}, colorspace: {}", string_VkPresentModeKHR(swapchain.createInfo.presentMode), string_VkFormat(swapchain.createInfo.imageFormat), string_VkColorSpaceKHR(swapchain.createInfo.imageColorSpace));
+    LOG_TRACE("Making swapchain. Present mode: {}, surface format: {}, colorspace: {}", string_VkPresentModeKHR(swapchain.createInfo.presentMode),
+        string_VkFormat(swapchain.createInfo.imageFormat), string_VkColorSpaceKHR(swapchain.createInfo.imageColorSpace));
 
     CHECK_VK_RES(vkCreateSwapchainKHR(swapchain.alloc.device, &swapchain.createInfo, nullptr, &swapchain.swapchain));
 
@@ -174,10 +170,8 @@ void vk::resizeSwapchain(Swapchain &swapchain, VkExtent2D size) {
     vkDestroySwapchainKHR(swapchain.alloc.device, swapchain.createInfo.oldSwapchain, nullptr);
 }
 
-
 void vk::destroy(Swapchain &swapchain) {
-    for(auto &image : swapchain.images)
-    {
+    for(auto &image : swapchain.images) {
         vkDestroyImageView(swapchain.alloc.device, image.get<vk::Image>().view, nullptr);
     }
 

@@ -9,10 +9,10 @@ RingBuffer::RingBuffer(Registry &reg, BufferCreateInfo createInfo) {
     mBuffer = reg.create(vk::makeBuffer(createInfo));
 }
 RingBuffer::~RingBuffer() {
-    if(mBuffer.valid()) {
-        vk::destroy(mBuffer.get<vk::Buffer>());
-        mBuffer.destroy();
-    }
+    // if(mBuffer.valid()) {
+    //     vk::destroy(mBuffer.get<vk::Buffer>());
+    //     mBuffer.destroy();
+    // }
 }
 
 static uint32_t align(uint32_t value, uint32_t alignment) {

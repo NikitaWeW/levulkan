@@ -149,6 +149,9 @@ public:
     /// @copydoc ecs::registry::size
     std::size_t size() const;
 
+    /// @copydoc ecs::registry empty(ecs::entity)
+    bool empty() const;
+
     /// @copydoc ecs::registry::valid
     /// Also checks if the registry pointer is valid (not nullptr)
     bool valid() const;
@@ -206,9 +209,10 @@ using RestrictedEntityAll = RestrictedEntity_t<std::logical_and<>, Components...
 template<typename... Components>
 using RestrictedEntityAny = RestrictedEntity_t<std::logical_or<>, Components...>;
 
-template<typename Component>
-class DirectEntity : public RestrictedEntity<Component> {
+template<typename Component_t>
+class DirectEntity : public RestrictedEntity<Component_t> {
 public:
+    using Component = Component_t;
     using RestrictedEntity<Component>::RestrictedEntity;
 
     inline Component const &getc() const { return this->template get<Component>(); }
@@ -384,6 +388,9 @@ inline void Entity::destroy() {
 inline std::size_t Entity::size() const { 
     assert(pReg()); 
     return reg()->size(id()); 
+}
+inline bool Entity::empty() const {
+    return size() == 0;
 }
 inline bool Entity::valid() const { 
     return pReg() && reg()->valid(id()); 
