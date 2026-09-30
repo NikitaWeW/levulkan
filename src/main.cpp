@@ -392,12 +392,6 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     { // Scene
         const auto prototypeTextures = Material::Textures{ .albedo = loadTexture("assets/textures/prototype/texture_03.png", false) };
         std::vector<Entity> props;
-        // FIXME: Winding order is inverted
-        // setWindingOrder seems to be flipped though the winding order is already wrong before its executed (the logic seems correct ??)
-        // Models are most probably correct
-        // cpu and gpu data matches
-        // loader seems fine
-        // Coordinate system mismatch?
         loadModelTo("assets/models/suzanne.glb", props, prototypeTextures);
         loadModelTo("assets/models/cube.glb", props, prototypeTextures);
         loadModelTo("assets/models/sphere.glb", props, prototypeTextures);
@@ -1087,8 +1081,6 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     assert(initRes.queueFamilies.presentQueue.has_value());
     vkGetDeviceQueue(device, initRes.queueFamilies.presentQueue.value(), 0, &presentQueue);
 
-    // FIXME: ResourceDirty flag removes too early for resources that are used in multiple frames.
-
     // TODO: Better shader/pipeline creation + better uniform buffer
 
     LOG_INFO("Starting rendering.");
@@ -1206,6 +1198,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         if(sReg.view<ResourceDirty>().size())
             LOG_TRACE("{} resources are dirty! {}", sReg.view<ResourceDirty>().size(), sReg.view<ResourceDirty>());
 
+        // FIXME: ResourceDirty flag removes too early for resources that are used in multiple frames.
         // FIXME: writes are added only for frame 0
         descManager.update(0);
         // FIXME: shit
@@ -1313,8 +1306,6 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     CHECK_VK_RES(vkDeviceWaitIdle(device));
 
     ////////////////////////////////////////////////////////////////
-
-    // FIXME: "Some allocations were not freed before destruction of this memory block!"
 
     for(uint i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
         vkDestroySemaphore(device, presentSemaphores[i], nullptr);
