@@ -2,12 +2,10 @@
 #include "ECS.hpp"
 #include "glm/glm.hpp"
 #include "glm/gtc/quaternion.hpp"
-#include <vector>
 #include <string>
+#include <vector>
 
-template<typename T>
-struct Bitmap
-{
+template <typename T> struct Bitmap {
     std::vector<T> pixels;
     unsigned numComponents;
     glm::uvec2 size;
@@ -15,8 +13,7 @@ struct Bitmap
     inline std::size_t offsetOf(glm::uvec2 pos) const { return numComponents * (pos.y * size.x + pos.x); }
 };
 
-template<typename T = uint8_t>
-struct Texture {
+template <typename T = uint8_t> struct Texture {
     Bitmap<T> bitmap;
     std::string path;
     bool srgb = false;
@@ -36,11 +33,9 @@ struct Cubemap {
     std::string path;
 };
 
-struct Material
-{
+struct Material {
     /// @brief Contains entities with the Texture component, invalid if not present.
-    struct Textures
-    {
+    struct Textures {
         ecs::entity albedo = 0;
         ecs::entity metallic = 0;
         ecs::entity roughness = 0;
@@ -48,10 +43,9 @@ struct Material
         ecs::entity normal = 0;
         ecs::entity displacement = 0;
     } textures;
-    struct Properties
-    {
+    struct Properties {
         glm::vec3 ambient;
-        glm::vec4 albedo{1.0f};
+        glm::vec4 albedo{ 1.0f };
         glm::vec3 specular;
         glm::vec3 emission;
 
@@ -61,28 +55,23 @@ struct Material
         float ior;
     } properties;
 };
-struct Animation
-{
-    struct PositionKey
-    {
+struct Animation {
+    struct PositionKey {
         glm::vec3 value;
         float timeTicks;
     };
-    struct OrientationKey
-    {
+    struct OrientationKey {
         glm::quat value;
         float timeTicks;
     };
-    struct ScaleKey
-    {
+    struct ScaleKey {
         glm::vec3 value;
         float timeTicks;
     };
-    struct Keyframes
-    {
-        std::vector<PositionKey   > positions;
+    struct Keyframes {
+        std::vector<PositionKey> positions;
         std::vector<OrientationKey> orientations;
-        std::vector<ScaleKey      > scales;
+        std::vector<ScaleKey> scales;
     };
 
     std::vector<Keyframes> bones;
@@ -90,34 +79,32 @@ struct Animation
     float durationTicks = 0;
     float ticksPerSecond = 0;
 };
-struct Mesh
-{
-    struct Geometry
-    {
-        // guaranteed
-        std::vector<glm::vec3> positions;
-        std::vector<glm::vec2> texCoords;
-        std::vector<glm::vec3> normals;
-        std::vector<glm::vec3> tangents;
-        std::vector<uint32_t>  indices;
+struct Mesh {
+    struct Geometry {
+        struct Attributes {
+            glm::vec2 uv;
+            glm::vec3 normal;
+            glm::vec3 tangent;
 
-        // optional
-        std::vector<glm::vec4> boneIDs;
-        std::vector<glm::vec4> weights;
+            // optional
+            glm::vec4 boneIDs{ -1 };
+            glm::vec4 weights{ 0 };
+        };
+        std::vector<glm::vec3> positions;
+        std::vector<Attributes> attributes;
+        std::vector<uint32_t> indices;
     } geometry;
-    
+
     Material material;
 };
-struct Model
-{
+struct Model {
     std::vector<Mesh> meshes;
     std::vector<Animation> animations;
     std::string path;
 
     std::vector<ecs::entity> lights;
 
-    struct Skeleton
-    {
+    struct Skeleton {
         glm::mat4 globalInverseTransform;
         std::vector<glm::mat4> bindTransform;
         std::vector<glm::mat4> nodeTransform;

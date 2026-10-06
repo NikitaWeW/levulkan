@@ -53,7 +53,7 @@ ecs::entity TextureLoader::loadFromMemory(void const *data, size_t size, Texture
         .numComponents = static_cast<unsigned>(numChannels),
         .size = {width, height}
     };
-    texture.path = "loadFromMemory";
+    texture.path = "";
     texture.numMipLevels = static_cast<uint32_t>(glm::ceil(glm::log2(std::max(texture.bitmap.size.x, texture.bitmap.size.y))));
     texture.linearSampling = texture.bitmap.size.x * texture.bitmap.size.y > 10000 && texture.numMipLevels > 1;
     stbi_image_free(buff);

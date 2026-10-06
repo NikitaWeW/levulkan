@@ -2,6 +2,7 @@
 #include "Logging.hpp"
 #include "Resources.hpp"
 
+#include <cstddef>
 #include <filesystem>
 
 #include "glm/ext/quaternion_geometric.hpp"
@@ -95,18 +96,25 @@ static aiNodeAnim const *findNodeAnim(aiAnimation const *animation, std::string_
     return nullptr;
 }
 
+struct VertexResult {
+    bool indices = false;
+    bool positions = false;
+    bool uvs = false;
+    bool normals = false;
+    bool tangents = false;
+};
 // FIXME: probably wrong.
-static void calculateMissingPrimitives(Mesh::Geometry &mesh) {
+static void calculateMissingPrimitives(Mesh::Geometry &mesh, VertexResult vertexRes) {
     assert(!mesh.positions.empty());
 
     bool indexed = !mesh.indices.empty();
-    if(mesh.texCoords.empty()) {
+    mesh.attributes.resize(mesh.positions.size());
+    if(!vertexRes.uvs) {
         MODEL_LOADER_TRACE("Calculating missing texcoords");
-        mesh.texCoords.resize(mesh.positions.size());
         for(size_t i = 0; i < (indexed ? mesh.indices.size() : mesh.positions.size()); ++i) {
             unsigned index = indexed ? mesh.indices[i] : i;
 
-            mesh.texCoords[index] = std::array<glm::vec2, 6>{
+            mesh.attributes[index].uv = std::array<glm::vec2, 6>{
                 glm::vec2{ 0, 0 },
                 glm::vec2{ 0, 1 },
                 glm::vec2{ 1, 1 },
@@ -117,9 +125,8 @@ static void calculateMissingPrimitives(Mesh::Geometry &mesh) {
         }
     }
 
-    if(mesh.normals.empty()) {
+    if(!vertexRes.normals) {
         MODEL_LOADER_TRACE("Calculating missing normals");
-        mesh.normals.resize(mesh.positions.size());
         for(size_t i = 0; i + 2 < (indexed ? mesh.indices.size() : mesh.positions.size()); i += 3) {
             size_t i0 = indexed ? mesh.indices[i + 0] : i + 0;
             size_t i1 = indexed ? mesh.indices[i + 1] : i + 1;
@@ -128,15 +135,16 @@ static void calculateMissingPrimitives(Mesh::Geometry &mesh) {
             glm::vec3 e1 = mesh.positions[i1] - mesh.positions[i0];
             glm::vec3 e2 = mesh.positions[i2] - mesh.positions[i0];
             glm::vec3 normal = glm::normalize(glm::cross(e1, e2));
-            mesh.normals[i0] = normal;
-            mesh.normals[i1] = normal;
-            mesh.normals[i2] = normal;
+            mesh.attributes[i0].normal = normal;
+            mesh.attributes[i1].normal = normal;
+            mesh.attributes[i2].normal = normal;
         }
+
+        vertexRes.tangents = false; // Recalculate tangents
     }
 
-    if(mesh.tangents.empty()) {
+    if(!vertexRes.tangents) {
         MODEL_LOADER_TRACE("Calculating missing tangents");
-        mesh.tangents.resize(mesh.positions.size());
         for(size_t i = 0; i + 2 < (indexed ? mesh.indices.size() : mesh.positions.size()); i += 3) {
             size_t i0 = indexed ? mesh.indices[i + 0] : i + 0;
             size_t i1 = indexed ? mesh.indices[i + 1] : i + 1;
@@ -144,8 +152,8 @@ static void calculateMissingPrimitives(Mesh::Geometry &mesh) {
 
             glm::vec3 edge1 = mesh.positions[i1] - mesh.positions[i0];
             glm::vec3 edge2 = mesh.positions[i2] - mesh.positions[i0];
-            glm::vec2 deltaUV1 = mesh.texCoords[i1] - mesh.texCoords[i0];
-            glm::vec2 deltaUV2 = mesh.texCoords[i2] - mesh.texCoords[i0];
+            glm::vec2 deltaUV1 = mesh.attributes[i1].uv - mesh.attributes[i0].uv;
+            glm::vec2 deltaUV2 = mesh.attributes[i1].uv - mesh.attributes[i0].uv;
 
             float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
             glm::vec3 tangent = {
@@ -153,12 +161,12 @@ static void calculateMissingPrimitives(Mesh::Geometry &mesh) {
                 f * (deltaUV2.y * edge1.y - deltaUV1.y * edge2.y),
                 f * (deltaUV2.y * edge1.z - deltaUV1.y * edge2.z),
             };
-            glm::vec3 normal = mesh.normals[i0];
+            glm::vec3 normal = mesh.attributes[i0].normal;
             tangent = glm::normalize(tangent - normal * glm::dot(normal, tangent));
 
-            mesh.tangents[i0] = tangent;
-            mesh.tangents[i1] = tangent;
-            mesh.tangents[i2] = tangent;
+            mesh.attributes[i0].tangent = tangent;
+            mesh.attributes[i1].tangent = tangent;
+            mesh.attributes[i2].tangent = tangent;
         }
     }
 }
@@ -189,7 +197,7 @@ static void setWindingOrder(Mesh::Geometry &mesh, ModelLoaderOptions::WindingOrd
         auto const &A = mesh.positions[iA];
         auto const &B = mesh.positions[iB];
         auto const &C = mesh.positions[iC];
-        auto const &N = mesh.normals[iA];
+        auto const &N = mesh.attributes[iA].normal;
 
         ModelLoaderOptions::WindingOrder triangleOrder;
         if(glm::dot(glm::cross(B - A, C - A), N) < 0) {
@@ -206,49 +214,42 @@ static void setWindingOrder(Mesh::Geometry &mesh, ModelLoaderOptions::WindingOrd
 
     MODEL_LOADER_TRACE("{} triangles flipped!", debugChanged);
 }
-static void optimizeMesh(Mesh &mesh) {
-    Mesh oldMesh = mesh;
-    bool indexed = !oldMesh.geometry.indices.empty();
+// TODO: LOD's
+static void optimizeMesh(Mesh::Geometry &mesh) {
+    Mesh::Geometry oldMesh = mesh;
+    bool indexed = !oldMesh.indices.empty();
 
-    size_t index_count = indexed ? oldMesh.geometry.indices.size() : oldMesh.geometry.positions.size();
-    size_t vertex_count = indexed ? oldMesh.geometry.positions.size() : index_count;
+    size_t index_count = indexed ? oldMesh.indices.size() : oldMesh.positions.size();
+    size_t vertex_count = indexed ? oldMesh.positions.size() : index_count;
     std::vector<meshopt_Stream> streams = {
-        meshopt_Stream{ oldMesh.geometry.positions.data(), sizeof(glm::vec3), sizeof(glm::vec3) },
-        meshopt_Stream{ oldMesh.geometry.texCoords.data(), sizeof(glm::vec2), sizeof(glm::vec2) },
-        meshopt_Stream{ oldMesh.geometry.normals.data(), sizeof(glm::vec3), sizeof(glm::vec3) },
-        meshopt_Stream{ oldMesh.geometry.tangents.data(), sizeof(glm::vec3), sizeof(glm::vec3) },
+        meshopt_Stream{ oldMesh.positions.data(), sizeof(glm::vec3), sizeof(glm::vec3) },
+        meshopt_Stream{ oldMesh.attributes.data(), sizeof(Mesh::Geometry::Attributes), sizeof(Mesh::Geometry::Attributes) },
     };
 
-    if(!oldMesh.geometry.boneIDs.empty()) {
-        streams.emplace_back(meshopt_Stream{ oldMesh.geometry.boneIDs.data(), sizeof(glm::ivec4), sizeof(glm::ivec4) });
-        streams.emplace_back(meshopt_Stream{ oldMesh.geometry.weights.data(), sizeof(glm::vec4), sizeof(glm::vec4) });
-    }
-
     std::vector<unsigned int> remap(vertex_count);
-    size_t new_vertex_count = meshopt_generateVertexRemapMulti(remap.data(), indexed ? oldMesh.geometry.indices.data() : nullptr, index_count,
-        vertex_count, streams.data(), streams.size());
-    mesh.geometry.indices.resize(index_count);
-    meshopt_remapIndexBuffer(mesh.geometry.indices.data(), indexed ? oldMesh.geometry.indices.data() : nullptr, index_count, remap.data());
-    mesh.geometry.positions.resize(new_vertex_count);
-    mesh.geometry.texCoords.resize(new_vertex_count);
-    mesh.geometry.normals.resize(new_vertex_count);
-    mesh.geometry.tangents.resize(new_vertex_count);
-    meshopt_remapVertexBuffer(mesh.geometry.positions.data(), streams[0].data, vertex_count, streams[0].size, remap.data());
-    meshopt_remapVertexBuffer(mesh.geometry.texCoords.data(), streams[1].data, vertex_count, streams[1].size, remap.data());
-    meshopt_remapVertexBuffer(mesh.geometry.normals.data(), streams[2].data, vertex_count, streams[2].size, remap.data());
-    meshopt_remapVertexBuffer(mesh.geometry.tangents.data(), streams[3].data, vertex_count, streams[3].size, remap.data());
-    if(!oldMesh.geometry.boneIDs.empty()) {
-        mesh.geometry.boneIDs.resize(new_vertex_count);
-        meshopt_remapVertexBuffer(mesh.geometry.boneIDs.data(), streams[4].data, vertex_count, streams[4].size, remap.data());
-        mesh.geometry.weights.resize(new_vertex_count);
-        meshopt_remapVertexBuffer(mesh.geometry.weights.data(), streams[5].data, vertex_count, streams[5].size, remap.data());
-    }
+    size_t new_vertex_count = meshopt_generateVertexRemapMulti(remap.data(), indexed ? oldMesh.indices.data() : nullptr, index_count, vertex_count,
+        streams.data(), streams.size());
+    mesh.indices.resize(index_count);
+    mesh.positions.resize(new_vertex_count);
+    mesh.attributes.resize(new_vertex_count);
+    meshopt_remapIndexBuffer(mesh.indices.data(), indexed ? oldMesh.indices.data() : nullptr, index_count, remap.data());
+    meshopt_remapVertexBuffer(mesh.positions.data(), streams[0].data, vertex_count, streams[0].size, remap.data());
+    meshopt_remapVertexBuffer(mesh.attributes.data(), streams[1].data, vertex_count, streams[1].size, remap.data());
+    meshopt_optimizeVertexCache(mesh.indices.data(), mesh.indices.data(), index_count, new_vertex_count);
+    meshopt_optimizeOverdraw(mesh.indices.data(), mesh.indices.data(), index_count, &mesh.positions[0].x, new_vertex_count, sizeof(glm::vec3), 1.05f);
 
-    if(oldMesh.geometry.indices.size() == mesh.geometry.indices.size() && oldMesh.geometry.positions.size() == mesh.geometry.positions.size())
+    remap.resize(new_vertex_count);
+    meshopt_optimizeVertexFetchRemap(remap.data(), mesh.indices.data(), index_count, new_vertex_count);
+    // Remap again
+    meshopt_remapVertexBuffer(mesh.positions.data(), streams[0].data, new_vertex_count, streams[0].size, remap.data());
+    meshopt_remapVertexBuffer(mesh.attributes.data(), streams[1].data, new_vertex_count, streams[1].size, remap.data());
+
+    if(oldMesh.indices.size() == mesh.indices.size() && oldMesh.positions.size() == mesh.positions.size() &&
+        oldMesh.attributes.size() == mesh.attributes.size())
         MODEL_LOADER_TRACE("Optimized mesh. Nothing changed.");
     else
-        MODEL_LOADER_TRACE("Optimized mesh. Had {} indices and {} vertices. Has {} indices and {} vertices", oldMesh.geometry.indices.size(),
-            oldMesh.geometry.positions.size(), mesh.geometry.indices.size(), mesh.geometry.positions.size());
+        MODEL_LOADER_TRACE("Optimized mesh. Had {} indices and {} vertices. Has {} indices, {} vertices and {} attributes", oldMesh.indices.size(),
+            oldMesh.positions.size(), mesh.indices.size(), mesh.positions.size(), mesh.attributes.size());
 }
 static void transformMesh(Mesh::Geometry &primitives, glm::mat4 const &mat) {
     if(mat == glm::mat4{ 1.0f })
@@ -260,38 +261,50 @@ static void transformMesh(Mesh::Geometry &primitives, glm::mat4 const &mat) {
 
     for(auto &position : primitives.positions)
         position = mat * glm::vec4(position, 1);
-    for(auto &normal : primitives.normals)
-        normal = normalMat * glm::vec4(normal, 0);
-    for(auto &tangent : primitives.tangents)
-        tangent = normalMat * glm::vec4(tangent, 0);
+    for(auto &attr : primitives.attributes) {
+        attr.normal = normalMat * glm::vec4(attr.normal, 0);
+        attr.tangent = normalMat * glm::vec4(attr.tangent, 0);
+    }
 }
 
-static void extractVertexData(aiMesh const *aimesh, Mesh &mesh) {
+static VertexResult extractVertexData(aiMesh const *aimesh, Mesh::Geometry &mesh) {
+    VertexResult res;
+    res.positions = true; // idk lol
+    mesh.positions.reserve(aimesh->mNumVertices);
+    mesh.attributes.reserve(aimesh->mNumVertices);
+    mesh.indices.reserve(aimesh->mNumFaces * 3);
     for(unsigned i = 0; i < aimesh->mNumVertices; ++i) {
-        mesh.geometry.positions.emplace_back(aimesh->mVertices[i].x, aimesh->mVertices[i].y, aimesh->mVertices[i].z);
-        if(aimesh->HasNormals())
-            mesh.geometry.normals.emplace_back(aimesh->mNormals[i].x, aimesh->mNormals[i].y, aimesh->mNormals[i].z);
-        if(aimesh->HasTangentsAndBitangents())
-            mesh.geometry.tangents.emplace_back(aimesh->mTangents[i].x, aimesh->mTangents[i].y, aimesh->mTangents[i].z);
-        if(aimesh->HasTextureCoords(0))
-            mesh.geometry.texCoords.emplace_back(aimesh->mTextureCoords[0][i].x, aimesh->mTextureCoords[0][i].y);
+        mesh.positions.emplace_back(aimesh->mVertices[i].x, aimesh->mVertices[i].y, aimesh->mVertices[i].z);
+        auto &attr = mesh.attributes.emplace_back();
+        if(aimesh->HasNormals()) {
+            attr.normal = { aimesh->mNormals[i].x, aimesh->mNormals[i].y, aimesh->mNormals[i].z };
+            res.normals = true;
+        }
+        if(aimesh->HasTangentsAndBitangents()) {
+            attr.tangent = { aimesh->mTangents[i].x, aimesh->mTangents[i].y, aimesh->mTangents[i].z };
+            res.tangents = true;
+        }
+        if(aimesh->HasTextureCoords(0)) {
+            attr.uv = { aimesh->mTextureCoords[0][i].x, aimesh->mTextureCoords[0][i].y };
+            res.uvs = true;
+        }
     }
     for(unsigned i = 0; i < aimesh->mNumFaces; ++i) {
         aiFace face = aimesh->mFaces[i];
         assert(face.mNumIndices == 3); // Assimp should have triangulated the faces
         for(unsigned j = 0; j < face.mNumIndices; ++j) {
-            mesh.geometry.indices.push_back(face.mIndices[j]);
+            mesh.indices.push_back(face.mIndices[j]);
+            res.indices = true;
         }
     }
+
+    return res;
 }
-static void extractBoneData(aiMesh const *aimesh, Mesh &mesh, Model::Skeleton &skeleton) {
+static void extractBoneData(aiMesh const *aimesh, Mesh::Geometry &mesh, Model::Skeleton &skeleton) {
     // i hate it -- april 2025
     // it works -- october 2025
     // i hate my life -- september 2026
-    glm::ivec4 boneIDs{ -1 };
-    mesh.geometry.boneIDs.resize(mesh.geometry.positions.size(), boneIDs);
-    glm::vec4 weights{ 0 };
-    mesh.geometry.weights.resize(mesh.geometry.positions.size(), weights);
+    assert(mesh.attributes.size() == mesh.positions.size());
     for(unsigned boneIndex = 0; boneIndex < aimesh->mNumBones; ++boneIndex) {
         int boneID = -1;
         aiBone const *bone = aimesh->mBones[boneIndex];
@@ -308,12 +321,13 @@ static void extractBoneData(aiMesh const *aimesh, Mesh &mesh, Model::Skeleton &s
 
         for(unsigned weightIndex = 0; weightIndex < bone->mNumWeights; ++weightIndex) {
             unsigned vertexID = bone->mWeights[weightIndex].mVertexId;
-            assert(vertexID < mesh.geometry.positions.size());
+            assert(vertexID < mesh.positions.size());
             // record it in the first uninitialized slot
             for(unsigned i = 0; i < 4; ++i) {
-                if(mesh.geometry.boneIDs[vertexID][i] == -1) {
-                    mesh.geometry.boneIDs[vertexID][i] = boneID;
-                    mesh.geometry.weights[vertexID][i] = bone->mWeights[weightIndex].mWeight;
+                auto &attr = mesh.attributes[vertexID];
+                if(attr.boneIDs[i] == -1) {
+                    attr.boneIDs[i] = boneID;
+                    attr.weights[i] = bone->mWeights[weightIndex].mWeight;
                     break;
                 }
             }
@@ -321,9 +335,10 @@ static void extractBoneData(aiMesh const *aimesh, Mesh &mesh, Model::Skeleton &s
     }
 }
 static void normalizeWeights(Mesh::Geometry &geometry) {
-    for(auto &weight : geometry.weights)
-        if(weight[0] + weight[1] + weight[2] + weight[3] > 1e-6f)
-            weight /= weight[0] + weight[1] + weight[2] + weight[3];
+    for(auto &attr : geometry.attributes) {
+        if(attr.weights[0] + attr.weights[1] + attr.weights[2] + attr.weights[3] > 1e-6f)
+            attr.weights /= attr.weights[0] + attr.weights[1] + attr.weights[2] + attr.weights[3];
+    }
 }
 
 struct ModelLoaderImpl {
@@ -331,6 +346,7 @@ struct ModelLoaderImpl {
     ModelLoaderOptions mOptions;
     TextureLoader mTextureLoader;
 
+    uint mFlags = 0; // Assimp flags used when loading
     aiScene const *mScene = nullptr;
     Model *mModel = nullptr;
     ecs::registry *mRegistry = nullptr;
@@ -541,10 +557,10 @@ Material ModelLoaderImpl::convertMaterial(aiMaterial const *aimaterial, Material
 Mesh ModelLoaderImpl::processMesh(aiMesh const *aimesh, glm::mat4 const &transform) {
     MODEL_LOADER_TRACE("Loading mesh \"{}\"", aimesh->mName.C_Str());
     Mesh mesh;
-    extractVertexData(aimesh, mesh);
+    auto vertexRes = extractVertexData(aimesh, mesh.geometry);
 
     if(aimesh->HasBones()) {
-        extractBoneData(aimesh, mesh, mModel->skeleton);
+        extractBoneData(aimesh, mesh.geometry, mModel->skeleton);
         normalizeWeights(mesh.geometry);
     }
 
@@ -556,9 +572,9 @@ Mesh ModelLoaderImpl::processMesh(aiMesh const *aimesh, glm::mat4 const &transfo
         setMissingTextures(mesh.material.textures, mDefaultMaterial.textures);
     }
 
-    calculateMissingPrimitives(mesh.geometry);
+    calculateMissingPrimitives(mesh.geometry, vertexRes);
     setWindingOrder(mesh.geometry, flipWindingOrder(mOptions.windingOrder, mOptions.flipHandiness));
-    optimizeMesh(mesh);
+    optimizeMesh(mesh.geometry);
 
     // Apply transformation only for meshes.
     // Models with bones should use the bone transformations.
@@ -702,6 +718,7 @@ ecs::entity ModelLoaderImpl::load() {
 
     MODEL_LOADER_TRACE("Model has {} bones.", mModel->skeleton.boneMap.size());
 
+    mModel->skeleton.globalInverseTransform = glm::inverse(toMat4(mScene->mRootNode->mTransformation));
     mModel->skeleton.parents.resize(mModel->skeleton.boneMap.size());
     mModel->skeleton.nodeTransform.resize(mModel->skeleton.boneMap.size());
     calculateParent(mModel->skeleton, mScene->mRootNode, -1);
@@ -739,6 +756,30 @@ ModelLoader::~ModelLoader() {
     if(mImpl)
         delete mImpl;
 }
+static uint setFlags(ModelLoaderOptions options, Assimp::Importer &importer) {
+    unsigned flags = ASSIMP_FLAGS;
+
+    importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
+    importer.SetPropertyInteger(AI_CONFIG_PP_LBW_MAX_WEIGHTS, 4);
+
+    options.smoothNormalAngle = glm::clamp(options.smoothNormalAngle, 0.0f, 175.0f);
+    if(options.smoothNormalAngle >= 1e-6) {
+        importer.SetPropertyFloat(AI_CONFIG_PP_GSN_MAX_SMOOTHING_ANGLE, options.smoothNormalAngle);
+        flags |= aiProcess_GenSmoothNormals;
+        flags |= aiProcess_RemoveComponent;
+        importer.SetPropertyInteger(AI_CONFIG_PP_RVC_FLAGS, aiComponent_NORMALS);
+    }
+    if(options.flipWindingOrder) {
+        flags |= aiProcess_FlipWindingOrder;
+    }
+    if(options.flipUVs) {
+        flags |= aiProcess_FlipUVs;
+    }
+    MODEL_LOADER_TRACE("Flip uvs: {}; flip winding order: {}", static_cast<bool>(flags & aiProcess_FlipUVs),
+        static_cast<bool>(flags & aiProcess_FlipWindingOrder));
+
+    return flags;
+}
 ecs::entity ModelLoader::loadFromFile(std::string_view path, ModelLoaderOptions options) {
     assert(mImpl && "Invalid loader! (make sure to not use default constructor when making an actual loader)");
     for(auto e_model : mImpl->mRegistry->view<Model>())
@@ -748,23 +789,10 @@ ecs::entity ModelLoader::loadFromFile(std::string_view path, ModelLoaderOptions 
     MODEL_LOADER_TRACE("---");
     MODEL_LOADER_TRACE("Loading model \"{}\"", path);
     Assimp::Importer importer;
-    importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
-    importer.SetPropertyInteger(AI_CONFIG_PP_LBW_MAX_WEIGHTS, 4);
-    unsigned flags = ASSIMP_FLAGS;
-    if(options.flipWindingOrder) {
-        flags |= aiProcess_FlipWindingOrder;
-    }
-    if(options.flipUVs) {
-        flags |= aiProcess_FlipUVs;
-    }
-    if(options.flipHandiness) {
-        flags |= aiProcess_MakeLeftHanded;
-    }
-    MODEL_LOADER_TRACE("Flip uvs: {}; flip winding order: {}", static_cast<bool>(flags & aiProcess_FlipUVs),
-        static_cast<bool>(flags & aiProcess_FlipWindingOrder));
-    aiScene const *scene = importer.ReadFile(std::string{ path }, flags);
+    mImpl->mFlags = setFlags(options, importer);
+    mImpl->mScene = importer.ReadFile(std::string{ path }, mImpl->mFlags);
 
-    if(!scene) {
+    if(!mImpl->mScene) {
         LOG_ERROR("Error parsing \"{}\": {}", path, importer.GetErrorString());
         return INVALID_ENTITY;
     }
@@ -773,13 +801,14 @@ ecs::entity ModelLoader::loadFromFile(std::string_view path, ModelLoaderOptions 
     model.path = path;
 
     mImpl->mModel = &model;
-    mImpl->mScene = scene;
     mImpl->mOptions = options;
-    mImpl->mModel->skeleton.globalInverseTransform = glm::inverse(toMat4(mImpl->mScene->mRootNode->mTransformation));
 
     auto eModel = mImpl->load();
 
     mImpl->mScene = nullptr;
+    mImpl->mFlags = 0;
+    mImpl->mModel = nullptr;
+    mImpl->mOptions = { };
     return eModel;
 }
 ecs::entity ModelLoader::loadFromMemory(void const *data, size_t size, ModelLoaderOptions options) {
@@ -791,34 +820,25 @@ ecs::entity ModelLoader::loadFromMemory(void const *data, size_t size, ModelLoad
     MODEL_LOADER_TRACE("---");
     MODEL_LOADER_TRACE("Loading model from memory");
     Assimp::Importer importer;
-    importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
-    importer.SetPropertyInteger(AI_CONFIG_PP_LBW_MAX_WEIGHTS, 4);
-    unsigned flags = ASSIMP_FLAGS;
-    if(options.flipWindingOrder) {
-        flags |= aiProcess_FlipWindingOrder;
-    }
-    if(options.flipUVs) {
-        flags |= aiProcess_FlipUVs;
-    }
-    MODEL_LOADER_TRACE("Flip uvs: {}; flip winding order: {}", static_cast<bool>(flags & aiProcess_FlipUVs),
-        static_cast<bool>(flags & aiProcess_FlipWindingOrder));
-    aiScene const *scene = importer.ReadFileFromMemory(data, size, flags);
+    mImpl->mFlags = setFlags(options, importer);
+    mImpl->mScene = importer.ReadFileFromMemory(data, size, mImpl->mFlags);
 
-    if(!scene) {
+    if(!mImpl->mScene) {
         LOG_ERROR("Error parsing from memory: {}", importer.GetErrorString());
         return INVALID_ENTITY;
     }
 
     Model model;
-    model.path = "loadFromMemory";
+    model.path = "";
 
     mImpl->mModel = &model;
-    mImpl->mScene = scene;
     mImpl->mOptions = options;
-    mImpl->mModel->skeleton.globalInverseTransform = glm::inverse(toMat4(mImpl->mScene->mRootNode->mTransformation));
 
     auto eModel = mImpl->load();
 
     mImpl->mScene = nullptr;
+    mImpl->mFlags = 0;
+    mImpl->mModel = nullptr;
+    mImpl->mOptions = { };
     return eModel;
 }

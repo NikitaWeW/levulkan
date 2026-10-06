@@ -203,11 +203,9 @@ void ResourceAllocator::processModel(Entity eModel) {
         vulkanMesh.indexCount = mesh.geometry.indices.size();
 
         vulkanMesh.buffers = {
-            .pos  = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.positions, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
-            .uv   = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.texCoords, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
-            .norm = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.normals,   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
-            .tan  = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.tangents,  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
-            .idx  = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.indices,   VK_BUFFER_USAGE_INDEX_BUFFER_BIT ),
+            .pos   = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.positions,  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
+            .attr  = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.attributes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
+            .idx   = vk::makeBuffer(mAllocInfo.allocator, mesh.geometry.indices,    VK_BUFFER_USAGE_INDEX_BUFFER_BIT ),
         };
 
         vulkanMesh.material.textures = {
@@ -219,14 +217,16 @@ void ResourceAllocator::processModel(Entity eModel) {
             .displacement = processImage(Entity{&eModel.reg(), mesh.material.textures.displacement}),
         };
         
-        vulkanMesh.material.properties.ambient   = mesh.material.properties.ambient;
-        vulkanMesh.material.properties.albedo    = mesh.material.properties.albedo;
-        vulkanMesh.material.properties.specular  = mesh.material.properties.specular;
-        vulkanMesh.material.properties.emission  = mesh.material.properties.emission;
-        vulkanMesh.material.properties.shininess = mesh.material.properties.shininess;
-        vulkanMesh.material.properties.metallic  = mesh.material.properties.metallic;
-        vulkanMesh.material.properties.roughness = mesh.material.properties.roughness;
-        vulkanMesh.material.properties.ior       = mesh.material.properties.ior;
+        vulkanMesh.material.properties = {
+            .ambient   = mesh.material.properties.ambient,
+            .albedo    = mesh.material.properties.albedo,
+            .specular  = mesh.material.properties.specular,
+            .emission  = mesh.material.properties.emission,
+            .shininess = mesh.material.properties.shininess,
+            .metallic  = mesh.material.properties.metallic,
+            .roughness = mesh.material.properties.roughness,
+            .ior       = mesh.material.properties.ior,
+        };
     }
 }
 void ResourceAllocator::begin() {

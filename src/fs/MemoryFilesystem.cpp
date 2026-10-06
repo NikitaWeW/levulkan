@@ -1,6 +1,7 @@
 #include "MemoryFilesystem.hpp"
 #include "Logging.hpp"
 #include "nlohmann/json.hpp"
+#include <unordered_set>
 
 using nlohmann::json;
 

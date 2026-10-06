@@ -11,6 +11,7 @@ struct ModelLoaderOptions {
     bool flipUVs = false; /// Flip the texture coordinates vertically.
     bool flipHandiness = false; /// Make left handed.
     enum class WindingOrder { Keep, CCW, CW } windingOrder = WindingOrder::Keep; /// Flip the winding order of the triangles based on their normal.
+    float smoothNormalAngle = 0.0f; /// Degrees, 0 - disable smooth normals
     TextureLoaderOptions textureOptions; /// Options for texture loading.
 };
 

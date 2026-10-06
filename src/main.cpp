@@ -53,7 +53,13 @@ template <typename T> static T hash_combine(T lhs, T rhs) {
     lhs ^= rhs + T(0x9e3779b9) + (lhs << T(6)) + (lhs >> T(2));
     return lhs;
 }
-
+static std::string getDateTime() {
+    time_t timestamp = time(NULL);
+    struct tm datetime = *localtime(&timestamp);
+    std::string str = asctime(&datetime);
+    str.pop_back(); // pop newline
+    return str;
+}
 static std::string printTexture(Entity e) {
     if(!e.valid() || !e.contains<Texture2D>())
         return fmt::format("{}", e);
@@ -90,14 +96,10 @@ static std::string printTexture(Entity e) {
         LOG_INFO("-----------------");
 
         LOG_INFO("Geometry:");
-        LOG_INFO("  Triangles: {}", mesh.geometry.indices.size() / 3);
-        LOG_INFO("  Indices:   {}", mesh.geometry.indices.size());
-        LOG_INFO("  Positions: {}", mesh.geometry.positions.size());
-        LOG_INFO("  TexCoords: {}", mesh.geometry.texCoords.size());
-        LOG_INFO("  Normals:   {}", mesh.geometry.normals.size());
-        LOG_INFO("  Tangents:  {}", mesh.geometry.tangents.size());
-        LOG_INFO("  BoneIDs:   {}", mesh.geometry.boneIDs.size());
-        LOG_INFO("  Weights:   {}", mesh.geometry.weights.size());
+        LOG_INFO("  Triangles:   {}", mesh.geometry.indices.size() / 3);
+        LOG_INFO("  Indices:     {}", mesh.geometry.indices.size());
+        LOG_INFO("  Positions:   {}", mesh.geometry.positions.size());
+        LOG_INFO("  Attributes:  {}", mesh.geometry.attributes.size());
 
         LOG_INFO("Material:");
         LOG_INFO("Textures:");
@@ -186,6 +188,7 @@ static bool loadModelTo(std::string_view path, std::vector<Entity> &to, std::opt
 }
 static void dumpModels(std::string_view dir) {
     for(DirectEntity<Model> e : sReg.view<Model>()) {
+        printModelData(e);
         for(uint i = 0; i < e->meshes.size(); ++i) {
             auto const &mesh = e->meshes[i].geometry;
             std::ofstream s(dir.data() + ("/" + std::filesystem::path(e->path).stem().string() + "_") + std::to_string(i) + ".obj");
@@ -197,12 +200,12 @@ static void dumpModels(std::string_view dir) {
                 s << "v " << position.x << " " << position.y << " " << position.z << "\n";
             }
             s << "\n";
-            for(auto const &normal : mesh.normals) {
-                s << "n " << normal.x << " " << normal.y << " " << normal.z << "\n";
+            for(auto const &a : mesh.attributes) {
+                s << "n " << a.normal.x << " " << a.normal.y << " " << a.normal.z << "\n";
             }
             s << "\n";
-            for(auto const &uv : mesh.texCoords) {
-                s << "t " << uv.x << " " << uv.y << "\n";
+            for(auto const &a : mesh.attributes) {
+                s << "t " << a.uv.x << " " << a.uv.y << "\n";
             }
             s << "\n";
 
@@ -605,12 +608,15 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         [&](gbuffer_data &data, RenderGraphResult const &res) {
             if(!data.shader.valid()) {
                 Entity e = sReg.create();
-                e.emplace<vk::Shader>(vk::makeShader({ .backend = vk::ShaderBackend::SLANG,
+                e.emplace<vk::Shader>(vk::makeShader({
+                    .backend = vk::ShaderBackend::SLANG,
                     .src = "shaders/deferred/gbuffer.slang",
                     .bin = "shaders-bin/deferred/gbuffer.slang",
                     .device = device,
                     .includeDirs = { "shaders" },
-                    .debugInfo = true }));
+                    .definitions = { },
+                    .debugInfo = true,
+                }));
                 vk::PipelineLayoutCreateInfo layoutCi{
                     .dynamicDescriptors = { { .set = 0, .binding = 0 } },
                     .unsizedDescriptorSize = { { { .set = 1, .binding = 0 }, images.size() } },
@@ -620,15 +626,15 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                     .input = {
                         .bindings = {
                             {0, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX},
-                            {1, sizeof(glm::vec2), VK_VERTEX_INPUT_RATE_VERTEX},
-                            {2, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX},
-                            {3, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX},
+                            {1, sizeof(Mesh::Geometry::Attributes), VK_VERTEX_INPUT_RATE_VERTEX},
                         },
                         .attributes = {
                             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0}, // pos
-                            {1, 1, VK_FORMAT_R32G32_SFLOAT, 0}, // uv
-                            {2, 2, VK_FORMAT_R32G32B32_SFLOAT, 0}, // norm
-                            {3, 3, VK_FORMAT_R32G32B32_SFLOAT, 0}, // tan
+                            {1, 1, VK_FORMAT_R32G32_SFLOAT,    offsetof(Mesh::Geometry::Attributes, uv)}, // uv
+                            {2, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Mesh::Geometry::Attributes, normal)}, // norm
+                            {3, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Mesh::Geometry::Attributes, tangent)}, // tan
+                            {4, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Mesh::Geometry::Attributes, boneIDs)}, // tan
+                            {5, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Mesh::Geometry::Attributes, weights)}, // tan
                         },
                     },
                     .attachments = {
@@ -793,9 +799,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
                     VkDeviceSize vOffset = 0;
                     vkCmdBindVertexBuffers(cb, 0, 1, &mesh.buffers.pos.buffer, &vOffset);
-                    vkCmdBindVertexBuffers(cb, 1, 1, &mesh.buffers.uv.buffer, &vOffset);
-                    vkCmdBindVertexBuffers(cb, 2, 1, &mesh.buffers.norm.buffer, &vOffset);
-                    vkCmdBindVertexBuffers(cb, 3, 1, &mesh.buffers.tan.buffer, &vOffset);
+                    vkCmdBindVertexBuffers(cb, 1, 1, &mesh.buffers.attr.buffer, &vOffset);
                     vkCmdBindIndexBuffer(cb, mesh.buffers.idx.buffer, 0, VK_INDEX_TYPE_UINT32);
 
                     vkCmdDrawIndexed(cb, mesh.indexCount, 1, 0, 0, 0);
@@ -833,19 +837,21 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         [&](lighting_data &data, RenderGraphResult const &res) {
             if(!data.shader.valid()) {
                 auto e = sReg.create();
-                e.emplace<vk::Shader>(vk::makeShader({ .backend = vk::ShaderBackend::SLANG,
+                e.emplace<vk::Shader>(vk::makeShader({
+                    .backend = vk::ShaderBackend::SLANG,
                     .src = "shaders/deferred/lighting.slang",
                     .bin = "shaders-bin/deferred/lighting.slang",
                     .device = device,
                     .includeDirs = { "shaders" },
-                    .debugInfo = true }));
+                    .debugInfo = true,
+                }));
                 vk::PipelineLayoutCreateInfo layoutCi{
                     .dynamicDescriptors = { { .set = 1, .binding = 0 } },
                 };
                 vk::GraphicsPipelineCreateInfo pipelineCi{
-                    .dynamicState = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR},
+                    .dynamicState = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR },
                     .attachments = {
-                        .color = {VK_FORMAT_R16G16B16A16_SFLOAT},
+                        .color = { VK_FORMAT_R16G16B16A16_SFLOAT },
                         .depth = DEPTH_ATTACHMENT_FORMAT,
                     },
                     .blending = {
@@ -862,35 +868,50 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                     .dstSet = 1,
                     .dstBinding = 0,
                     .dstFrame = 0,
-                    .bufferInfo = { { .resource = uniformBuffer.getBuffer(), .size = sizeof(MatrixData::CameraData) } },
+                    .bufferInfo = { {
+                        .resource = uniformBuffer.getBuffer(),
+                        .size = sizeof(MatrixData::CameraData),
+                    } },
                 });
                 descManager.addResource({
                     .dstPipeline = data.pipeline,
                     .dstSet = 0,
                     .dstBinding = 0,
                     .dstFrame = 0,
-                    .imageInfo = { { .resource = res.getResource("gbuffer_albedo"), .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } },
+                    .imageInfo = { {
+                        .resource = res.getResource("gbuffer_albedo"),
+                        .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    } },
                 });
                 descManager.addResource({
                     .dstPipeline = data.pipeline,
                     .dstSet = 0,
                     .dstBinding = 1,
                     .dstFrame = 0,
-                    .imageInfo = { { .resource = res.getResource("gbuffer_position"), .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } },
+                    .imageInfo = { {
+                        .resource = res.getResource("gbuffer_position"),
+                        .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    } },
                 });
                 descManager.addResource({
                     .dstPipeline = data.pipeline,
                     .dstSet = 0,
                     .dstBinding = 2,
                     .dstFrame = 0,
-                    .imageInfo = { { .resource = res.getResource("gbuffer_normal"), .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } },
+                    .imageInfo = { {
+                        .resource = res.getResource("gbuffer_normal"),
+                        .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    } },
                 });
                 descManager.addResource({
                     .dstPipeline = data.pipeline,
                     .dstSet = 0,
                     .dstBinding = 3,
                     .dstFrame = 0,
-                    .imageInfo = { { .resource = res.getResource("gbuffer_pbr"), .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } },
+                    .imageInfo = { {
+                        .resource = res.getResource("gbuffer_pbr"),
+                        .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    } },
                 });
             }
             assert(data.shader.valid() && data.shader.get<vk::Shader>().valid);
@@ -1021,7 +1042,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         LOG_ERROR("Failed to build a frame graph!");
         return -1;
     }
-    std::ofstream("RenderGraph.dot", std::ios::trunc) << renderGraph.dumpGraphviz(2);
+    std::ofstream("tmp/RenderGraph.dot", std::ios::trunc) << renderGraph.dumpGraphviz(2);
 
     ////////////////////////////////////////////////////////////////
 
@@ -1086,6 +1107,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     LOG_INFO("Starting rendering.");
 
     bool shouldResize = false;
+    uint64_t frameCount = 0;
+    double runtime = 0;
     while(!glfwWindowShouldClose(window->handle)) {
         auto start = std::chrono::high_resolution_clock::now();
         // LOG_TRACE(frameIndex);
@@ -1300,6 +1323,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         CHECK_VK_RES(vkQueuePresentKHR(presentQueue, &presentInfo));
 
         deltatime = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - start).count() * 1e-9f;
+        runtime += deltatime;
+        ++frameCount;
         // LOG_INFO("dt {:.2f}ms fps {:.2f}", deltatime * 1e3, 1 / deltatime);
     }
 
@@ -1319,9 +1344,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     for(auto e : sReg.view<VulkanModel>()) {
         for(auto &mesh : e.get<VulkanModel>().meshes) {
             vk::destroy(mesh.buffers.pos);
-            vk::destroy(mesh.buffers.uv);
-            vk::destroy(mesh.buffers.norm);
-            vk::destroy(mesh.buffers.tan);
+            vk::destroy(mesh.buffers.attr);
             vk::destroy(mesh.buffers.idx);
         }
     }
@@ -1364,11 +1387,20 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             e.destroy();
     }
 
+    LOG_INFO("Ran for {:.3}s avg deltatime: {:.3}ms ({:.3} fps)", runtime, runtime / frameCount * 1e3, frameCount / runtime);
+    std::ofstream("tmp/runtime.txt", std::ios::out | std::ios::app) << getDateTime() << "    rtm " << std::setprecision(4) << runtime << " s    avg "
+                                                                    << runtime / frameCount * 1e3 << " ms    " << frameCount / runtime << " fps\n";
     LOG_INFO("Exiting");
     return 0;
 }
 int main(int argc, char **argv) {
-    initLogger();
+    std::filesystem::create_directory("tmp/");
+
+    time_t t = time(0);
+    struct tm *now = localtime(&t);
+    char buffer[80];
+    strftime(buffer, 80, "%Y%m%d%H%M%S.log", now);
+    initLogger("tmp/logs/main_" + std::string(buffer));
 
     CPPTRACE_TRY { return app(argc, argv); }
     CPPTRACE_CATCH(std::exception const &e) { LOG_ERROR("Exception: {}\n{}", e.what(), cpptrace::from_current_exception().to_string(true)); }

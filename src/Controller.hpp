@@ -15,7 +15,7 @@ public:
         glm::quat orientation;
         // glm::vec2 pitchYaw;
 
-        float fov = 45;
+        float fov = 90;
         float speed = 5;
         float boost = 20;
         float sensitivity = 0.1;

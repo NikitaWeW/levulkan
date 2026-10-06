@@ -247,7 +247,7 @@ SeparateDefinitionBlocks: Leave
 ShortNamespaceLines: 1
 SkipMacroDefinitionBody: true
 SortIncludes:
-  Enabled: true
+  Enabled: false
   IgnoreCase: false
   IgnoreExtension: false
 SortJavaStaticImport: Before

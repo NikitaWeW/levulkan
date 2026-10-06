@@ -52,13 +52,13 @@ void Controller::update(Registry &reg, float dt) {
                 velocity -= up;
 
             if(glfwGetKey(window.handle, GLFW_KEY_UP) == GLFW_PRESS)
-                arrowOffset -= glm::vec2{ 0, 1 } * camera.sensitivity;
+                arrowOffset -= glm::vec2{ 0, 1 } * camera.sensitivity * 4.0f;
             if(glfwGetKey(window.handle, GLFW_KEY_DOWN) == GLFW_PRESS)
-                arrowOffset += glm::vec2{ 0, 1 } * camera.sensitivity;
+                arrowOffset += glm::vec2{ 0, 1 } * camera.sensitivity * 4.0f;
             if(glfwGetKey(window.handle, GLFW_KEY_RIGHT) == GLFW_PRESS)
-                arrowOffset += glm::vec2{ 1, 0 } * camera.sensitivity;
+                arrowOffset += glm::vec2{ 1, 0 } * camera.sensitivity * 4.0f;
             if(glfwGetKey(window.handle, GLFW_KEY_LEFT) == GLFW_PRESS)
-                arrowOffset -= glm::vec2{ 1, 0 } * camera.sensitivity;
+                arrowOffset -= glm::vec2{ 1, 0 } * camera.sensitivity * 4.0f;
         }
         if(velocity != glm::vec3{ 0 })
             velocity = { glm::normalize(velocity) };

@@ -53,9 +53,7 @@ struct VulkanModel {
         struct Buffers
         {
             vk::Buffer pos;
-            vk::Buffer uv;
-            vk::Buffer norm;
-            vk::Buffer tan;
+            vk::Buffer attr;
             vk::Buffer idx;
         } buffers;
         size_t indexCount;
