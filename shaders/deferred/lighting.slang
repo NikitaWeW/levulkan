@@ -39,12 +39,11 @@ float4 fsMain(VsOut in) {
     float3 diffuse = float3(max(dot(normal, L), 0.0025));
     float3 specular = float3(pow(max(dot(R, V), 0.0), 16.0) * 0.75) * 0;
     float4 oColor = float4(diffuse * albedo.rgb + specular, 1.0);
-    // oColor.rgb = normal;    
+    // oColor.rgb = normal /* *.5+.5 */;
 
     // Tone mapping
     oColor.rgb = reinhard(oColor.rgb);
     // Gamma correction
     oColor.rgb = pow(oColor.rgb, float3(1.0/2.2));
-    // oColor.rgb = normal;
     return oColor;
 }

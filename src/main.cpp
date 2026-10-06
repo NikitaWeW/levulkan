@@ -139,13 +139,14 @@ static Entity loadTexture(std::string_view path, bool required = true, bool flip
 
     return eTexture;
 }
-static Entity loadModel(std::string_view path, std::optional<Material::Textures> textures = { }, bool required = true, bool flipTextures = false) {
+static Entity loadModel(std::string_view path, std::optional<Material::Textures> textures = { }, bool required = true, bool smoothShade = false) {
     static ModelLoader loader(sReg.getReg());
 
     ModelLoaderOptions options{
-        .flipUVs = flipTextures,
+        .flipUVs = false,
         .flipHandiness = true, // ??
         .windingOrder = ModelLoaderOptions::WindingOrder::CCW,
+        .smoothNormalAngle = static_cast<float>(smoothShade ? 35 : 0),
     };
     auto eModel = Entity{ &sReg, loader.loadFromFile(path, options) };
     if(!required && !eModel.valid())
@@ -178,8 +179,8 @@ static Entity loadModel(std::string_view path, std::optional<Material::Textures>
 
     return eModel;
 }
-static bool loadModelTo(std::string_view path, std::vector<Entity> &to, std::optional<Material::Textures> textures = { }) {
-    auto e = loadModel(path, textures, false);
+static bool loadModelTo(std::string_view path, std::vector<Entity> &to, std::optional<Material::Textures> textures = { }, bool smooth = false) {
+    auto e = loadModel(path, textures, false, smooth);
     if(e) {
         to.emplace_back(e);
     }
@@ -395,10 +396,10 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     { // Scene
         const auto prototypeTextures = Material::Textures{ .albedo = loadTexture("assets/textures/prototype/texture_03.png", false) };
         std::vector<Entity> props;
-        loadModelTo("assets/models/suzanne.glb", props, prototypeTextures);
-        loadModelTo("assets/models/cube.glb", props, prototypeTextures);
-        loadModelTo("assets/models/sphere.glb", props, prototypeTextures);
-        loadModelTo("assets/models/teapot.glb", props, prototypeTextures);
+        loadModelTo("assets/models/suzanne.glb", props, prototypeTextures, false);
+        loadModelTo("assets/models/cube.glb", props, prototypeTextures, false);
+        loadModelTo("assets/models/sphere.glb", props, prototypeTextures, true);
+        loadModelTo("assets/models/teapot.glb", props, prototypeTextures, true);
 
         const glm::uvec3 numProps = { 10, 3, 5 };
         const float distance = 2;
@@ -411,7 +412,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             sReg.create(ModelInstance{ props[i] }, Transform{ .position = startPos + static_cast<float>(i) * step });
         }
 
-        const auto cubes = loadModel("assets/models/deccer_cubes/SM_Deccer_Cubes_Textured_Complex.gltf", { }, false);
+        const auto cubes = loadModel("assets/models/deccer_cubes/SM_Deccer_Cubes_Textured_Complex.gltf", { });
         if(cubes) {
             sReg.create(ModelInstance{ cubes }, Transform{ .position = { -10, 0, 10 } });
         }

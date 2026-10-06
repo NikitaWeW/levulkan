@@ -238,11 +238,11 @@ static void optimizeMesh(Mesh::Geometry &mesh) {
     meshopt_optimizeVertexCache(mesh.indices.data(), mesh.indices.data(), index_count, new_vertex_count);
     meshopt_optimizeOverdraw(mesh.indices.data(), mesh.indices.data(), index_count, &mesh.positions[0].x, new_vertex_count, sizeof(glm::vec3), 1.05f);
 
+    // FIXME: smoothly shading broken geometry
     remap.resize(new_vertex_count);
     meshopt_optimizeVertexFetchRemap(remap.data(), mesh.indices.data(), index_count, new_vertex_count);
-    // Remap again
-    meshopt_remapVertexBuffer(mesh.positions.data(), streams[0].data, new_vertex_count, streams[0].size, remap.data());
-    meshopt_remapVertexBuffer(mesh.attributes.data(), streams[1].data, new_vertex_count, streams[1].size, remap.data());
+    meshopt_remapVertexBuffer(mesh.positions.data(), mesh.positions.data(), new_vertex_count, sizeof(mesh.positions[0]), remap.data());
+    meshopt_remapVertexBuffer(mesh.attributes.data(), mesh.attributes.data(), new_vertex_count, sizeof(mesh.positions[1]), remap.data());
 
     if(oldMesh.indices.size() == mesh.indices.size() && oldMesh.positions.size() == mesh.positions.size() &&
         oldMesh.attributes.size() == mesh.attributes.size())
@@ -737,9 +737,9 @@ ecs::entity ModelLoaderImpl::load() {
     return eModel;
 }
 
-constexpr unsigned ASSIMP_FLAGS = aiProcess_SplitLargeMeshes | aiProcess_GenNormals | aiProcess_GenUVCoords | aiProcess_FindInvalidData |
-                                  aiProcess_CalcTangentSpace | aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_SortByPType |
-                                  aiProcess_OptimizeGraph | aiProcess_OptimizeMeshes | aiProcess_ValidateDataStructure | aiProcess_LimitBoneWeights;
+constexpr unsigned ASSIMP_FLAGS = aiProcess_SplitLargeMeshes | aiProcess_GenUVCoords | aiProcess_FindInvalidData | aiProcess_CalcTangentSpace |
+                                  aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_SortByPType | aiProcess_OptimizeGraph |
+                                  aiProcess_OptimizeMeshes | aiProcess_ValidateDataStructure | aiProcess_LimitBoneWeights;
 
 ModelLoader::ModelLoader(ecs::registry &reg) {
     mImpl = new ModelLoaderImpl{ reg };
@@ -764,10 +764,13 @@ static uint setFlags(ModelLoaderOptions options, Assimp::Importer &importer) {
 
     options.smoothNormalAngle = glm::clamp(options.smoothNormalAngle, 0.0f, 175.0f);
     if(options.smoothNormalAngle >= 1e-6) {
-        importer.SetPropertyFloat(AI_CONFIG_PP_GSN_MAX_SMOOTHING_ANGLE, options.smoothNormalAngle);
+        MODEL_LOADER_TRACE("Smooth normal angle is {}: recalculating normals.", options.smoothNormalAngle);
         flags |= aiProcess_GenSmoothNormals;
         flags |= aiProcess_RemoveComponent;
-        importer.SetPropertyInteger(AI_CONFIG_PP_RVC_FLAGS, aiComponent_NORMALS);
+        importer.SetPropertyFloat(AI_CONFIG_PP_GSN_MAX_SMOOTHING_ANGLE, options.smoothNormalAngle);
+        importer.SetPropertyInteger(AI_CONFIG_PP_RVC_FLAGS, aiComponent_NORMALS | aiComponent_TANGENTS_AND_BITANGENTS);
+    } else {
+        flags |= aiProcess_GenNormals;
     }
     if(options.flipWindingOrder) {
         flags |= aiProcess_FlipWindingOrder;
