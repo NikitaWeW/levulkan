@@ -11,6 +11,9 @@
 #include "Renderer.hpp"
 #include "resource/Resources.hpp"
 
+#include "tracy/Tracy.hpp"
+#include "tracy/TracyVulkan.hpp"1
+
 Registry sReg;
 constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
 
@@ -139,14 +142,32 @@ static Entity loadTexture(std::string_view path, bool required = true, bool flip
 
     return eTexture;
 }
-static Entity loadModel(std::string_view path, std::optional<Material::Textures> textures = { }, bool required = true, bool smoothShade = false) {
+static std::unordered_set<std::string> getSmoothShadedModelPaths() {
+    std::ifstream smoothShadeFile("assets/models/smoothShade.txt");
+    if(!smoothShadeFile.is_open()) {
+        return { };
+    }
+
+    std::unordered_set<std::string> res;
+    std::string line;
+    while(std::getline(smoothShadeFile, line)) {
+        if(!line.empty()) {
+            res.emplace(std::move(line));
+        }
+    }
+
+    LOG_TRACE("Smoothly shading {}", res);
+    return res;
+}
+static Entity loadModel(std::string_view path, std::optional<Material::Textures> textures = { }, bool required = true) {
     static ModelLoader loader(sReg.getReg());
+    static auto smoothPaths = getSmoothShadedModelPaths();
 
     ModelLoaderOptions options{
         .flipUVs = false,
         .flipHandiness = true, // ??
         .windingOrder = ModelLoaderOptions::WindingOrder::CCW,
-        .smoothNormalAngle = static_cast<float>(smoothShade ? 35 : 0),
+        .smoothNormalAngle = static_cast<float>(smoothPaths.contains(std::string(path)) ? 35 : 0),
     };
     auto eModel = Entity{ &sReg, loader.loadFromFile(path, options) };
     if(!required && !eModel.valid())
@@ -179,8 +200,8 @@ static Entity loadModel(std::string_view path, std::optional<Material::Textures>
 
     return eModel;
 }
-static bool loadModelTo(std::string_view path, std::vector<Entity> &to, std::optional<Material::Textures> textures = { }, bool smooth = false) {
-    auto e = loadModel(path, textures, false, smooth);
+static bool loadModelTo(std::string_view path, std::vector<Entity> &to, std::optional<Material::Textures> textures = { }) {
+    auto e = loadModel(path, textures, false);
     if(e) {
         to.emplace_back(e);
     }
@@ -320,6 +341,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         .appName = "levulkan",
         .window = window->handle,
         .version = VK_API_VERSION_1_4,
+        .deviceExtensions = { VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME },
         .queues = {VK_QUEUE_GRAPHICS_BIT, VK_QUEUE_COMPUTE_BIT, VK_QUEUE_TRANSFER_BIT},
         .deviceFeatures = {
             .features =
@@ -387,7 +409,6 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         DebugName("swapchain_" + (window.contains<DebugName>() ? window.get<DebugName>().name : "")));
 
     VkCommandPool commandPool = createCommandPool(initRes.queueFamilies.indices.at(VK_QUEUE_GRAPHICS_BIT), device);
-    VkQueue graphicsQueue = initRes.queueFamilies.getQueue(VK_QUEUE_GRAPHICS_BIT);
 
     vk::AllocationCreateInfo const ALLOCATION_INFO{ .device = initRes.device, .allocator = initRes.vma, .sharingMode = SHARING_MODE };
 
@@ -396,10 +417,10 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     { // Scene
         const auto prototypeTextures = Material::Textures{ .albedo = loadTexture("assets/textures/prototype/texture_03.png", false) };
         std::vector<Entity> props;
-        loadModelTo("assets/models/suzanne.glb", props, prototypeTextures, false);
-        loadModelTo("assets/models/cube.glb", props, prototypeTextures, false);
-        loadModelTo("assets/models/sphere.glb", props, prototypeTextures, true);
-        loadModelTo("assets/models/teapot.glb", props, prototypeTextures, true);
+        loadModelTo("assets/models/suzanne.glb", props, prototypeTextures);
+        loadModelTo("assets/models/cube.glb", props, prototypeTextures);
+        loadModelTo("assets/models/sphere.glb", props, prototypeTextures);
+        loadModelTo("assets/models/teapot.glb", props, prototypeTextures);
 
         const glm::uvec3 numProps = { 10, 3, 5 };
         const float distance = 2;
@@ -422,7 +443,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
     ////////////////////////////////////////////////////////////////
 
-    ResourceAllocator allocator(ALLOCATION_INFO, commandPool, graphicsQueue);
+    ResourceAllocator allocator(ALLOCATION_INFO, commandPool, initRes.queueFamilies.getQueue(VK_QUEUE_GRAPHICS_BIT));
     allocator.begin();
     for(auto eTexture : sReg.view<Texture2D>(exclude<vk::Image>{ })) {
         allocator.processImage(eTexture);
@@ -543,6 +564,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     RenderGraphBuilder builder;
     builder.setAllocInfo(ALLOCATION_INFO, sReg);
     builder.setQueueFamilies(initRes.queueFamilies);
+
+    TracyVkCtx *currentTracyContext = nullptr;
 
     struct gbuffer_data {
         DirectEntity<vk::Pipeline> pipeline;
@@ -682,6 +705,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             data.depth = res.getResource("gbuffer_depth");
         },
         [&](gbuffer_data &data, VkCommandBuffer cb) {
+            assert(currentTracyContext);
+            TracyVkZone(*currentTracyContext, cb, "G Buffer");
             auto const &albedo = data.albedo.getc();
             auto const &position = data.position.getc();
             auto const &normal = data.normal.getc();
@@ -921,6 +946,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             data.output = res.getResource("lighting_out");
         },
         [&](lighting_data &data, VkCommandBuffer cb) {
+            assert(currentTracyContext);
+            TracyVkZone(*currentTracyContext, cb, "Lighting");
             auto const &pipeline = data.pipeline.getc();
 
             VkExtent2D extent = swapchain->createInfo.imageExtent;
@@ -998,6 +1025,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             data.lighting_out = res.getResource("lighting_out");
         },
         [&](swapchain_blit_data &data, VkCommandBuffer cb) {
+            assert(currentTracyContext);
+            TracyVkZone(*currentTracyContext, cb, "Swapchain blit");
             auto const &src = data.lighting_out.getc();
             auto const &dst = data.swapchainImage.getc();
 
@@ -1053,6 +1082,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     SparseSet<std::array<VkCommandBuffer, MAX_FRAMES_IN_FLIGHT>> commandBuffers;
     std::unordered_set<uint32_t> usedCommandBuffers;
 
+    [[maybe_unused]] SparseSet<std::array<TracyVkCtx, MAX_FRAMES_IN_FLIGHT>> tracyContexts;
     for(auto queue : initRes.queueFamilies.uniqueFamilies) {
         VkCommandBufferAllocateInfo commandBufferAllocateInfo{
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -1066,6 +1096,16 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         for(uint i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
             auto cb = commandBuffers[queue][i];
             auto name = fmt::format("cb #{} {}", i, string_VkQueueFlags(queue));
+
+            VkQueue physQueue;
+            vkGetDeviceQueue(device, queue, 0, &physQueue);
+            [[maybe_unused]] auto &ctx = tracyContexts[queue][i] = (TracyVkContextCalibrated(initRes.physicalDevice,
+                initRes.device,
+                physQueue,
+                cb,
+                vkGetPhysicalDeviceCalibrateableTimeDomainsEXT,
+                vkGetCalibratedTimestampsEXT));
+            TracyVkContextName(ctx, name.data(), name.size());
             VkDebugUtilsObjectNameInfoEXT name_info{
                 .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
                 .objectType = VK_OBJECT_TYPE_COMMAND_BUFFER,
@@ -1111,6 +1151,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     uint64_t frameCount = 0;
     double runtime = 0;
     while(!glfwWindowShouldClose(window->handle)) {
+        FrameMark;
+
         auto start = std::chrono::high_resolution_clock::now();
         // LOG_TRACE(frameIndex);
 
@@ -1259,58 +1301,64 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 queueBarriers[barrier.dst.queueIndex].emplace(barrier, renderGraph);
             }
 
-            auto queue = initRes.queueFamilies.indices.at(pass->queue);
+            auto passQueue = initRes.queueFamilies.indices.at(pass->queue);
+            auto passCB = commandBuffers.at(passQueue)[frameIndex];
 
             auto queues = queueBarriers.sparse();
-            queues.emplace_back(queue);
+            queues.emplace_back(passQueue);
             for(auto queue : queues) {
                 if(!usedCommandBuffers.contains(queue)) {
                     auto cb = commandBuffers.at(queue)[frameIndex];
 
                     usedCommandBuffers.emplace(queue);
                     CHECK_VK_RES(vkResetCommandBuffer(cb, 0));
-                    VkCommandBufferBeginInfo cbBI{ .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-                        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
+                    VkCommandBufferBeginInfo cbBI{
+                        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+                        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+                    };
                     CHECK_VK_RES(vkBeginCommandBuffer(cb, &cbBI));
                 }
             }
 
+            currentTracyContext = &tracyContexts.at(passQueue).at(frameIndex);
+            TracyVkZone(*currentTracyContext, passCB, "Pass render");
             for(auto [queue, barrierss] : queueBarriers) {
                 VkDependencyInfo dependencyInfo{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
                     .bufferMemoryBarrierCount = static_cast<uint32_t>(barrierss.bufferBarriers.size()),
                     .pBufferMemoryBarriers = barrierss.bufferBarriers.data(),
                     .imageMemoryBarrierCount = static_cast<uint32_t>(barrierss.imageBarriers.size()),
                     .pImageMemoryBarriers = barrierss.imageBarriers.data() };
-                vkCmdPipelineBarrier2(commandBuffers.at(queue)[frameIndex], &dependencyInfo);
+                vkCmdPipelineBarrier2(passCB, &dependencyInfo);
             }
 
-            pass->render(commandBuffers.at(queue)[frameIndex]);
+            pass->render(passCB);
         }
 
-        // WHY?
-        static std::vector<VkCommandBuffer> submitCommandBuffers;
-        submitCommandBuffers.clear();
-        submitCommandBuffers.reserve(usedCommandBuffers.size());
+        // Submit command buffer
         for(auto queue : usedCommandBuffers) {
             auto cb = commandBuffers.at(queue)[frameIndex];
+            TracyVkCollect(tracyContexts.at(queue).at(frameIndex), cb);
+            TracyVkCollectHost(tracyContexts.at(queue).at(frameIndex));
             vkEndCommandBuffer(cb);
-            submitCommandBuffers.emplace_back(cb);
+        
+            VkPipelineStageFlags waitStages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            VkSubmitInfo submitInfo{
+                .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                .waitSemaphoreCount = 1,
+                .pWaitSemaphores = &presentSemaphores[frameIndex],
+                .pWaitDstStageMask = &waitStages,
+                .commandBufferCount = 1,
+                .pCommandBuffers = &cb,
+                .signalSemaphoreCount = 1,
+                .pSignalSemaphores = &renderSemaphores[imageIndex],
+            };
+
+            VkQueue physQueue;
+            vkGetDeviceQueue(device, queue, 0, &physQueue);
+            CHECK_VK_RES(vkQueueSubmit(physQueue, 1, &submitInfo, fences[frameIndex]));    
         }
         usedCommandBuffers.clear();
 
-        // Submit command buffer
-        VkPipelineStageFlags waitStages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        VkSubmitInfo submitInfo{
-            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &presentSemaphores[frameIndex],
-            .pWaitDstStageMask = &waitStages,
-            .commandBufferCount = static_cast<uint32_t>(submitCommandBuffers.size()),
-            .pCommandBuffers = submitCommandBuffers.data(),
-            .signalSemaphoreCount = 1,
-            .pSignalSemaphores = &renderSemaphores[imageIndex],
-        };
-        CHECK_VK_RES(vkQueueSubmit(graphicsQueue, 1, &submitInfo, fences[frameIndex]));
 
         frameIndex = (frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
 
@@ -1332,6 +1380,12 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     CHECK_VK_RES(vkDeviceWaitIdle(device));
 
     ////////////////////////////////////////////////////////////////
+
+    for(auto &q : tracyContexts.dense()) {
+        for(auto &ctx : q) {
+            TracyVkDestroy(ctx);
+        }
+    }
 
     for(uint i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
         vkDestroySemaphore(device, presentSemaphores[i], nullptr);

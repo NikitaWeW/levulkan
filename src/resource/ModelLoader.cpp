@@ -1,5 +1,4 @@
 #include "Loaders.hpp"
-#include "Logging.hpp"
 #include "Resources.hpp"
 
 #include <cstddef>
@@ -15,15 +14,23 @@
 #include "libraries/stb_image.h"
 #include "meshoptimizer.h"
 
-// Enable verbose loading by uncommenting the line below or adding a compiler definition.
+// Enable verbose loading by uncommenting the lines below.
+#include "Logging.hpp"
 #define MODEL_LOADER_TRACE(...) LOG_TRACE(__VA_ARGS__)
 #ifndef MODEL_LOADER_TRACE
 #define MODEL_LOADER_TRACE(...)
 #endif
 
+// Scope profiler, enable tracy profiler by uncommenting the lines below.
+#include "tracy/Tracy.hpp"
+#define MODEL_LOADER_PROFILE ZoneScoped
+#ifndef MODEL_LOADER_PROFILE
+#define MODEL_LOADER_PROFILE
+#endif
+
 constexpr glm::mat4 toMat4(aiMatrix4x4 const &from) {
     glm::mat4 to{ };
-    //the a,b,c,d in assimp is the row ; the 1,2,3,4 is the column
+    // The a,b,c,d in assimp is the row ; the 1,2,3,4 is the column
     to[0][0] = from.a1;
     to[1][0] = from.a2;
     to[2][0] = from.a3;
@@ -87,6 +94,8 @@ static void setMissingTextures(Material::Textures &material, Material::Textures 
         material.displacement = defaultMaterial.displacement;
 }
 static aiNodeAnim const *findNodeAnim(aiAnimation const *animation, std::string_view nodeName) {
+    MODEL_LOADER_PROFILE;
+
     for(unsigned i = 0; i < animation->mNumChannels; ++i) {
         aiNodeAnim const *node = animation->mChannels[i];
         if(std::string_view{ node->mNodeName.C_Str() } == nodeName)
@@ -105,6 +114,8 @@ struct VertexResult {
 };
 // FIXME: probably wrong.
 static void calculateMissingPrimitives(Mesh::Geometry &mesh, VertexResult vertexRes) {
+    MODEL_LOADER_PROFILE;
+
     assert(!mesh.positions.empty());
 
     bool indexed = !mesh.indices.empty();
@@ -182,6 +193,8 @@ static ModelLoaderOptions::WindingOrder flipWindingOrder(ModelLoaderOptions::Win
     return order;
 }
 static void setWindingOrder(Mesh::Geometry &mesh, ModelLoaderOptions::WindingOrder windingOrder) {
+    MODEL_LOADER_PROFILE;
+
     if(windingOrder == ModelLoaderOptions::WindingOrder::Keep) {
         return;
     }
@@ -215,7 +228,10 @@ static void setWindingOrder(Mesh::Geometry &mesh, ModelLoaderOptions::WindingOrd
     MODEL_LOADER_TRACE("{} triangles flipped!", debugChanged);
 }
 // TODO: LOD's
+// TODO: Generate adjacency info if needed here
 static void optimizeMesh(Mesh::Geometry &mesh) {
+    MODEL_LOADER_PROFILE;
+
     Mesh::Geometry oldMesh = mesh;
     bool indexed = !oldMesh.indices.empty();
 
@@ -252,6 +268,8 @@ static void optimizeMesh(Mesh::Geometry &mesh) {
             oldMesh.positions.size(), mesh.indices.size(), mesh.positions.size(), mesh.attributes.size());
 }
 static void transformMesh(Mesh::Geometry &primitives, glm::mat4 const &mat) {
+    MODEL_LOADER_PROFILE;
+
     if(mat == glm::mat4{ 1.0f })
         return;
 
@@ -259,8 +277,9 @@ static void transformMesh(Mesh::Geometry &primitives, glm::mat4 const &mat) {
 
     glm::mat4 normalMat = glm::inverse(glm::transpose(mat));
 
-    for(auto &position : primitives.positions)
+    for(auto &position : primitives.positions) {
         position = mat * glm::vec4(position, 1);
+    }
     for(auto &attr : primitives.attributes) {
         attr.normal = normalMat * glm::vec4(attr.normal, 0);
         attr.tangent = normalMat * glm::vec4(attr.tangent, 0);
@@ -268,6 +287,8 @@ static void transformMesh(Mesh::Geometry &primitives, glm::mat4 const &mat) {
 }
 
 static VertexResult extractVertexData(aiMesh const *aimesh, Mesh::Geometry &mesh) {
+    MODEL_LOADER_PROFILE;
+
     VertexResult res;
     res.positions = true; // idk lol
     mesh.positions.reserve(aimesh->mNumVertices);
@@ -301,6 +322,8 @@ static VertexResult extractVertexData(aiMesh const *aimesh, Mesh::Geometry &mesh
     return res;
 }
 static void extractBoneData(aiMesh const *aimesh, Mesh::Geometry &mesh, Model::Skeleton &skeleton) {
+    MODEL_LOADER_PROFILE;
+
     // i hate it -- april 2025
     // it works -- october 2025
     // i hate my life -- september 2026
@@ -335,6 +358,8 @@ static void extractBoneData(aiMesh const *aimesh, Mesh::Geometry &mesh, Model::S
     }
 }
 static void normalizeWeights(Mesh::Geometry &geometry) {
+    MODEL_LOADER_PROFILE;
+
     for(auto &attr : geometry.attributes) {
         if(attr.weights[0] + attr.weights[1] + attr.weights[2] + attr.weights[3] > 1e-6f)
             attr.weights /= attr.weights[0] + attr.weights[1] + attr.weights[2] + attr.weights[3];
@@ -364,6 +389,8 @@ struct ModelLoaderImpl {
 };
 
 ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg) {
+    MODEL_LOADER_PROFILE;
+
     mRegistry = &reg;
     ecs::entity white = 0;
     ecs::entity normal = 0;
@@ -472,6 +499,8 @@ Material ModelLoader::getDefaultMaterial() const {
     return mImpl->mDefaultMaterial;
 }
 ecs::entity ModelLoaderImpl::fromRawAssimpTexture(aiTexture const *texture) {
+    MODEL_LOADER_PROFILE;
+
     assert(texture->mHeight == 0);
     unsigned const width = static_cast<unsigned>(texture->mWidth);
     unsigned const height = static_cast<unsigned>(texture->mHeight);
@@ -497,6 +526,8 @@ ecs::entity ModelLoaderImpl::fromRawAssimpTexture(aiTexture const *texture) {
     return mRegistry->create(std::move(result));
 }
 void ModelLoaderImpl::loadMaterialTexture(aiMaterial const *material, aiTextureType const type, ecs::entity &out) {
+    MODEL_LOADER_PROFILE;
+
     if(material->GetTextureCount(type) == 0 || out)
         return;
 
@@ -530,6 +561,8 @@ void ModelLoaderImpl::loadMaterialTexture(aiMaterial const *material, aiTextureT
     }
 }
 Material ModelLoaderImpl::convertMaterial(aiMaterial const *aimaterial, Material::Properties const &defaultProperties) {
+    MODEL_LOADER_PROFILE;
+
     Material material;
 
     // https://github.com/assimp/assimp/issues/430
@@ -555,6 +588,8 @@ Material ModelLoaderImpl::convertMaterial(aiMaterial const *aimaterial, Material
 }
 
 Mesh ModelLoaderImpl::processMesh(aiMesh const *aimesh, glm::mat4 const &transform) {
+    MODEL_LOADER_PROFILE;
+
     MODEL_LOADER_TRACE("Loading mesh \"{}\"", aimesh->mName.C_Str());
     Mesh mesh;
     auto vertexRes = extractVertexData(aimesh, mesh.geometry);
@@ -584,6 +619,8 @@ Mesh ModelLoaderImpl::processMesh(aiMesh const *aimesh, glm::mat4 const &transfo
     return mesh;
 }
 void ModelLoaderImpl::processNodeMeshes(aiNode const *node, glm::mat4 parentTransform) {
+    MODEL_LOADER_PROFILE;
+
     MODEL_LOADER_TRACE("Processing node \"{}\"", node->mName.C_Str());
     glm::mat4 nodeTransform = parentTransform * toMat4(node->mTransformation);
     for(unsigned i = 0; i < node->mNumMeshes; ++i) {
@@ -595,6 +632,8 @@ void ModelLoaderImpl::processNodeMeshes(aiNode const *node, glm::mat4 parentTran
 }
 
 void processAnimationNode(Animation &result, aiAnimation const *animation, Model::Skeleton const &skeleton, aiNode const *node) {
+    MODEL_LOADER_PROFILE;
+
     std::string nodeName = node->mName.C_Str();
     aiNodeAnim const *nodeAnim = findNodeAnim(animation, nodeName);
 
@@ -620,6 +659,8 @@ void processAnimationNode(Animation &result, aiAnimation const *animation, Model
     }
 }
 Animation ModelLoaderImpl::processAnimation(aiAnimation const *animation) {
+    MODEL_LOADER_PROFILE;
+
     MODEL_LOADER_TRACE("Processing animation \"{}\"", animation->mName.C_Str());
 
     Animation result;
@@ -643,6 +684,8 @@ Animation ModelLoaderImpl::processAnimation(aiAnimation const *animation) {
 }
 
 void calculateParent(Model::Skeleton &skeleton, aiNode const *node, int parent) {
+    MODEL_LOADER_PROFILE;
+
     std::string nodeName = node->mName.C_Str();
 
     if(skeleton.boneMap.find(nodeName) != skeleton.boneMap.end()) {
@@ -657,6 +700,8 @@ void calculateParent(Model::Skeleton &skeleton, aiNode const *node, int parent) 
     }
 }
 ecs::entity ModelLoaderImpl::processLight([[maybe_unused]] aiLight const *light) {
+    MODEL_LOADER_PROFILE;
+
     return 0;
     // switch(light->mType)
     // {
@@ -709,6 +754,8 @@ ecs::entity ModelLoaderImpl::processLight([[maybe_unused]] aiLight const *light)
 }
 
 ecs::entity ModelLoaderImpl::load() {
+    MODEL_LOADER_PROFILE;
+
     if(mScene->HasMeshes())
         MODEL_LOADER_TRACE("Loading {} meshes.", mScene->mNumMeshes);
     if(mScene->HasAnimations())
@@ -737,10 +784,6 @@ ecs::entity ModelLoaderImpl::load() {
     return eModel;
 }
 
-constexpr unsigned ASSIMP_FLAGS = aiProcess_SplitLargeMeshes | aiProcess_GenUVCoords | aiProcess_FindInvalidData | aiProcess_CalcTangentSpace |
-                                  aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_SortByPType | aiProcess_OptimizeGraph |
-                                  aiProcess_OptimizeMeshes | aiProcess_ValidateDataStructure | aiProcess_LimitBoneWeights;
-
 ModelLoader::ModelLoader(ecs::registry &reg) {
     mImpl = new ModelLoaderImpl{ reg };
     mImpl->mTextureLoader = TextureLoader{ *mImpl->mRegistry };
@@ -757,10 +800,13 @@ ModelLoader::~ModelLoader() {
         delete mImpl;
 }
 static uint setFlags(ModelLoaderOptions options, Assimp::Importer &importer) {
-    unsigned flags = ASSIMP_FLAGS;
+    unsigned flags = aiProcess_SplitLargeMeshes | aiProcess_GenUVCoords | aiProcess_FindInvalidData | aiProcess_CalcTangentSpace |
+                     aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_SortByPType | aiProcess_OptimizeGraph |
+                     aiProcess_ValidateDataStructure;
 
     importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
     importer.SetPropertyInteger(AI_CONFIG_PP_LBW_MAX_WEIGHTS, 4);
+    flags |= aiProcess_LimitBoneWeights;
 
     options.smoothNormalAngle = glm::clamp(options.smoothNormalAngle, 0.0f, 175.0f);
     if(options.smoothNormalAngle >= 1e-6) {
@@ -784,6 +830,8 @@ static uint setFlags(ModelLoaderOptions options, Assimp::Importer &importer) {
     return flags;
 }
 ecs::entity ModelLoader::loadFromFile(std::string_view path, ModelLoaderOptions options) {
+    MODEL_LOADER_PROFILE;
+
     assert(mImpl && "Invalid loader! (make sure to not use default constructor when making an actual loader)");
     for(auto e_model : mImpl->mRegistry->view<Model>())
         if(mImpl->mRegistry->get<Model>(e_model).path == path)
@@ -815,6 +863,8 @@ ecs::entity ModelLoader::loadFromFile(std::string_view path, ModelLoaderOptions 
     return eModel;
 }
 ecs::entity ModelLoader::loadFromMemory(void const *data, size_t size, ModelLoaderOptions options) {
+    MODEL_LOADER_PROFILE;
+
     assert(mImpl && "Invalid loader! (make sure to not use default constructor when making an actual loader)");
     if(!mImpl) {
         LOG_ERROR("Invalid model loader! (make sure to not use default constructor when making an actual loader)");

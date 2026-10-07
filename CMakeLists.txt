@@ -22,6 +22,8 @@ set(ASSIMP_BUILD_TESTS OFF)
 set(ASSIMP_INSTALL OFF)
 set(ASSIMP_WARNINGS_AS_ERRORS OF)
 
+set(TRACY_ENABLE ON)
+
 CPMAddPackage(
     NAME assimp
     VERSION 6.0.2
@@ -33,6 +35,7 @@ CPMAddPackage(
     GIT_TAG 3.4
     GITHUB_REPOSITORY "glfw/glfw"
 )
+CPMAddPackage("gh:wolfpld/tracy#23755c9")
 CPMAddPackage("gh:nikitawew/nicecs#02403c8a")
 CPMAddPackage("gh:zeux/meshoptimizer@1.0")
 CPMAddPackage(URI "gh:gabime/spdlog@1.17.0" FORCE ON)
@@ -91,7 +94,7 @@ set(ENGINE_SOURCE
     "src/vk/Swapchain.cpp"
 )
 add_library(engine ${ENGINE_SOURCE})
-target_link_libraries(engine PUBLIC spdlog nicecs::ecs glm assimp meshoptimizer cpptrace::cpptrace nlohmann_json::nlohmann_json zip)
+target_link_libraries(engine PUBLIC spdlog nicecs::ecs glm assimp meshoptimizer cpptrace::cpptrace nlohmann_json::nlohmann_json Tracy::TracyClient)
 target_link_libraries(engine PUBLIC glfw volk GPUOpen::VulkanMemoryAllocator)
 target_link_libraries(engine PUBLIC glslang::glslang glslang::glslang-default-resource-limits spirv-reflect-static SPIRV-Headers SPIRV-Tools slang::slang)
 target_compile_definitions(engine PUBLIC GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_ENABLE_EXPERIMENTAL)
@@ -107,6 +110,8 @@ endif()
 add_executable(levulkan "src/main.cpp")
 target_link_libraries(levulkan PRIVATE engine)
 target_include_directories(levulkan PRIVATE "src")
+
+
 
 # add_subdirectory(tests)
 

@@ -1,4 +1,5 @@
 #include "Renderer.hpp"
+#include "tracy/Tracy.hpp"
 
 enum class NodeState { None = 0, Visited, Added };
 
@@ -147,6 +148,8 @@ static std::string collapseAttributes(std::vector<std::string> const &attributes
     return res;
 }
 std::string RenderGraphResult::dumpGraphviz(int indent, GraphvizSettings settings) const {
+    ZoneScoped;
+    
     assert(success());
 
     std::stringstream ss;
@@ -190,6 +193,8 @@ std::string RenderGraphResult::dumpGraphviz(int indent, GraphvizSettings setting
 }
 
 bool setupRenderGraph(RenderGraphBuilder &&builder, RenderGraphImpl &renderGraph) {
+    ZoneScoped;
+    
     assert(builder.fresh && "Cannot use same RenderGraphBuilder twice!");
     builder.fresh = false;
     if(builder.allocInfo.has_value()) {
@@ -304,6 +309,8 @@ bool setupRenderGraph(RenderGraphBuilder &&builder, RenderGraphImpl &renderGraph
 
 // Simplified version of vk::RenderGraph's processPass
 static bool processPass(std::string const &passName, RenderGraphImpl &renderGraph, uint depth, bool backtrack = false) {
+    ZoneScoped;
+    
     assert(!passName.empty());
 
     if(depth == 0) {
@@ -370,6 +377,8 @@ static std::string printDependencies(Pass const &pass) {
     return fmt::format("reads {:>40} | writes {:>40}", reads, writes);
 }
 static void calculateLifetimes(RenderGraphImpl &renderGraph) {
+    ZoneScoped;
+    
     for(auto &[_, resource] : renderGraph.resources) {
         for(auto const &[passName, traits] : resource.read) {
             auto const &pass = renderGraph.passes.at(passName);
@@ -415,6 +424,8 @@ static bool isCompatible(RenderGraphImageCreateInfo const &first, RenderGraphIma
 }
 // Additionally checks the type of an external resource
 static ResourceCreateInfo::Type getResourceType(RestrictedEntityAny<ResourceCreateInfo> e) {
+    ZoneScoped;
+    
     auto const &ci = e.get<ResourceCreateInfo>();
     if(ci.type == ResourceCreateInfo::External) {
         assert(e.contains<vk::Image>() || e.contains<vk::Buffer>());
@@ -424,6 +435,8 @@ static ResourceCreateInfo::Type getResourceType(RestrictedEntityAny<ResourceCrea
     }
 }
 static Entity findPoolResource(ResourceCreateInfo const &ci, RenderGraphImpl &renderGraph, VkImageUsageFlags usage = 0) {
+    ZoneScoped;
+    
     for(auto poolRes : renderGraph.resourcePool) {
         assert(poolRes.contains<ResourceCreateInfo>());
         auto type = getResourceType(poolRes);
@@ -449,6 +462,8 @@ static Entity findPoolResource(ResourceCreateInfo const &ci, RenderGraphImpl &re
     return Entity();
 }
 static void aliasResources(RenderGraphImpl &renderGraph) {
+    ZoneScoped;
+    
     LOG_TRACE("Aliasing resources");
     for(uint i = 0; i < renderGraph.passStack.size(); ++i) {
         auto const &pass = renderGraph.passes.at(renderGraph.passStack.at(i));
@@ -513,6 +528,8 @@ static void aliasResources(RenderGraphImpl &renderGraph) {
     }
 }
 static void allocateResources(RenderGraphImpl &renderGraph) {
+    ZoneScoped;
+    
     LOG_TRACE("Allocating resources");
     if(!renderGraph.reg)
         return;
@@ -558,6 +575,8 @@ static void allocateResources(RenderGraphImpl &renderGraph) {
     }
 }
 static bool buildBarriers(RenderGraphImpl &renderGraph) {
+    ZoneScoped;
+    
     std::unordered_map<Entity, Barrier::Scope> lastScope;
     for(auto const &passName : renderGraph.passStack) {
         auto const &pass = renderGraph.passes.at(passName);
@@ -642,6 +661,8 @@ static bool buildBarriers(RenderGraphImpl &renderGraph) {
 }
 
 RenderGraphResult buildRenderGraph(RenderGraphBuilder &&builder) {
+    ZoneScoped;
+
     RenderGraphImpl renderGraph;
 
     if(!setupRenderGraph(std::move(builder), renderGraph)) {
