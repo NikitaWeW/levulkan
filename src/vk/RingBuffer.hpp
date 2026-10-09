@@ -40,8 +40,8 @@ public:
     RingBuffer &operator=(RingBuffer const &) = delete;
 
     inline bool valid() const { return mBuffer.valid(); }
-    inline Entity &getBuffer() { return mBuffer; }
-    inline Entity const &getBuffer() const { return mBuffer; }
+    inline DirectEntity<vk::Buffer> getBuffer() { return mBuffer; }
+    inline DirectEntity<vk::Buffer> const getBuffer() const { return mBuffer; }
     inline uint32_t getHead() const { return mHead; }
     inline uint32_t getTail() const { return mTail; }
 

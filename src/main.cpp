@@ -12,7 +12,7 @@
 #include "resource/Resources.hpp"
 
 #include "tracy/Tracy.hpp"
-#include "tracy/TracyVulkan.hpp"1
+#include "tracy/TracyVulkan.hpp"
 
 Registry sReg;
 constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
@@ -35,22 +35,6 @@ struct ShaderCompilerCreateInfo {
     vk::SpirvVersion spirvVersion = vk::SpirvVersion::SpirvVersion_1_6;
 };
 */
-
-struct MatrixData {
-    struct CameraData {
-        glm::mat4 projMat;
-        glm::mat4 viewMat;
-    } camera;
-    struct ModelData {
-        glm::mat4 modelMat;
-        glm::mat4 normMat;
-    } model;
-};
-
-struct UniformBuffer {
-    VulkanMaterial uMaterial;
-    MatrixData uMatrixData;
-};
 
 template <typename T> static T hash_combine(T lhs, T rhs) {
     lhs ^= rhs + T(0x9e3779b9) + (lhs << T(6)) + (lhs >> T(2));
@@ -308,6 +292,11 @@ static VkFormat getDepthFormat(VkPhysicalDevice dev) {
 
     return outFormat;
 }
+template <typename T> static uint32_t pushUniform(vk::RingBuffer &uniformBuffer, T const &data, uint frame, uint alignment) {
+    uint32_t offset = uniformBuffer.request(sizeof(data), frame, alignment);
+    std::memcpy(static_cast<char *>(uniformBuffer.getBuffer().get<vk::Buffer>().hostAddress) + offset, &data, sizeof(data));
+    return offset;
+}
 
 ////////////////////////////////////////////////////////////////
 
@@ -464,15 +453,15 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
     vk::RingBuffer uniformBuffer(sReg,
         {
-            .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            .usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
             .allocInfo = ALLOCATION_INFO,
             .size = static_cast<uint32_t>(64 * 1e6), // 64MB
             .map = true,
             .name = "uniform_buffer",
         });
 
-    VkPhysicalDeviceProperties properties;
-    vkGetPhysicalDeviceProperties(initRes.physicalDevice, &properties);
+    VkPhysicalDeviceProperties2 properties{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+    vkGetPhysicalDeviceProperties2(initRes.physicalDevice, &properties);
 
     ////////////////////////////////////////////////////////////////
 
@@ -480,8 +469,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     uint imageIndex = 0;
     float deltatime = 1e-6;
 
-    auto eCamera = Controller::createCamera(sReg, { 0, 2, 4 }, { 0, 0, 0 });
-    Controller::Camera &camera = eCamera.get<Controller::Camera>();
+    DirectEntity<Controller::Camera> eCamera = Controller::createCamera(sReg, { 0, 2, 4 }, { 0, 0, 0 });
 
     [[maybe_unused]] VkPipelineColorBlendAttachmentState constexpr ALPHA_BLENDING{ .blendEnable = true,
         .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
@@ -642,8 +630,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                     .debugInfo = true,
                 }));
                 vk::PipelineLayoutCreateInfo layoutCi{
-                    .dynamicDescriptors = { { .set = 0, .binding = 0 } },
-                    .unsizedDescriptorSize = { { { .set = 1, .binding = 0 }, images.size() } },
+                    .unsizedDescriptorSize = { { { .set = 0, .binding = 0 }, images.size() } },
                 };
                 vk::GraphicsPipelineCreateInfo pipelineCi{
                     .dynamicState = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR},
@@ -688,12 +675,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                     .dstSet = 0,
                     .dstBinding = 0,
                     .dstFrame = 0,
-                    .bufferInfo = { {
-                        .resource = uniformBuffer.getBuffer(),
-                        .size = sizeof(UniformBuffer),
-                    } },
+                    .imageInfo = imageInfos,
                 });
-                descManager.addResource({ .dstPipeline = data.pipeline, .dstSet = 1, .dstBinding = 0, .dstFrame = 0, .imageInfo = imageInfos });
             }
             assert(data.shader.valid() && data.shader.get<vk::Shader>().valid);
             assert(data.pipeline.valid() && data.pipeline.get<vk::Pipeline>().valid);
@@ -704,22 +687,18 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             data.pbr = res.getResource("gbuffer_pbr");
             data.depth = res.getResource("gbuffer_depth");
         },
-        [&](gbuffer_data &data, VkCommandBuffer cb) {
+        [&](gbuffer_data &passData, VkCommandBuffer cb) {
             assert(currentTracyContext);
             TracyVkZone(*currentTracyContext, cb, "G Buffer");
-            auto const &albedo = data.albedo.getc();
-            auto const &position = data.position.getc();
-            auto const &normal = data.normal.getc();
-            auto const &pbr = data.pbr.getc();
-            auto const &depth = data.depth.getc();
+            auto const &albedo = passData.albedo.getc();
+            auto const &position = passData.position.getc();
+            auto const &normal = passData.normal.getc();
+            auto const &pbr = passData.pbr.getc();
+            auto const &depth = passData.depth.getc();
 
-            auto const &pipeline = data.pipeline.getc();
+            auto const &pipeline = passData.pipeline.getc();
 
             VkExtent2D extent = swapchain->createInfo.imageExtent;
-
-            UniformBuffer uniformBufferData;
-            uniformBufferData.uMatrixData.camera.projMat = camera.projMat;
-            uniformBufferData.uMatrixData.camera.viewMat = camera.viewMat;
 
             std::array<VkRenderingAttachmentInfo, 4> colorAttachmentInfos = {
                 VkRenderingAttachmentInfo{
@@ -794,7 +773,32 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             vkCmdSetScissor(cb, 0, 1, &scissor);
 
             vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
-            vk::bindDescriptorSet(cb, pipeline, 1);
+            vk::bindDescriptorSet(cb, pipeline, 0);
+
+            struct ModelData {
+                glm::mat4 modelMat;
+                glm::mat4 normMat;
+                VulkanMaterial material;
+            };
+            struct UniformBuffer {
+                glm::mat4 projMat;
+                glm::mat4 viewMat;
+            };
+            struct PushConstants {
+                VkDeviceAddress uniformBuffer;
+                VkDeviceAddress instanceData;
+            };
+
+            std::map<std::pair<Entity, uint>, std::vector<ModelData>> instanceData;
+
+            VkDeviceAddress uniformBufferAddress = pushUniform(uniformBuffer,
+                UniformBuffer{
+                    .projMat = eCamera->projMat,
+                    .viewMat = eCamera->viewMat,
+                },
+                frameIndex,
+                properties.properties.limits.minStorageBufferOffsetAlignment);
+            uniformBufferAddress += uniformBuffer.getBuffer()->deviceAddress;
 
             for(auto eInstance : sReg.view<ModelInstance>()) {
                 auto const &instance = eInstance.get<ModelInstance>();
@@ -807,29 +811,48 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                     continue;
                 }
 
-                uniformBufferData.uMatrixData.model.modelMat = { 1.0f };
-                if(eInstance.contains<Transform>())
-                    uniformBufferData.uMatrixData.model.modelMat = eInstance.get<Transform>().getMat();
-
-                uniformBufferData.uMatrixData.model.normMat = glm::transpose(glm::inverse(glm::mat3(uniformBufferData.uMatrixData.model.modelMat)));
-
                 auto &model = instance.eModel.get<VulkanModel>();
-                for(auto &mesh : model.meshes) {
-                    uniformBufferData.uMaterial = mesh.material;
 
-                    uint32_t offset = uniformBuffer.request(sizeof(uniformBufferData), frameIndex, properties.limits.minUniformBufferOffsetAlignment);
-                    vk::bindDescriptorSet(cb, pipeline, 0, 0, { offset });
-                    std::memcpy(static_cast<char *>(uniformBuffer.getBuffer().get<vk::Buffer>().mapped) + offset,
-                        &uniformBufferData,
-                        sizeof(uniformBufferData));
+                for(uint i = 0; i < model.meshes.size(); ++i) {
+                    ModelData &modelData = instanceData[{ instance.eModel, i }].emplace_back();
+                    auto const &mesh = model.meshes[i];
 
-                    VkDeviceSize vOffset = 0;
-                    vkCmdBindVertexBuffers(cb, 0, 1, &mesh.buffers.pos.buffer, &vOffset);
-                    vkCmdBindVertexBuffers(cb, 1, 1, &mesh.buffers.attr.buffer, &vOffset);
-                    vkCmdBindIndexBuffer(cb, mesh.buffers.idx.buffer, 0, VK_INDEX_TYPE_UINT32);
-
-                    vkCmdDrawIndexed(cb, mesh.indexCount, 1, 0, 0, 0);
+                    modelData.modelMat = { 1.0f };
+                    if(eInstance.contains<Transform>())
+                        modelData.modelMat = eInstance.get<Transform>().getMat();
+                    modelData.normMat = glm::transpose(glm::inverse(glm::mat3(modelData.modelMat)));
+                    modelData.material = mesh.material;
                 }
+            }
+
+            for(auto const &[eMesh, data] : instanceData) {
+                auto const &[eModel, index] = eMesh;
+                auto const &meh = eModel.get<VulkanModel>().meshes[index];
+
+                VkDeviceSize vOffset = 0;
+                vkCmdBindVertexBuffers(cb, 0, 1, &meh.buffers.pos.buffer, &vOffset);
+                vkCmdBindVertexBuffers(cb, 1, 1, &meh.buffers.attr.buffer, &vOffset);
+                vkCmdBindIndexBuffer(cb, meh.buffers.idx.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+                PushConstants pushConstants;
+                pushConstants.uniformBuffer = uniformBufferAddress;
+                pushConstants.instanceData = uniformBuffer.getBuffer()->deviceAddress +
+                                             pushUniform(uniformBuffer,
+                                                 data,
+                                                 frameIndex,
+                                                 properties.properties.limits.minStorageBufferOffsetAlignment);
+
+                VkPushConstantsInfo pushConstantsInfo{
+                    .sType = VK_STRUCTURE_TYPE_PUSH_CONSTANTS_INFO,
+                    .layout = passData.pipeline->layout.layout,
+                    .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                    .offset = 0,
+                    .size = sizeof(pushConstants),
+                    .pValues = &pushConstants,
+                };
+                vkCmdPushConstants2(cb, &pushConstantsInfo);
+
+                vkCmdDrawIndexed(cb, meh.indexCount, data.size(), 0, 0, 0);
             }
 
             vkCmdEndRendering(cb);
@@ -889,16 +912,6 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 data.pipeline = e;
                 e.emplace<DebugName>("lighting_pipeline");
                 vk::allocateDescriptors(data.pipeline.getc());
-                descManager.addResource({
-                    .dstPipeline = data.pipeline,
-                    .dstSet = 1,
-                    .dstBinding = 0,
-                    .dstFrame = 0,
-                    .bufferInfo = { {
-                        .resource = uniformBuffer.getBuffer(),
-                        .size = sizeof(MatrixData::CameraData),
-                    } },
-                });
                 descManager.addResource({
                     .dstPipeline = data.pipeline,
                     .dstSet = 0,
@@ -993,14 +1006,24 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
             vk::bindDescriptorSet(cb, pipeline, 0, 0);
 
-            MatrixData::CameraData uniformBufferData;
-            uniformBufferData.projMat = camera.projMat;
-            uniformBufferData.viewMat = camera.viewMat;
-            uint32_t offset = uniformBuffer.request(sizeof(uniformBufferData), frameIndex, properties.limits.minUniformBufferOffsetAlignment);
-            std::memcpy(static_cast<char *>(uniformBuffer.getBuffer().get<vk::Buffer>().mapped) + offset,
-                &uniformBufferData,
-                sizeof(uniformBufferData));
-            vk::bindDescriptorSet(cb, pipeline, 1, 0, { offset });
+            struct PushConstants {
+                // Inverted
+                glm::mat4 projMat;
+                glm::mat4 viewMat;
+            } pushConstants{
+                .projMat = glm::inverse(eCamera->projMat),
+                .viewMat = glm::inverse(eCamera->viewMat),
+            };
+
+            VkPushConstantsInfo pushConstantsInfo{
+                .sType = VK_STRUCTURE_TYPE_PUSH_CONSTANTS_INFO,
+                .layout = data.pipeline->layout.layout,
+                .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                .offset = 0,
+                .size = sizeof(pushConstants),
+                .pValues = &pushConstants,
+            };
+            vkCmdPushConstants2(cb, &pushConstantsInfo);
 
             vkCmdDraw(cb, 3, 1, 0, 0);
 
@@ -1340,7 +1363,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             TracyVkCollect(tracyContexts.at(queue).at(frameIndex), cb);
             TracyVkCollectHost(tracyContexts.at(queue).at(frameIndex));
             vkEndCommandBuffer(cb);
-        
+
             VkPipelineStageFlags waitStages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
             VkSubmitInfo submitInfo{
                 .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -1355,10 +1378,9 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
             VkQueue physQueue;
             vkGetDeviceQueue(device, queue, 0, &physQueue);
-            CHECK_VK_RES(vkQueueSubmit(physQueue, 1, &submitInfo, fences[frameIndex]));    
+            CHECK_VK_RES(vkQueueSubmit(physQueue, 1, &submitInfo, fences[frameIndex]));
         }
         usedCommandBuffers.clear();
-
 
         frameIndex = (frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
 
@@ -1382,7 +1404,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     ////////////////////////////////////////////////////////////////
 
     for(auto &q : tracyContexts.dense()) {
-        for(auto &ctx : q) {
+        for([[maybe_unused]] auto &ctx : q) {
             TracyVkDestroy(ctx);
         }
     }

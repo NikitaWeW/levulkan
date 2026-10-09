@@ -22,7 +22,7 @@ set(ASSIMP_BUILD_TESTS OFF)
 set(ASSIMP_INSTALL OFF)
 set(ASSIMP_WARNINGS_AS_ERRORS OF)
 
-set(TRACY_ENABLE ON)
+# set(TRACY_ENABLE ON) # From the cli
 
 CPMAddPackage(
     NAME assimp

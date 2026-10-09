@@ -48,7 +48,7 @@ struct Buffer {
     VmaAllocationCreateInfo allocationInfo;
 
     VkDeviceAddress deviceAddress = 0;
-    void *mapped = VK_NULL_HANDLE;
+    void *hostAddress = nullptr;
 
     bool owns = true;
 

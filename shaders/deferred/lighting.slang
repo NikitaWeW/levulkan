@@ -1,11 +1,8 @@
-#include "common/MatrixData.slang"
-
-struct UniformBuffer {
-    CameraData  cameraMatrixData; // Inverted
+struct PushConstants {
+    // Inverted
+    column_major float4x4 projMat;
+    column_major float4x4 viewMat;
 };
-
-[[vk::binding(0, 1)]]
-uniform ConstantBuffer<UniformBuffer, ScalarDataLayout> uBuffer;
 
 #include "lib/Fullscreen.slang"
 
@@ -19,7 +16,7 @@ T reinhard<T>(T x) where T : IArithmetic {
 }
 
 [shader("fragment")]
-float4 fsMain(VsOut in) {
+float4 fsMain(VsOut in, uniform PushConstants pushConstants) {
     float3 albedo = uAlbedo.Sample(in.uv).rgb;
     float3 normal = 0;
     {
@@ -32,7 +29,7 @@ float4 fsMain(VsOut in) {
     }
     
     // Temporary phong lighting
-    const float3 sunDir = mul(uBuffer.cameraMatrixData.viewMat, float4(0.5, -1, 1, 0)).xyz;
+    const float3 sunDir = mul(pushConstants.viewMat, float4(0.5, -1, 1, 0)).xyz;
     const float3 V = float3(0, 0, -1);
     float3 L = -normalize(sunDir);
     float3 R = reflect(-L, normal);
@@ -40,6 +37,7 @@ float4 fsMain(VsOut in) {
     float3 specular = float3(pow(max(dot(R, V), 0.0), 16.0) * 0.75) * 0;
     float4 oColor = float4(diffuse * albedo.rgb + specular, 1.0);
     // oColor.rgb = normal /* *.5+.5 */;
+    oColor = {1, 1, 1, 1};
 
     // Tone mapping
     oColor.rgb = reinhard(oColor.rgb);

@@ -8,125 +8,119 @@ using namespace vk;
 
 static constexpr std::string string_SpvReflectResult(SpvReflectResult res) {
     switch(res) {
-        case SPV_REFLECT_RESULT_SUCCESS                                    : return "SPV_REFLECT_RESULT_SUCCESS";                                   
-        case SPV_REFLECT_RESULT_NOT_READY                                  : return "SPV_REFLECT_RESULT_NOT_READY";                                 
-        case SPV_REFLECT_RESULT_ERROR_PARSE_FAILED                         : return "SPV_REFLECT_RESULT_ERROR_PARSE_FAILED";                        
-        case SPV_REFLECT_RESULT_ERROR_ALLOC_FAILED                         : return "SPV_REFLECT_RESULT_ERROR_ALLOC_FAILED";                        
-        case SPV_REFLECT_RESULT_ERROR_RANGE_EXCEEDED                       : return "SPV_REFLECT_RESULT_ERROR_RANGE_EXCEEDED";                      
-        case SPV_REFLECT_RESULT_ERROR_NULL_POINTER                         : return "SPV_REFLECT_RESULT_ERROR_NULL_POINTER";                        
-        case SPV_REFLECT_RESULT_ERROR_INTERNAL_ERROR                       : return "SPV_REFLECT_RESULT_ERROR_INTERNAL_ERROR";                      
-        case SPV_REFLECT_RESULT_ERROR_COUNT_MISMATCH                       : return "SPV_REFLECT_RESULT_ERROR_COUNT_MISMATCH";                      
-        case SPV_REFLECT_RESULT_ERROR_ELEMENT_NOT_FOUND                    : return "SPV_REFLECT_RESULT_ERROR_ELEMENT_NOT_FOUND";                   
-        case SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_CODE_SIZE              : return "SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_CODE_SIZE";             
-        case SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_MAGIC_NUMBER           : return "SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_MAGIC_NUMBER";          
-        case SPV_REFLECT_RESULT_ERROR_SPIRV_UNEXPECTED_EOF                 : return "SPV_REFLECT_RESULT_ERROR_SPIRV_UNEXPECTED_EOF";                
-        case SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_ID_REFERENCE           : return "SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_ID_REFERENCE";          
-        case SPV_REFLECT_RESULT_ERROR_SPIRV_SET_NUMBER_OVERFLOW            : return "SPV_REFLECT_RESULT_ERROR_SPIRV_SET_NUMBER_OVERFLOW";           
-        case SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_STORAGE_CLASS          : return "SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_STORAGE_CLASS";         
-        case SPV_REFLECT_RESULT_ERROR_SPIRV_RECURSION                      : return "SPV_REFLECT_RESULT_ERROR_SPIRV_RECURSION";                     
-        case SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_INSTRUCTION            : return "SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_INSTRUCTION";           
-        case SPV_REFLECT_RESULT_ERROR_SPIRV_UNEXPECTED_BLOCK_DATA          : return "SPV_REFLECT_RESULT_ERROR_SPIRV_UNEXPECTED_BLOCK_DATA";         
-        case SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_BLOCK_MEMBER_REFERENCE : return "SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_BLOCK_MEMBER_REFERENCE";
-        case SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_ENTRY_POINT            : return "SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_ENTRY_POINT";           
-        case SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_EXECUTION_MODE         : return "SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_EXECUTION_MODE";        
-        case SPV_REFLECT_RESULT_ERROR_SPIRV_MAX_RECURSIVE_EXCEEDED         : return "SPV_REFLECT_RESULT_ERROR_SPIRV_MAX_RECURSIVE_EXCEEDED";        
+        case SPV_REFLECT_RESULT_SUCCESS: return "SPV_REFLECT_RESULT_SUCCESS";
+        case SPV_REFLECT_RESULT_NOT_READY: return "SPV_REFLECT_RESULT_NOT_READY";
+        case SPV_REFLECT_RESULT_ERROR_PARSE_FAILED: return "SPV_REFLECT_RESULT_ERROR_PARSE_FAILED";
+        case SPV_REFLECT_RESULT_ERROR_ALLOC_FAILED: return "SPV_REFLECT_RESULT_ERROR_ALLOC_FAILED";
+        case SPV_REFLECT_RESULT_ERROR_RANGE_EXCEEDED: return "SPV_REFLECT_RESULT_ERROR_RANGE_EXCEEDED";
+        case SPV_REFLECT_RESULT_ERROR_NULL_POINTER: return "SPV_REFLECT_RESULT_ERROR_NULL_POINTER";
+        case SPV_REFLECT_RESULT_ERROR_INTERNAL_ERROR: return "SPV_REFLECT_RESULT_ERROR_INTERNAL_ERROR";
+        case SPV_REFLECT_RESULT_ERROR_COUNT_MISMATCH: return "SPV_REFLECT_RESULT_ERROR_COUNT_MISMATCH";
+        case SPV_REFLECT_RESULT_ERROR_ELEMENT_NOT_FOUND: return "SPV_REFLECT_RESULT_ERROR_ELEMENT_NOT_FOUND";
+        case SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_CODE_SIZE: return "SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_CODE_SIZE";
+        case SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_MAGIC_NUMBER: return "SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_MAGIC_NUMBER";
+        case SPV_REFLECT_RESULT_ERROR_SPIRV_UNEXPECTED_EOF: return "SPV_REFLECT_RESULT_ERROR_SPIRV_UNEXPECTED_EOF";
+        case SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_ID_REFERENCE: return "SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_ID_REFERENCE";
+        case SPV_REFLECT_RESULT_ERROR_SPIRV_SET_NUMBER_OVERFLOW: return "SPV_REFLECT_RESULT_ERROR_SPIRV_SET_NUMBER_OVERFLOW";
+        case SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_STORAGE_CLASS: return "SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_STORAGE_CLASS";
+        case SPV_REFLECT_RESULT_ERROR_SPIRV_RECURSION: return "SPV_REFLECT_RESULT_ERROR_SPIRV_RECURSION";
+        case SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_INSTRUCTION: return "SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_INSTRUCTION";
+        case SPV_REFLECT_RESULT_ERROR_SPIRV_UNEXPECTED_BLOCK_DATA: return "SPV_REFLECT_RESULT_ERROR_SPIRV_UNEXPECTED_BLOCK_DATA";
+        case SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_BLOCK_MEMBER_REFERENCE: return "SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_BLOCK_MEMBER_REFERENCE";
+        case SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_ENTRY_POINT: return "SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_ENTRY_POINT";
+        case SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_EXECUTION_MODE: return "SPV_REFLECT_RESULT_ERROR_SPIRV_INVALID_EXECUTION_MODE";
+        case SPV_REFLECT_RESULT_ERROR_SPIRV_MAX_RECURSIVE_EXCEEDED: return "SPV_REFLECT_RESULT_ERROR_SPIRV_MAX_RECURSIVE_EXCEEDED";
         default: return "Unhandled SpvReflectResult";
     };
 }
 
 #define SPV_CHK(x, name, action) { SpvReflectResult _result = x; if(_result != SPV_REFLECT_RESULT_SUCCESS) { LOG_ERROR("{}:{}: Failed to {}: {} for binary \"{}\".", __FILE__, __LINE__, #x, string_SpvReflectResult(_result), name); action; } }
 static constexpr VkDescriptorType toVulkanDescriptorType(SpvReflectDescriptorType const &type) {
-    switch(type)
-    {
-        case SPV_REFLECT_DESCRIPTOR_TYPE_SAMPLER:                    return VK_DESCRIPTOR_TYPE_SAMPLER;
-        case SPV_REFLECT_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:     return VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        case SPV_REFLECT_DESCRIPTOR_TYPE_SAMPLED_IMAGE:              return VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_IMAGE:              return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:       return VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
-        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:       return VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
-        case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER:             return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER:             return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:     return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:     return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
-        case SPV_REFLECT_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:           return VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+    switch(type) {
+        case SPV_REFLECT_DESCRIPTOR_TYPE_SAMPLER: return VK_DESCRIPTOR_TYPE_SAMPLER;
+        case SPV_REFLECT_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER: return VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        case SPV_REFLECT_DESCRIPTOR_TYPE_SAMPLED_IMAGE: return VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_IMAGE: return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER: return VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
+        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER: return VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
+        case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER: return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER: return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC: return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC: return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
+        case SPV_REFLECT_DESCRIPTOR_TYPE_INPUT_ATTACHMENT: return VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
         case SPV_REFLECT_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR: return VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-        default: return(VkDescriptorType) 0;
+        default: return (VkDescriptorType) 0;
     }
 }
 static constexpr VkFormat toVulkanFormat(SpvReflectFormat const &format) {
-    switch(format)
-    {
-        case SPV_REFLECT_FORMAT_UNDEFINED:           return VK_FORMAT_UNDEFINED;          
-        case SPV_REFLECT_FORMAT_R16_UINT:            return VK_FORMAT_R16_UINT;           
-        case SPV_REFLECT_FORMAT_R16_SINT:            return VK_FORMAT_R16_SINT;           
-        case SPV_REFLECT_FORMAT_R16_SFLOAT:          return VK_FORMAT_R16_SFLOAT;         
-        case SPV_REFLECT_FORMAT_R16G16_UINT:         return VK_FORMAT_R16G16_UINT;        
-        case SPV_REFLECT_FORMAT_R16G16_SINT:         return VK_FORMAT_R16G16_SINT;        
-        case SPV_REFLECT_FORMAT_R16G16_SFLOAT:       return VK_FORMAT_R16G16_SFLOAT;      
-        case SPV_REFLECT_FORMAT_R16G16B16_UINT:      return VK_FORMAT_R16G16B16_UINT;     
-        case SPV_REFLECT_FORMAT_R16G16B16_SINT:      return VK_FORMAT_R16G16B16_SINT;     
-        case SPV_REFLECT_FORMAT_R16G16B16_SFLOAT:    return VK_FORMAT_R16G16B16_SFLOAT;   
-        case SPV_REFLECT_FORMAT_R16G16B16A16_UINT:   return VK_FORMAT_R16G16B16A16_UINT;  
-        case SPV_REFLECT_FORMAT_R16G16B16A16_SINT:   return VK_FORMAT_R16G16B16A16_SINT;  
+    switch(format) {
+        case SPV_REFLECT_FORMAT_UNDEFINED: return VK_FORMAT_UNDEFINED;
+        case SPV_REFLECT_FORMAT_R16_UINT: return VK_FORMAT_R16_UINT;
+        case SPV_REFLECT_FORMAT_R16_SINT: return VK_FORMAT_R16_SINT;
+        case SPV_REFLECT_FORMAT_R16_SFLOAT: return VK_FORMAT_R16_SFLOAT;
+        case SPV_REFLECT_FORMAT_R16G16_UINT: return VK_FORMAT_R16G16_UINT;
+        case SPV_REFLECT_FORMAT_R16G16_SINT: return VK_FORMAT_R16G16_SINT;
+        case SPV_REFLECT_FORMAT_R16G16_SFLOAT: return VK_FORMAT_R16G16_SFLOAT;
+        case SPV_REFLECT_FORMAT_R16G16B16_UINT: return VK_FORMAT_R16G16B16_UINT;
+        case SPV_REFLECT_FORMAT_R16G16B16_SINT: return VK_FORMAT_R16G16B16_SINT;
+        case SPV_REFLECT_FORMAT_R16G16B16_SFLOAT: return VK_FORMAT_R16G16B16_SFLOAT;
+        case SPV_REFLECT_FORMAT_R16G16B16A16_UINT: return VK_FORMAT_R16G16B16A16_UINT;
+        case SPV_REFLECT_FORMAT_R16G16B16A16_SINT: return VK_FORMAT_R16G16B16A16_SINT;
         case SPV_REFLECT_FORMAT_R16G16B16A16_SFLOAT: return VK_FORMAT_R16G16B16A16_SFLOAT;
-        case SPV_REFLECT_FORMAT_R32_UINT:            return VK_FORMAT_R32_UINT;           
-        case SPV_REFLECT_FORMAT_R32_SINT:            return VK_FORMAT_R32_SINT;           
-        case SPV_REFLECT_FORMAT_R32_SFLOAT:          return VK_FORMAT_R32_SFLOAT;         
-        case SPV_REFLECT_FORMAT_R32G32_UINT:         return VK_FORMAT_R32G32_UINT;        
-        case SPV_REFLECT_FORMAT_R32G32_SINT:         return VK_FORMAT_R32G32_SINT;        
-        case SPV_REFLECT_FORMAT_R32G32_SFLOAT:       return VK_FORMAT_R32G32_SFLOAT;      
-        case SPV_REFLECT_FORMAT_R32G32B32_UINT:      return VK_FORMAT_R32G32B32_UINT;     
-        case SPV_REFLECT_FORMAT_R32G32B32_SINT:      return VK_FORMAT_R32G32B32_SINT;     
-        case SPV_REFLECT_FORMAT_R32G32B32_SFLOAT:    return VK_FORMAT_R32G32B32_SFLOAT;   
-        case SPV_REFLECT_FORMAT_R32G32B32A32_UINT:   return VK_FORMAT_R32G32B32A32_UINT;  
-        case SPV_REFLECT_FORMAT_R32G32B32A32_SINT:   return VK_FORMAT_R32G32B32A32_SINT;  
+        case SPV_REFLECT_FORMAT_R32_UINT: return VK_FORMAT_R32_UINT;
+        case SPV_REFLECT_FORMAT_R32_SINT: return VK_FORMAT_R32_SINT;
+        case SPV_REFLECT_FORMAT_R32_SFLOAT: return VK_FORMAT_R32_SFLOAT;
+        case SPV_REFLECT_FORMAT_R32G32_UINT: return VK_FORMAT_R32G32_UINT;
+        case SPV_REFLECT_FORMAT_R32G32_SINT: return VK_FORMAT_R32G32_SINT;
+        case SPV_REFLECT_FORMAT_R32G32_SFLOAT: return VK_FORMAT_R32G32_SFLOAT;
+        case SPV_REFLECT_FORMAT_R32G32B32_UINT: return VK_FORMAT_R32G32B32_UINT;
+        case SPV_REFLECT_FORMAT_R32G32B32_SINT: return VK_FORMAT_R32G32B32_SINT;
+        case SPV_REFLECT_FORMAT_R32G32B32_SFLOAT: return VK_FORMAT_R32G32B32_SFLOAT;
+        case SPV_REFLECT_FORMAT_R32G32B32A32_UINT: return VK_FORMAT_R32G32B32A32_UINT;
+        case SPV_REFLECT_FORMAT_R32G32B32A32_SINT: return VK_FORMAT_R32G32B32A32_SINT;
         case SPV_REFLECT_FORMAT_R32G32B32A32_SFLOAT: return VK_FORMAT_R32G32B32A32_SFLOAT;
-        case SPV_REFLECT_FORMAT_R64_UINT:            return VK_FORMAT_R64_UINT;           
-        case SPV_REFLECT_FORMAT_R64_SINT:            return VK_FORMAT_R64_SINT;           
-        case SPV_REFLECT_FORMAT_R64_SFLOAT:          return VK_FORMAT_R64_SFLOAT;         
-        case SPV_REFLECT_FORMAT_R64G64_UINT:         return VK_FORMAT_R64G64_UINT;        
-        case SPV_REFLECT_FORMAT_R64G64_SINT:         return VK_FORMAT_R64G64_SINT;        
-        case SPV_REFLECT_FORMAT_R64G64_SFLOAT:       return VK_FORMAT_R64G64_SFLOAT;      
-        case SPV_REFLECT_FORMAT_R64G64B64_UINT:      return VK_FORMAT_R64G64B64_UINT;     
-        case SPV_REFLECT_FORMAT_R64G64B64_SINT:      return VK_FORMAT_R64G64B64_SINT;     
-        case SPV_REFLECT_FORMAT_R64G64B64_SFLOAT:    return VK_FORMAT_R64G64B64_SFLOAT;   
-        case SPV_REFLECT_FORMAT_R64G64B64A64_UINT:   return VK_FORMAT_R64G64B64A64_UINT;  
-        case SPV_REFLECT_FORMAT_R64G64B64A64_SINT:   return VK_FORMAT_R64G64B64A64_SINT;  
+        case SPV_REFLECT_FORMAT_R64_UINT: return VK_FORMAT_R64_UINT;
+        case SPV_REFLECT_FORMAT_R64_SINT: return VK_FORMAT_R64_SINT;
+        case SPV_REFLECT_FORMAT_R64_SFLOAT: return VK_FORMAT_R64_SFLOAT;
+        case SPV_REFLECT_FORMAT_R64G64_UINT: return VK_FORMAT_R64G64_UINT;
+        case SPV_REFLECT_FORMAT_R64G64_SINT: return VK_FORMAT_R64G64_SINT;
+        case SPV_REFLECT_FORMAT_R64G64_SFLOAT: return VK_FORMAT_R64G64_SFLOAT;
+        case SPV_REFLECT_FORMAT_R64G64B64_UINT: return VK_FORMAT_R64G64B64_UINT;
+        case SPV_REFLECT_FORMAT_R64G64B64_SINT: return VK_FORMAT_R64G64B64_SINT;
+        case SPV_REFLECT_FORMAT_R64G64B64_SFLOAT: return VK_FORMAT_R64G64B64_SFLOAT;
+        case SPV_REFLECT_FORMAT_R64G64B64A64_UINT: return VK_FORMAT_R64G64B64A64_UINT;
+        case SPV_REFLECT_FORMAT_R64G64B64A64_SINT: return VK_FORMAT_R64G64B64A64_SINT;
         case SPV_REFLECT_FORMAT_R64G64B64A64_SFLOAT: return VK_FORMAT_R64G64B64A64_SFLOAT;
         default: return VK_FORMAT_UNDEFINED;
     }
 }
 
-struct Reflection  {
+struct Reflection {
     std::unordered_map<std::string, DescriptorBinding> descriptorNames;
     std::vector<VkPipelineShaderStageCreateInfo> stages;
     std::map<uint32_t, SparseSet<VkDescriptorSetLayoutBinding>> descSets;
     std::map<uint32_t, SparseSet<VkDescriptorBindingFlags>> descFlags;
     std::map<DescriptorBinding, SpvReflectDescriptorBinding> descBindings;
-    std::map<DescriptorBinding, VkPushConstantRange> pushConstants;
+    std::map<std::pair<uint32_t, uint32_t>, VkPushConstantRange> pushConstants;
     std::unordered_map<uint32_t, VkFormat> input;
     std::unordered_map<uint32_t, VkFormat> output;
 };
 static Reflection reflect(Shader const &shader) {
     Reflection reflection;
-    for(auto const &binDesc : shader.binDescriptors)
-    {
+    for(auto const &binDesc : shader.binDescriptors) {
         auto const &bin = shader.binaries[binDesc.binary];
-        reflection.stages.emplace_back(VkPipelineShaderStageCreateInfo{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        reflection.stages.emplace_back(VkPipelineShaderStageCreateInfo{ .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = binDesc.stage,
             .module = bin.module,
-            .pName = binDesc.entry.c_str()
-        });
+            .pName = binDesc.entry.c_str() });
 
         // Descriptor bindings
         uint32_t count = 0;
         SPV_CHK(spvReflectEnumerateDescriptorBindings(&bin.reflection.value(), &count, nullptr), bin.path, continue);
         std::vector<SpvReflectDescriptorBinding *> descBindings(count);
         SPV_CHK(spvReflectEnumerateDescriptorBindings(&bin.reflection.value(), &count, descBindings.data()), bin.path, continue);
-        for(auto descBinding : descBindings)
-        {
-            reflection.descBindings[{descBinding->set, descBinding->binding}] = *descBinding;
+        for(auto descBinding : descBindings) {
+            reflection.descBindings[{ descBinding->set, descBinding->binding }] = *descBinding;
 
             auto &binding = reflection.descSets[descBinding->set][descBinding->binding];
             binding.binding = descBinding->binding;
@@ -134,19 +128,24 @@ static Reflection reflect(Shader const &shader) {
             binding.descriptorCount = std::max(descBinding->count, binding.descriptorCount);
             binding.stageFlags |= binDesc.stage;
 
-            if(reflection.descriptorNames.contains(descBinding->name) && reflection.descriptorNames.at(descBinding->name) != DescriptorBinding{descBinding->set, descBinding->binding})
-                LOG_WARN("Descriptor binding \"{}\" {{set={}, binding={}}} is different from binding {{set={}, binding={}}} with the same name!", descBinding->name, descBinding->set, descBinding->binding, reflection.descriptorNames.at(descBinding->name).set, reflection.descriptorNames.at(descBinding->name).binding);
+            if(reflection.descriptorNames.contains(descBinding->name) &&
+                reflection.descriptorNames.at(descBinding->name) != DescriptorBinding{ descBinding->set, descBinding->binding })
+                LOG_WARN("Descriptor binding \"{}\" {{set={}, binding={}}} is different from binding {{set={}, binding={}}} with the same name!",
+                    descBinding->name,
+                    descBinding->set,
+                    descBinding->binding,
+                    reflection.descriptorNames.at(descBinding->name).set,
+                    reflection.descriptorNames.at(descBinding->name).binding);
 
-            reflection.descriptorNames[descBinding->name] = {descBinding->set, descBinding->binding};
+            reflection.descriptorNames[descBinding->name] = { descBinding->set, descBinding->binding };
         }
 
         // Push constants
         SPV_CHK(spvReflectEnumeratePushConstantBlocks(&bin.reflection.value(), &count, nullptr), bin.path, continue);
         std::vector<SpvReflectBlockVariable *> pushConstants(count);
         SPV_CHK(spvReflectEnumeratePushConstantBlocks(&bin.reflection.value(), &count, pushConstants.data()), bin.path, continue);
-        for(auto pushConstant : pushConstants)
-        {
-            auto &constant = reflection.pushConstants[{pushConstant->offset, pushConstant->size}];
+        for(auto pushConstant : pushConstants) {
+            auto &constant = reflection.pushConstants[{ pushConstant->offset, pushConstant->size }];
             constant.offset = pushConstant->offset;
             constant.size = pushConstant->size;
             constant.stageFlags |= binDesc.stage;
@@ -171,13 +170,17 @@ static Reflection reflect(Shader const &shader) {
 }
 
 template <> struct fmt::formatter<SpvReflectDescriptorBinding> {
-    constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+    constexpr auto parse(format_parse_context &ctx) { return ctx.begin(); }
     auto format(SpvReflectDescriptorBinding const &binding, format_context &ctx) const {
-        return fmt::format_to(ctx.out(), "layout(set = {}, binding = {}) ({})", binding.set, binding.binding, string_VkDescriptorType(toVulkanDescriptorType(binding.descriptor_type)));
+        return fmt::format_to(ctx.out(),
+            "layout(set = {}, binding = {}) ({})",
+            binding.set,
+            binding.binding,
+            string_VkDescriptorType(toVulkanDescriptorType(binding.descriptor_type)));
     }
 };
 template <> struct fmt::formatter<DescriptorBinding> {
-    constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+    constexpr auto parse(format_parse_context &ctx) { return ctx.begin(); }
     auto format(DescriptorBinding const &binding, format_context &ctx) const {
         return fmt::format_to(ctx.out(), "layout(set = {}, binding = {})", binding.set, binding.binding);
     }
@@ -189,41 +192,49 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
     *pReflection = new Reflection(reflect(shader));
     auto &reflection = *static_cast<Reflection *>(*pReflection);
 
+    LOG_TRACE("Making pipeline layout");
+
     // Descriptor flags
-    for(auto &[binding, desc] : reflection.descBindings)
-    {
+    for(auto &[binding, desc] : reflection.descBindings) {
         auto &flags = reflection.descFlags[binding.set][binding.binding];
         if(ci.descriptorBindingFlags.contains(binding))
             flags |= ci.descriptorBindingFlags.at(binding);
 
-        if((desc.array.dims_count > 0 && desc.array.dims[0] == 0) || 
-            desc.type_description->op == SpvOpTypeRuntimeArray || 
-            ci.unsizedDescriptorSize.contains({binding.set, binding.binding})
-        )
+        if((desc.array.dims_count > 0 && desc.array.dims[0] == 0) || desc.type_description->op == SpvOpTypeRuntimeArray ||
+            ci.unsizedDescriptorSize.contains({ binding.set, binding.binding }))
             flags |= VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
     }
 
-    for(auto &[set, bindings] : reflection.descSets) 
-    {
-        for(auto [binding, desc] : bindings) 
-        {
-            if(ci.unsizedDescriptorSize.contains({set, (uint32_t) binding}))
-                desc.descriptorCount = std::max(desc.descriptorCount, ci.unsizedDescriptorSize.at({set, (uint32_t) binding}));
-            if(ci.dynamicDescriptors.contains({set, (uint32_t) binding})) {
+    for(auto &[set, bindings] : reflection.descSets) {
+        LOG_TRACE("  Descriptor set {}", set);
+        for(auto [binding, desc] : bindings) {
+            LOG_TRACE("    Binding {}: {} of {} in {} unsized {} dynamic {}", desc.binding, desc.descriptorCount,
+                string_VkDescriptorType(desc.descriptorType), string_VkShaderStageFlags(desc.stageFlags),
+                ci.unsizedDescriptorSize.contains({ set, (uint32_t) binding }), ci.dynamicDescriptors.contains({ set, (uint32_t) binding }));
+
+            if(ci.unsizedDescriptorSize.contains({ set, (uint32_t) binding })) {
+                desc.descriptorCount = std::max(desc.descriptorCount, ci.unsizedDescriptorSize.at({ set, (uint32_t) binding }));
+            }
+            if(ci.dynamicDescriptors.contains({ set, (uint32_t) binding })) {
                 if(desc.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
                     desc.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
                 else if(desc.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
                     desc.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
-                else 
-                    LOG_ERROR("Binding {{set={}, binding={}}} of type {} is in ci.dynamicDescriptors, but the type is not VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER nor VK_DESCRIPTOR_TYPE_STORAGE_BUFFER!", set, binding, string_VkDescriptorType(desc.descriptorType));
+                else
+                    LOG_ERROR(
+                        "Binding {{set={}, binding={}}} of type {} is in ci.dynamicDescriptors, but the type is not "
+                        "VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER nor VK_DESCRIPTOR_TYPE_STORAGE_BUFFER!",
+                        set,
+                        binding,
+                        string_VkDescriptorType(desc.descriptorType)
+                    );
             }
         }
     }
 
     // Descriptor set layouts
     layout.descLayouts.reserve(reflection.descSets.size());
-    for(auto const &[set, bindings] : reflection.descSets)
-    {
+    for(auto const &[set, bindings] : reflection.descSets) {
         VkDescriptorSetLayoutBindingFlagsCreateInfo flagsCI{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
             .bindingCount = (uint32_t) reflection.descFlags.at(set).size(),
@@ -241,8 +252,10 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
 
     std::vector<VkPushConstantRange> pushConstants;
     pushConstants.reserve(reflection.pushConstants.size());
-    for(auto const &pair : reflection.pushConstants)
-        pushConstants.emplace_back(pair.second);
+    for(auto const &[_, pc] : reflection.pushConstants) {
+        LOG_TRACE("  Push constant {} offset {} size {}", string_VkShaderStageFlags(pc.stageFlags), pc.offset, pc.size);
+        pushConstants.emplace_back(pc);
+    }
 
     VkPipelineLayoutCreateInfo pipelineLayoutCI{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -277,11 +290,9 @@ Pipeline vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout,
         .vertexAttributeDescriptionCount = static_cast<uint32_t>(ci.input.attributes.size()),
         .pVertexAttributeDescriptions = ci.input.attributes.data(),
     };
-    VkPipelineInputAssemblyStateCreateInfo inputAssemblyState{
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+    VkPipelineInputAssemblyStateCreateInfo inputAssemblyState{ .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
         .topology = ci.input.topology,
-        .primitiveRestartEnable = ci.input.primitiveRestart
-    };
+        .primitiveRestartEnable = ci.input.primitiveRestart };
 
     VkPipelineViewportStateCreateInfo viewportState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
@@ -291,32 +302,26 @@ Pipeline vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout,
         .pScissors = ci.viewport.scissors.data(),
     };
 
-    VkPipelineRenderingCreateInfo renderingCI{
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+    VkPipelineRenderingCreateInfo renderingCI{ .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
         .colorAttachmentCount = (uint32_t) ci.attachments.color.size(),
         .pColorAttachmentFormats = ci.attachments.color.data(),
         .depthAttachmentFormat = ci.attachments.depth,
-        .stencilAttachmentFormat = ci.attachments.stencil
-    };
-    VkPipelineDynamicStateCreateInfo dynamicState{
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .stencilAttachmentFormat = ci.attachments.stencil };
+    VkPipelineDynamicStateCreateInfo dynamicState{ .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
         .dynamicStateCount = (uint32_t) ci.dynamicState.size(),
-        .pDynamicStates = ci.dynamicState.data()
-    };
+        .pDynamicStates = ci.dynamicState.data() };
 
     std::vector<VkPipelineColorBlendAttachmentState> blendingAttachments;
     if(ci.blending.attachments.size() == 1)
         blendingAttachments = std::vector<VkPipelineColorBlendAttachmentState>(ci.attachments.color.size(), ci.blending.attachments[0]);
     else
         blendingAttachments = ci.blending.attachments;
-    VkPipelineColorBlendStateCreateInfo blendState{
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+    VkPipelineColorBlendStateCreateInfo blendState{ .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
         .logicOpEnable = ci.blending.logicOpEnable,
         .logicOp = ci.blending.logicOp,
         .attachmentCount = (uint32_t) blendingAttachments.size(),
         .pAttachments = blendingAttachments.data(),
-        .blendConstants = {ci.blending.constant.r, ci.blending.constant.g, ci.blending.constant.b, ci.blending.constant.a}
-    };
+        .blendConstants = { ci.blending.constant.r, ci.blending.constant.g, ci.blending.constant.b, ci.blending.constant.a } };
     VkPipelineRasterizationStateCreateInfo rasterization{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
         .flags = ci.rasterization.flags,
@@ -355,8 +360,7 @@ Pipeline vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout,
         .alphaToOneEnable = ci.multisample.alphaToOneEnable,
     };
 
-    VkGraphicsPipelineCreateInfo pipelineCI{
-        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+    VkGraphicsPipelineCreateInfo pipelineCI{ .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .pNext = &renderingCI,
         .flags = ci.flags,
         .stageCount = (uint32_t) reflection.stages.size(),
@@ -369,8 +373,7 @@ Pipeline vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout,
         .pDepthStencilState = &depthStencil,
         .pColorBlendState = &blendState,
         .pDynamicState = &dynamicState,
-        .layout = pipeline.layout.layout
-    };
+        .layout = pipeline.layout.layout };
     CHECK_VK_RES(vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &pipeline.pipeline));
 
     pipeline.valid = true;
@@ -394,7 +397,9 @@ Pipeline vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout,
     VkComputePipelineCreateInfo pipelineCI{
         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
         .flags = ci.flags,
-        .stage = *std::find_if(reflection.stages.begin(), reflection.stages.end(), [](VkPipelineShaderStageCreateInfo const &stage){return stage.stage == VK_SHADER_STAGE_COMPUTE_BIT;}),
+        .stage = *std::find_if(reflection.stages.begin(),
+            reflection.stages.end(),
+            [](VkPipelineShaderStageCreateInfo const &stage) { return stage.stage == VK_SHADER_STAGE_COMPUTE_BIT; }),
         .layout = pipeline.layout.layout,
     };
     CHECK_VK_RES(vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &pipeline.pipeline));
@@ -404,7 +409,7 @@ Pipeline vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout,
 }
 Pipeline vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout, RaytracingPipelineCreateInfo const &ci) {
     auto const &dev = shader.createInfo.device;
-    
+
     Pipeline pipeline{
         .type = Pipeline::Type::RayTracing,
         .createInfo = {
@@ -438,22 +443,20 @@ void vk::allocateDescriptors(vk::Pipeline &pipeline, DescriptorAllocationInfo ci
 
     // Descriptor pool
     SparseSet<VkDescriptorPoolSize> poolSizes;
-    for(auto const &[set, bindings] : reflection.descSets)
-    {
-        for(auto const &binding : bindings.dense())
-        {
+    for(auto const &[set, bindings] : reflection.descSets) {
+        for(auto const &binding : bindings.dense()) {
             auto const &flags = reflection.descFlags.at(set).get(binding.binding);
             auto &size = poolSizes[binding.descriptorType];
             size.type = binding.descriptorType;
-            size.descriptorCount += (flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT ? ci.maxVariableCountSize : binding.descriptorCount) * ci.numFrames;
+            size.descriptorCount += (flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT ? ci.maxVariableCountSize :
+                                                                                                   binding.descriptorCount) *
+                                    ci.numFrames;
         }
     }
-    VkDescriptorPoolCreateInfo poolCI{
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+    VkDescriptorPoolCreateInfo poolCI{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .maxSets = ci.maxDescriptorSets * ci.numFrames,
         .poolSizeCount = (uint32_t) poolSizes.size(),
-        .pPoolSizes = poolSizes.dense().data()
-    };
+        .pPoolSizes = poolSizes.dense().data() };
     CHECK_VK_RES(vkCreateDescriptorPool(pipeline.device, &poolCI, nullptr, &pipeline.descriptorSets.pool));
 
     // Allocate descriptors
@@ -462,34 +465,28 @@ void vk::allocateDescriptors(vk::Pipeline &pipeline, DescriptorAllocationInfo ci
         for(auto const &[set, bindings] : reflection.descSets) {
             uint32_t count;
             std::optional<VkDescriptorSetVariableDescriptorCountAllocateInfo> variableSizedBinding;
-            for(auto binding : bindings.dense())
-            {
+            for(auto binding : bindings.dense()) {
                 auto const &flags = reflection.descFlags.at(set).get(binding.binding);
-                if(flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT)
-                {
-                    if(pipeline.createInfo.layout.unsizedDescriptorSize.contains({set, binding.binding}))
-                    {
-                        count = pipeline.createInfo.layout.unsizedDescriptorSize.at({set, binding.binding});
-                        variableSizedBinding = {
-                            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO,
+                if(flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT) {
+                    if(pipeline.createInfo.layout.unsizedDescriptorSize.contains({ set, binding.binding })) {
+                        count = pipeline.createInfo.layout.unsizedDescriptorSize.at({ set, binding.binding });
+                        variableSizedBinding = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO,
                             .descriptorSetCount = 1,
-                            .pDescriptorCounts = &count
-                        };
+                            .pDescriptorCounts = &count };
                         break;
                     } else {
-                        LOG_ERROR("You must specify an unsizedDescriptorSize a variable sized array descriptor binding {}", reflection.descBindings.at({set, binding.binding}));
+                        LOG_ERROR("You must specify an unsizedDescriptorSize a variable sized array descriptor binding {}",
+                            reflection.descBindings.at({ set, binding.binding }));
                         continue;
                     }
                 }
             }
-    
-            VkDescriptorSetAllocateInfo descSetAlloc{
-                .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+
+            VkDescriptorSetAllocateInfo descSetAlloc{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
                 .pNext = variableSizedBinding.has_value() ? &variableSizedBinding.value() : nullptr,
                 .descriptorPool = pipeline.descriptorSets.pool,
                 .descriptorSetCount = 1,
-                .pSetLayouts = &pipeline.layout.descLayouts.get(set)
-            };
+                .pSetLayouts = &pipeline.layout.descLayouts.get(set) };
             CHECK_VK_RES(vkAllocateDescriptorSets(pipeline.device, &descSetAlloc, &sets[set]));
         }
     }
@@ -519,7 +516,7 @@ bool vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite>
         if(!set.contains(write.dstBinding))
             continue;
 
-        descWrites.emplace_back(VkWriteDescriptorSet{   
+        descWrites.emplace_back(VkWriteDescriptorSet{
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .dstSet = pipeline.descriptorSets.sets.at(frame).at(write.dstSet),
             .dstBinding = write.dstBinding,
@@ -538,7 +535,11 @@ bool vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite>
 }
 bool vk::bindDescriptorSet(VkCommandBuffer cb, Pipeline const &pipeline, uint32_t set, uint32_t frame, std::vector<uint32_t> offsets) {
     if(frame >= pipeline.descriptorSets.sets.size()) {
-        LOG_ERROR("vk::bindDescriptorSet: Frame {} is outside of descriptor frames with size of {}! (Have you forgot to call vk::allocateDescriptors?)", frame, pipeline.descriptorSets.sets.size());
+        LOG_ERROR(
+            "vk::bindDescriptorSet: Frame {} is outside of descriptor frames with size of {}! (Have you forgot to call vk::allocateDescriptors?)",
+            frame,
+            pipeline.descriptorSets.sets.size()
+        );
         return false;
     }
     if(pipeline.descriptorSets.sets.empty()) {
@@ -590,8 +591,7 @@ void vk::destroy(Pipeline &pipeline) {
     if(pipeline.descriptorSets.pool != VK_NULL_HANDLE)
         vkDestroyDescriptorPool(pipeline.device, pipeline.descriptorSets.pool, nullptr);
 
-    for(auto layout : pipeline.layout.descLayouts.dense())
-    {
+    for(auto layout : pipeline.layout.descLayouts.dense()) {
         if(layout != VK_NULL_HANDLE)
             vkDestroyDescriptorSetLayout(pipeline.device, layout, nullptr);
     }

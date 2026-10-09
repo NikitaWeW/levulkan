@@ -6,6 +6,8 @@
 #include "ECS.hpp"
 
 // TODO: Move these somewhere idk
+// TODO: Move these somewhere PLEASE, this file is for rendergraph and stuff
+// Rename this file to RenderGraph
 
 struct Transform {
     glm::vec3 position{0};
@@ -43,6 +45,7 @@ struct VulkanMaterial {
         uint32_t ambient;
         uint32_t normal;
         uint32_t displacement;
+        float _pad0;
     } textures;
 };
 struct VulkanModel {

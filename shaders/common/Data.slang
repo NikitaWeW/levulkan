@@ -20,8 +20,15 @@ struct Material {
         uint ambient;
         uint normal;
         uint displacement;
+        float _pad0;
     };
 
     MaterialProperties properties;
     MaterialTextures textures;
+};
+struct ModelData {
+    column_major float4x4 modelMat;
+    column_major float4x4 normMat;
+
+    Material material;
 };
