@@ -199,7 +199,23 @@ public:
 
 constexpr ecs::entity INVALID_ENTITY = 0;
 
+struct DebugName {
+    std::string name;
+};
+
+template <> class fmt::formatter<Entity> {
+public:
+    constexpr auto parse(format_parse_context &ctx) { return ctx.begin(); }
+    template <typename Context> constexpr auto format(Entity const &e, Context &ctx) const {
+        return format_to(ctx.out(), "e{}{}{}", e.id(), e.valid() && e.contains<DebugName>() ? ("-\"" + e.get<DebugName>().name + "\"") : "",
+            e.valid() ? "" : "-invalid");
+    }
+};
 namespace std {
+template <typename Stream> Stream &operator<<(Stream &str, Entity const &e) {
+    str << fmt::format("{}", e);
+    return str;
+}
 template <> struct hash<Entity> {
     size_t operator()(Entity const &e) const {
         size_t seed = std::hash<ecs::entity>{ }(e.id());
@@ -224,20 +240,7 @@ public:
     inline T const &at(size_t index) const { return this->get(index); }
 };
 
-struct DebugName {
-    std::string name;
-};
-
 #include "Logging.hpp"
-
-template <> class fmt::formatter<Entity> {
-public:
-    constexpr auto parse(format_parse_context &ctx) { return ctx.begin(); }
-    template <typename Context> constexpr auto format(Entity const &e, Context &ctx) const {
-        return format_to(ctx.out(), "e{}{}{}", e.id(), e.valid() && e.contains<DebugName>() ? ("-\"" + e.get<DebugName>().name + "\"") : "",
-            e.valid() ? "" : "-invalid");
-    }
-};
 
 extern Registry sReg;
 

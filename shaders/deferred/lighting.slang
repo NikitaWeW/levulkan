@@ -1,7 +1,8 @@
 struct PushConstants {
     // Inverted
-    column_major float4x4 projMat;
-    column_major float4x4 viewMat;
+    // FIXME: why the actual hell is it not column_major?
+    row_major float4x4 projMat;
+    row_major float4x4 viewMat;
 };
 
 #include "lib/Fullscreen.slang"
@@ -37,7 +38,8 @@ float4 fsMain(VsOut in, uniform PushConstants pushConstants) {
     float3 specular = float3(pow(max(dot(R, V), 0.0), 16.0) * 0.75) * 0;
     float4 oColor = float4(diffuse * albedo.rgb + specular, 1.0);
     // oColor.rgb = normal /* *.5+.5 */;
-    oColor = {1, 1, 1, 1};
+    // oColor.rgb = normal ;
+    // oColor = {1, 1, 1, 1};
 
     // Tone mapping
     oColor.rgb = reinhard(oColor.rgb);

@@ -111,7 +111,4 @@ add_executable(levulkan "src/main.cpp")
 target_link_libraries(levulkan PRIVATE engine)
 target_include_directories(levulkan PRIVATE "src")
 
-
-
 # add_subdirectory(tests)
-

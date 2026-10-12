@@ -104,6 +104,7 @@ struct RaytracingPipelineCreateInfo {
 };
 
 /// @brief The vulkan pipeline.
+// TODO: Reflection interface (query stuff idk man)
 struct Pipeline {
     enum class Type { Invalid = 0, Graphics, Compute, RayTracing };
     struct Layout {

@@ -1,3 +1,5 @@
+// FIXME: spirv validator screaming
+
 #include "common/Data.slang"
 #include "common/Attributes.slang"
 

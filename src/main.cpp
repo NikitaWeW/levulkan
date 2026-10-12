@@ -59,52 +59,52 @@ static std::string printTexture(Entity e) {
         (texture2D.srgb ? "srgb" : "not srgb"),
         texture2D.numMipLevels);
 }
-[[maybe_unused]] static void printModelData(Entity e) {
+[[maybe_unused]] [[nodiscard]] static std::string printModelData(Entity e) {
     assert(e.valid() && e.contains<Model>());
     Model const &model = e.get<Model>();
-    LOG_INFO("");
-    LOG_INFO("Model: {}: \"{}\"", e, model.path);
-    LOG_INFO("Skeleton: ");
-    LOG_INFO("  Bone map size / number of bones: {}", model.skeleton.boneMap.size());
+    std::stringstream ss;
+    ss << "Model: " << e << ": \"" << model.path << "\"\n";
+    ss << "Skeleton: \n";
+    ss << "  Bone map size / number of bones: " << model.skeleton.boneMap.size() << "\n";
     if(model.skeleton.boneMap.size() <= 30)
         for(auto const &[name, id] : model.skeleton.boneMap)
-            LOG_INFO("    [\"{}\": {}]", name, id);
+            ss << "    [\"" << name << "\": " << id << "]\n";
 
-    LOG_INFO("Animations: {}", model.animations.size());
+    ss << "Animations: " << model.animations.size() << "\n";
     for(auto const &animation : model.animations) {
-        LOG_INFO("-----------------");
-        LOG_INFO("Animation: \"{}\"", animation.name);
-        LOG_INFO("  Duration: {} ticks, tps: {}", animation.durationTicks, animation.ticksPerSecond);
-        LOG_INFO("  Bones size: {}", animation.bones.size());
+        ss << "-----------------\n";
+        ss << "Animation: \"" << animation.name << "\"\n";
+        ss << "  Duration: " << animation.durationTicks << " ticks, tps: " << animation.ticksPerSecond << "\n";
+        ss << "  Number of bones: {}" << animation.bones.size() << "\n";
     }
 
-    LOG_INFO("Meshes: {}", model.meshes.size());
+    ss << "Meshes: " << model.meshes.size() << "\n";
     for(auto const &mesh : model.meshes) {
-        LOG_INFO("-----------------");
-
-        LOG_INFO("Geometry:");
-        LOG_INFO("  Triangles:   {}", mesh.geometry.indices.size() / 3);
-        LOG_INFO("  Indices:     {}", mesh.geometry.indices.size());
-        LOG_INFO("  Positions:   {}", mesh.geometry.positions.size());
-        LOG_INFO("  Attributes:  {}", mesh.geometry.attributes.size());
-
-        LOG_INFO("Material:");
-        LOG_INFO("Textures:");
-        LOG_INFO("  Albedo:       {}", printTexture(Entity{ &e.reg(), mesh.material.textures.albedo }));
-        LOG_INFO("  Metallic:     {}", printTexture(Entity{ &e.reg(), mesh.material.textures.metallic }));
-        LOG_INFO("  Roughness:    {}", printTexture(Entity{ &e.reg(), mesh.material.textures.roughness }));
-        LOG_INFO("  Ambient:      {}", printTexture(Entity{ &e.reg(), mesh.material.textures.ambient }));
-        LOG_INFO("  Normal:       {}", printTexture(Entity{ &e.reg(), mesh.material.textures.normal }));
-        LOG_INFO("  Displacement: {}", printTexture(Entity{ &e.reg(), mesh.material.textures.displacement }));
-        LOG_INFO("Properties:");
-        LOG_INFO("  Ambient:       {}", fmt::streamed(mesh.material.properties.ambient));
-        LOG_INFO("  Albedo:        {}", fmt::streamed(mesh.material.properties.albedo));
-        LOG_INFO("  Specular:      {}", fmt::streamed(mesh.material.properties.specular));
-        LOG_INFO("  Emission:      {}", fmt::streamed(mesh.material.properties.emission));
-        LOG_INFO("  Shininess:     {}", mesh.material.properties.shininess);
-        LOG_INFO("  Metallic:      {}", mesh.material.properties.metallic);
-        LOG_INFO("  IOR:           {}", mesh.material.properties.ior);
+        ss << "-----------------\n";
+        ss << "Geometry:\n";
+        ss << "  Triangles:   " << mesh.geometry.indices.size() / 3 << "\n";
+        ss << "  Indices:     " << mesh.geometry.indices.size() << "\n";
+        ss << "  Positions:   " << mesh.geometry.positions.size() << "\n";
+        ss << "  Attributes:  " << mesh.geometry.attributes.size() << "\n";
+        ss << "Material:\n";
+        ss << "  Textures:\n";
+        ss << "    Albedo:       " << printTexture(Entity{ &e.reg(), mesh.material.textures.albedo }) << "\n";
+        ss << "    Metallic:     " << printTexture(Entity{ &e.reg(), mesh.material.textures.metallic }) << "\n";
+        ss << "    Roughness:    " << printTexture(Entity{ &e.reg(), mesh.material.textures.roughness }) << "\n";
+        ss << "    Ambient:      " << printTexture(Entity{ &e.reg(), mesh.material.textures.ambient }) << "\n";
+        ss << "    Normal:       " << printTexture(Entity{ &e.reg(), mesh.material.textures.normal }) << "\n";
+        ss << "    Displacement: " << printTexture(Entity{ &e.reg(), mesh.material.textures.displacement }) << "\n";
+        ss << "  Properties:\n";
+        ss << "    Ambient:      " << mesh.material.properties.ambient << "\n";
+        ss << "    Albedo:       " << mesh.material.properties.albedo << "\n";
+        ss << "    Specular:     " << mesh.material.properties.specular << "\n";
+        ss << "    Emission:     " << mesh.material.properties.emission << "\n";
+        ss << "    Shininess:    " << mesh.material.properties.shininess << "\n";
+        ss << "    Metallic:     " << mesh.material.properties.metallic << "\n";
+        ss << "    IOR:          " << mesh.material.properties.ior << "\n";
     }
+
+    return ss.str();
 }
 static Entity loadTexture(std::string_view path, bool required = true, bool flip = false) {
     static TextureLoader loader(sReg.getReg());
@@ -193,11 +193,14 @@ static bool loadModelTo(std::string_view path, std::vector<Entity> &to, std::opt
     return e;
 }
 static void dumpModels(std::string_view dir) {
+    std::ofstream modelStr(std::string(dir.data()) + "/models.txt");
     for(DirectEntity<Model> e : sReg.view<Model>()) {
-        printModelData(e);
+        modelStr << printModelData(e) << "Geometry dumps:\n";
         for(uint i = 0; i < e->meshes.size(); ++i) {
             auto const &mesh = e->meshes[i].geometry;
-            std::ofstream s(dir.data() + ("/" + std::filesystem::path(e->path).stem().string() + "_") + std::to_string(i) + ".obj");
+            auto path = dir.data() + ("/" + std::filesystem::path(e->path).stem().string() + "_") + std::to_string(i) + ".obj";
+            modelStr << "  " << path << "\n";
+            std::ofstream s(path);
             if(!s) {
                 continue;
             }
@@ -292,9 +295,17 @@ static VkFormat getDepthFormat(VkPhysicalDevice dev) {
 
     return outFormat;
 }
-template <typename T> static uint32_t pushUniform(vk::RingBuffer &uniformBuffer, T const &data, uint frame, uint alignment) {
-    uint32_t offset = uniformBuffer.request(sizeof(data), frame, alignment);
-    std::memcpy(static_cast<char *>(uniformBuffer.getBuffer().get<vk::Buffer>().hostAddress) + offset, &data, sizeof(data));
+template <typename T> static uint64_t pushUniform(vk::RingBuffer &uniformBuffer, T const &data, uint frame, uint alignment = 16) {
+    uint64_t offset = uniformBuffer.request(sizeof(data), frame, alignment);
+    std::memcpy(static_cast<char *>(uniformBuffer.getBuffer()->hostAddress) + offset, &data, sizeof(data));
+    offset += uniformBuffer.getBuffer()->deviceAddress;
+    return offset;
+}
+template <std::ranges::range T> static uint64_t pushUniform(vk::RingBuffer &uniformBuffer, T const &data, uint frame, uint alignment = 16) {
+    uint32_t size = std::ranges::size(data) * sizeof(*std::ranges::data(data));
+    uint64_t offset = uniformBuffer.request(size, frame, alignment);
+    std::memcpy(static_cast<char *>(uniformBuffer.getBuffer()->hostAddress) + offset, std::ranges::data(data), size);
+    offset += uniformBuffer.getBuffer()->deviceAddress;
     return offset;
 }
 
@@ -666,7 +677,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                     }
                 };
                 data.shader = e;
-                e.emplace<vk::Pipeline>(vk::makePipeline(data.shader.get<vk::Shader>(), layoutCi, pipelineCi));
+                e.emplace<vk::Pipeline>(vk::makePipeline(*data.shader, layoutCi, pipelineCi));
                 data.pipeline = e;
                 e.emplace<DebugName>("gbuffer_pipeline");
                 vk::allocateDescriptors(data.pipeline.getc());
@@ -678,8 +689,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                     .imageInfo = imageInfos,
                 });
             }
-            assert(data.shader.valid() && data.shader.get<vk::Shader>().valid);
-            assert(data.pipeline.valid() && data.pipeline.get<vk::Pipeline>().valid);
+            assert(data.shader.valid() && data.shader->valid);
+            assert(data.pipeline.valid() && data.pipeline->valid);
 
             data.albedo = res.getResource("gbuffer_albedo");
             data.position = res.getResource("gbuffer_position");
@@ -779,6 +790,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 glm::mat4 modelMat;
                 glm::mat4 normMat;
                 VulkanMaterial material;
+                float _pad0;
             };
             struct UniformBuffer {
                 glm::mat4 projMat;
@@ -791,14 +803,11 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
             std::map<std::pair<Entity, uint>, std::vector<ModelData>> instanceData;
 
-            VkDeviceAddress uniformBufferAddress = pushUniform(uniformBuffer,
-                UniformBuffer{
-                    .projMat = eCamera->projMat,
-                    .viewMat = eCamera->viewMat,
-                },
-                frameIndex,
-                properties.properties.limits.minStorageBufferOffsetAlignment);
-            uniformBufferAddress += uniformBuffer.getBuffer()->deviceAddress;
+            UniformBuffer uBufferData{
+                .projMat = eCamera->projMat,
+                .viewMat = eCamera->viewMat,
+            };
+            VkDeviceAddress uniformBufferAddress = pushUniform(uniformBuffer, uBufferData, frameIndex, 16);
 
             for(auto eInstance : sReg.view<ModelInstance>()) {
                 auto const &instance = eInstance.get<ModelInstance>();
@@ -836,11 +845,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
                 PushConstants pushConstants;
                 pushConstants.uniformBuffer = uniformBufferAddress;
-                pushConstants.instanceData = uniformBuffer.getBuffer()->deviceAddress +
-                                             pushUniform(uniformBuffer,
-                                                 data,
-                                                 frameIndex,
-                                                 properties.properties.limits.minStorageBufferOffsetAlignment);
+                pushConstants.instanceData = pushUniform(uniformBuffer, data, frameIndex, 16);
 
                 VkPushConstantsInfo pushConstantsInfo{
                     .sType = VK_STRUCTURE_TYPE_PUSH_CONSTANTS_INFO,
