@@ -19,7 +19,9 @@ struct VsOut {
     float4 clipPos : SV_Position;
     float3 viewPos;
     float2 uv;
-    float3x3 tbn;
+    float3 tangent; // idk weird slang shenanigans
+    float3 bitangent;
+    float3 normal;
     nointerpolation uint instanceID;
 };
 
@@ -30,18 +32,17 @@ VsOut vsMain(Attributes attr, uint instanceID : SV_INSTANCEID, uniform PushConst
     out.instanceID = instanceID;
 
     float3 position = attr.position;
-    float3 normal = attr.normal;
-    float3 tangent = attr.tangent;
+    out.normal = attr.normal;
+    out.tangent = attr.tangent;
 
     out.viewPos = mul(mul(pushConstants.uBuffer->viewMat, modelData.modelMat), float4(attr.position, 1)).xyz;
     out.clipPos = mul(pushConstants.uBuffer->projMat, float4(out.viewPos, 1));
     out.uv = attr.uv;
     
-    normal  = normalize(mul(mul(pushConstants.uBuffer->viewMat, modelData.normMat), float4(normal, 0))).xyz;
-    tangent = normalize(mul(mul(pushConstants.uBuffer->viewMat, modelData.normMat), float4(tangent, 0))).xyz;
-    tangent = normalize(tangent - dot(tangent, normal) * normal);
-    float3 bitangent = cross(tangent, normal);
-    out.tbn = float3x3(tangent, bitangent, normal);
+    out.normal  = normalize(mul(mul(pushConstants.uBuffer->viewMat, modelData.normMat), float4(out.normal, 0))).xyz;
+    out.tangent = normalize(mul(mul(pushConstants.uBuffer->viewMat, modelData.normMat), float4(out.tangent, 0))).xyz;
+    out.tangent = normalize(out.tangent - dot(out.tangent, out.normal) * out.normal);
+    out.bitangent = cross(out.tangent, out.normal);
 
     return out;
 }
@@ -64,7 +65,7 @@ float4 texture(uint index, float2 uv) {
 FsOut fsMain(VsOut in, uniform PushConstants pushConstants) {
     ModelData modelData = pushConstants.instanceData->data[in.instanceID];
 
-    in.tbn = transpose(in.tbn);
+    float3x3 tbn = transpose(float3x3(in.tangent, in.bitangent, in.normal));
     var uv = in.uv;
     FsOut out;
     out.albedo = modelData.material.properties.albedo * texture(modelData.material.textures.albedo, uv);
@@ -72,7 +73,7 @@ FsOut fsMain(VsOut in, uniform PushConstants pushConstants) {
 
     out.normal.a = 1;
     out.normal.xyz = texture(modelData.material.textures.normal, uv).rgb * 2 - 1;
-    out.normal.xyz = mul(in.tbn, out.normal.xyz);
+    out.normal.xyz = mul(tbn, out.normal.xyz);
     out.normal.xyz = normalize(out.normal.xyz) * 0.5 + 0.5;
 
     out.pbr.r = clamp(modelData.material.properties.metallic * texture(modelData.material.textures.metallic, uv).r, 0, 1);
