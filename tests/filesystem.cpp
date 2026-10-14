@@ -1,9 +1,9 @@
 #include "catch2/catch_test_macros.hpp"
-#include "fs/IFilesystem.hpp"
-#include "fs/NativeFilesystem.hpp"
-#include "fs/MemoryFilesystem.hpp"
-#include "fs/VirtualFilesystem.hpp"
-#include "fs/SubFilesystem.hpp"
+#include "engine/io/fs/IFilesystem.hpp"
+#include "engine/io/fs/NativeFilesystem.hpp"
+#include "engine/io/fs/MemoryFilesystem.hpp"
+#include "engine/io/fs/VirtualFilesystem.hpp"
+#include "engine/io/fs/SubFilesystem.hpp"
 
 #define CHECK_ERR(e) \
     if(e.failed) { \

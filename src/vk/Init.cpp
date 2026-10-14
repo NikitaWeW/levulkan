@@ -1,9 +1,9 @@
-#include "Init.hpp"
-#include "Utility.hpp"
-#include "Logging.hpp"
+#include "engine/vk/Init.hpp"
+#include "engine/vk/Utility.hpp"
+#include "engine/io/Logging.hpp"
 #include "cpptrace/cpptrace.hpp"
 #include <set>
-using namespace vk;
+using namespace egn::vk;
 
 std::string _sChkLastFileLine;
 
@@ -413,7 +413,7 @@ static void createAllocator(InitInfo const &info, InitResult &result) {
     CHECK_VK_RES(vmaCreateAllocator(&allocatorCI, &result.vma));
 }
 
-InitResult vk::init(InitInfo info) {
+InitResult egn::vk::init(InitInfo info) {
     InitResult result;
 
     if(!createInstance(info, result))

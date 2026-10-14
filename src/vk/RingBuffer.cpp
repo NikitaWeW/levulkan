@@ -1,8 +1,9 @@
-#include "RingBuffer.hpp"
-#include "Resource.hpp"
-#include "Logging.hpp"
-#include "Renderer.hpp"
-using namespace vk;
+#include "engine/vk/RingBuffer.hpp"
+#include "engine/vk/Resource.hpp"
+#include "engine/io/Logging.hpp"
+#include "engine/renderer/Renderer.hpp" // ResourceDirty
+
+using namespace egn::vk;
 
 RingBuffer::RingBuffer(Registry &reg, BufferCreateInfo createInfo) {
     mCreateInfo = createInfo;

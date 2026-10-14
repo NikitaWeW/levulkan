@@ -1,8 +1,8 @@
-#include "Shader.hpp"
-#include "Utility.hpp"
-#include "Logging.hpp"
+#include "engine/vk/Shader.hpp"
+#include "engine/vk/Utility.hpp"
+#include "engine/io/Logging.hpp"
 #include "nlohmann/json.hpp"
-#include "fs/NativeFilesystem.hpp"
+#include "engine/io/fs/NativeFilesystem.hpp"
 
 #ifdef SHADER_ENABLE_GLSL
 #include "glslang/Public/ShaderLang.h"
@@ -17,7 +17,8 @@
 #include <set>
 #include <ranges>
 
-using namespace vk;
+using namespace egn::vk;
+using namespace egn;
 using namespace nlohmann;
 
 /// @brief Default include class for normal include convention

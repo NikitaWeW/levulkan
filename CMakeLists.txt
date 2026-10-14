@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-project(levulkan C CXX)
+project(engine C CXX)
 
 include(cmake/cpm.cmake)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -69,35 +69,37 @@ find_package(slang)
 message(STATUS "Found slang: \"${slang_DIR}\"")
 
 set(ENGINE_SOURCE
-    "src/Controller.cpp"
-    "src/libraries/stb.c"
-    "src/libraries/vk_mem_alloc.cpp"
+    "vendor/stb.c"
+    "vendor/vk_mem_alloc.cpp"
 
-    "src/resource/ModelLoader.cpp"
-    "src/resource/TextureLoader.cpp"
+    "src/renderer/RenderGraph.cpp"
+    "src/renderer/ResourceManager.cpp"
 
-    "src/fs/Path.cpp"
-    "src/fs/File.cpp"
-    "src/fs/NativeFilesystem.cpp"
-    "src/fs/VirtualFilesystem.cpp"
-    "src/fs/SubFilesystem.cpp"
-    "src/fs/MemoryFilesystem.cpp"
+    "src/scene/ModelLoader.cpp"
+    "src/scene/TextureLoader.cpp"
+    "src/scene/Animation.cpp"
 
-    "src/Renderer.cpp"
-    "src/ResourceManager.cpp"
-
-    "src/vk/Init.cpp"
-    "src/vk/Pipeline.cpp"
-    "src/vk/Resource.cpp"
     "src/vk/RingBuffer.cpp"
+    "src/vk/Pipeline.cpp"
+    "src/vk/Init.cpp"
+    "src/vk/Resource.cpp"
     "src/vk/Shader.cpp"
     "src/vk/Swapchain.cpp"
+
+    "src/io/NativeFilesystem.cpp"
+    "src/io/VirtualFilesystem.cpp"
+    "src/io/File.cpp"
+    "src/io/SubFilesystem.cpp"
+    "src/io/MemoryFilesystem.cpp"
+    "src/io/Path.cpp"
 )
 add_library(engine ${ENGINE_SOURCE})
 target_link_libraries(engine PUBLIC spdlog nicecs::ecs glm assimp meshoptimizer cpptrace::cpptrace nlohmann_json::nlohmann_json Tracy::TracyClient)
 target_link_libraries(engine PUBLIC glfw volk GPUOpen::VulkanMemoryAllocator)
 target_link_libraries(engine PUBLIC glslang::glslang glslang::glslang-default-resource-limits spirv-reflect-static SPIRV-Headers SPIRV-Tools slang::slang)
 target_compile_definitions(engine PUBLIC GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_ENABLE_EXPERIMENTAL)
+target_include_directories(engine PUBLIC "include")
+target_include_directories(engine PUBLIC "vendor")
 target_include_directories(engine PRIVATE "src")
 
 if(glslang_FOUND)
@@ -107,8 +109,7 @@ if(slang_FOUND)
 target_compile_definitions(engine PRIVATE SHADER_ENABLE_SLANG)
 endif()
 
-add_executable(levulkan "src/main.cpp")
-target_link_libraries(levulkan PRIVATE engine)
-target_include_directories(levulkan PRIVATE "src")
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/include DESTINATION include)
+install(TARGETS engine DESTINATION lib)
 
 # add_subdirectory(tests)

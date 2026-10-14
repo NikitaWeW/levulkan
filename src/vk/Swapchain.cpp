@@ -1,8 +1,8 @@
-#include "Init.hpp"
-#include "Logging.hpp"
-#include "Utility.hpp"
-#include "vk/Resource.hpp"
-using namespace vk;
+#include "engine/io/Logging.hpp"
+#include "engine/vk/Init.hpp"
+#include "engine/vk/Utility.hpp"
+#include "engine/vk/Resource.hpp"
+using namespace egn::vk;
 
 static VkExtent2D chooseExtent(VkSurfaceCapabilitiesKHR capabilities, VkExtent2D size) {
     if(capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
@@ -44,10 +44,10 @@ static VkPresentModeKHR chooseSwapPresentMode(SwapchainCreateInfo const ci) {
 
     return VK_PRESENT_MODE_FIFO_KHR;
 }
-static void getImages(Swapchain &swapchain, Registry &reg) {
+static void getImages(Swapchain &swapchain, egn::Registry &reg) {
     // FIXME: what the hell is this
     for(auto &view : swapchain.images) {
-        vkDestroyImageView(swapchain.alloc.device, view.get<vk::Image>().view, nullptr);
+        vkDestroyImageView(swapchain.alloc.device, view.get<egn::vk::Image>().view, nullptr);
         reg.destroy(view);
     }
     swapchain.images.clear();
@@ -86,7 +86,7 @@ static void getImages(Swapchain &swapchain, Registry &reg) {
     }
 
     for(uint i = 0; i < imageCount; ++i) {
-        auto eImage = swapchain.images.emplace_back(reg.create(vk::Image{
+        auto eImage = swapchain.images.emplace_back(reg.create(egn::vk::Image{
             .image = images[i],
             .view = imageViews[i],
             .createInfo = {
@@ -111,18 +111,18 @@ static void getImages(Swapchain &swapchain, Registry &reg) {
             },
             .owns = false,
         }));
-        eImage.emplace<DebugName>(eImage.get<vk::Image>().createInfo.name);
+        eImage.emplace<egn::DebugName>(eImage.get<egn::vk::Image>().createInfo.name);
         VkDebugUtilsObjectNameInfoEXT name_info{
             .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
             .objectType = VK_OBJECT_TYPE_IMAGE,
             .objectHandle = (uint64_t) images[i],
-            .pObjectName = eImage.get<vk::Image>().createInfo.name.c_str(),
+            .pObjectName = eImage.get<egn::vk::Image>().createInfo.name.c_str(),
         };
         vkSetDebugUtilsObjectNameEXT(swapchain.alloc.device, &name_info);
     }
 }
 
-Swapchain vk::makeSwapchain(SwapchainCreateInfo const &ci) {
+Swapchain egn::vk::makeSwapchain(SwapchainCreateInfo const &ci) {
     if(!ci.alloc.surface) {
         LOG_ERROR("No surface provided for swapchain creation!");
         return { };
@@ -160,7 +160,7 @@ Swapchain vk::makeSwapchain(SwapchainCreateInfo const &ci) {
 
     return swapchain;
 }
-void vk::resizeSwapchain(Swapchain &swapchain, VkExtent2D size) {
+void egn::vk::resizeSwapchain(Swapchain &swapchain, VkExtent2D size) {
     swapchain.createInfo.oldSwapchain = swapchain.swapchain;
     swapchain.createInfo.imageExtent = size;
 
@@ -170,7 +170,7 @@ void vk::resizeSwapchain(Swapchain &swapchain, VkExtent2D size) {
     vkDestroySwapchainKHR(swapchain.alloc.device, swapchain.createInfo.oldSwapchain, nullptr);
 }
 
-void vk::destroy(Swapchain &swapchain) {
+void egn::vk::destroy(Swapchain &swapchain) {
     for(auto &image : swapchain.images) {
         vkDestroyImageView(swapchain.alloc.device, image.get<vk::Image>().view, nullptr);
     }

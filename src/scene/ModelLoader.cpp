@@ -1,0 +1,899 @@
+#include "engine/scene/Loaders.hpp"
+#include "engine/scene/Resources.hpp"
+
+#include <cstddef>
+#include <filesystem>
+
+#include "glm/ext/quaternion_geometric.hpp"
+#include "glm/gtc/quaternion.hpp"
+#include "glm/trigonometric.hpp"
+
+#include "assimp/Importer.hpp"
+#include "assimp/postprocess.h"
+#include "assimp/scene.h"
+#include "stb_image.h"
+#include "meshoptimizer.h"
+
+// Enable verbose loading by uncommenting the lines below.
+#include "engine/io/Logging.hpp"
+#define MODEL_LOADER_TRACE(...) LOG_TRACE(__VA_ARGS__)
+#ifndef MODEL_LOADER_TRACE
+#define MODEL_LOADER_TRACE(...)
+#endif
+
+// Scope profiler, enable tracy profiler by uncommenting the lines below.
+#include "tracy/Tracy.hpp"
+#define MODEL_LOADER_PROFILE ZoneScoped
+#ifndef MODEL_LOADER_PROFILE
+#define MODEL_LOADER_PROFILE
+#endif
+
+using namespace egn;
+
+constexpr glm::mat4 toMat4(aiMatrix4x4 const &from) {
+    glm::mat4 to{ };
+    // The a,b,c,d in assimp is the row ; the 1,2,3,4 is the column
+    to[0][0] = from.a1;
+    to[1][0] = from.a2;
+    to[2][0] = from.a3;
+    to[3][0] = from.a4;
+    to[0][1] = from.b1;
+    to[1][1] = from.b2;
+    to[2][1] = from.b3;
+    to[3][1] = from.b4;
+    to[0][2] = from.c1;
+    to[1][2] = from.c2;
+    to[2][2] = from.c3;
+    to[3][2] = from.c4;
+    to[0][3] = from.d1;
+    to[1][3] = from.d2;
+    to[2][3] = from.d3;
+    to[3][3] = from.d4;
+    return to;
+}
+constexpr glm::vec3 toVec3(aiVector3D const &aivector) { return glm::vec3{ (float) aivector.x, (float) aivector.y, (float) aivector.z }; }
+constexpr glm::vec3 toVec3(aiColor3D const &aivector) { return glm::vec3{ (float) aivector.r, (float) aivector.g, (float) aivector.b }; }
+constexpr glm::vec2 toVec2(aiVector2D const &aivector) { return glm::vec2((float) aivector.x, (float) aivector.y); }
+constexpr glm::quat toQuat(aiQuaternion const &aiquaternion) { return glm::quat{ aiquaternion.w, aiquaternion.x, aiquaternion.y, aiquaternion.z }; }
+// static float u8ToFloat(unsigned char v) { return v / 255.0f; }
+static glm::vec3 getColor(aiMaterial const *material, glm::vec3 defaultColor, const char *key, unsigned int type, unsigned int idx) {
+    aiColor3D color;
+    if(material->Get(key, type, idx, color) == AI_SUCCESS) {
+        return { color.r, color.g, color.b };
+    }
+
+    return defaultColor;
+}
+static glm::vec4 getColor(aiMaterial const *material, glm::vec4 defaultColor, const char *key, unsigned int type, unsigned int idx) {
+    aiColor4D color;
+    if(material->Get(key, type, idx, color) == AI_SUCCESS) {
+        return { color.r, color.g, color.b, color.a };
+    }
+
+    return defaultColor;
+}
+static float getColor(aiMaterial const *material, float defaultColor, const char *key, unsigned int type, unsigned int idx) {
+    float color;
+    if(material->Get(key, type, idx, color) == AI_SUCCESS) {
+        return color;
+    }
+
+    return defaultColor;
+}
+
+static void setMissingTextures(Material::Textures &material, Material::Textures const &defaultMaterial) {
+    if(!material.albedo)
+        material.albedo = defaultMaterial.albedo;
+    if(!material.metallic)
+        material.metallic = defaultMaterial.metallic;
+    if(!material.roughness)
+        material.roughness = defaultMaterial.roughness;
+    if(!material.ambient)
+        material.ambient = defaultMaterial.ambient;
+    if(!material.normal)
+        material.normal = defaultMaterial.normal;
+    if(!material.displacement)
+        material.displacement = defaultMaterial.displacement;
+}
+static aiNodeAnim const *findNodeAnim(aiAnimation const *animation, std::string_view nodeName) {
+    MODEL_LOADER_PROFILE;
+
+    for(unsigned i = 0; i < animation->mNumChannels; ++i) {
+        aiNodeAnim const *node = animation->mChannels[i];
+        if(std::string_view{ node->mNodeName.C_Str() } == nodeName)
+            return node;
+    }
+
+    return nullptr;
+}
+
+struct VertexResult {
+    bool indices = false;
+    bool positions = false;
+    bool uvs = false;
+    bool normals = false;
+    bool tangents = false;
+};
+// FIXME: probably wrong.
+static void calculateMissingPrimitives(Mesh::Geometry &mesh, VertexResult vertexRes) {
+    MODEL_LOADER_PROFILE;
+
+    assert(!mesh.positions.empty());
+
+    bool indexed = !mesh.indices.empty();
+    mesh.attributes.resize(mesh.positions.size());
+    if(!vertexRes.uvs) {
+        MODEL_LOADER_TRACE("Calculating missing texcoords");
+        for(size_t i = 0; i < (indexed ? mesh.indices.size() : mesh.positions.size()); ++i) {
+            unsigned index = indexed ? mesh.indices[i] : i;
+
+            mesh.attributes[index].uv = std::array<glm::vec2, 6>{
+                glm::vec2{ 0, 0 },
+                glm::vec2{ 0, 1 },
+                glm::vec2{ 1, 1 },
+                glm::vec2{ 1, 0 },
+                glm::vec2{ 1, 1 },
+                glm::vec2{ 0, 0 },
+            }[i % 6];
+        }
+    }
+
+    if(!vertexRes.normals) {
+        MODEL_LOADER_TRACE("Calculating missing normals");
+        for(size_t i = 0; i + 2 < (indexed ? mesh.indices.size() : mesh.positions.size()); i += 3) {
+            size_t i0 = indexed ? mesh.indices[i + 0] : i + 0;
+            size_t i1 = indexed ? mesh.indices[i + 1] : i + 1;
+            size_t i2 = indexed ? mesh.indices[i + 2] : i + 2;
+
+            glm::vec3 e1 = mesh.positions[i1] - mesh.positions[i0];
+            glm::vec3 e2 = mesh.positions[i2] - mesh.positions[i0];
+            glm::vec3 normal = glm::normalize(glm::cross(e1, e2));
+            mesh.attributes[i0].normal = normal;
+            mesh.attributes[i1].normal = normal;
+            mesh.attributes[i2].normal = normal;
+        }
+
+        vertexRes.tangents = false; // Recalculate tangents
+    }
+
+    if(!vertexRes.tangents) {
+        MODEL_LOADER_TRACE("Calculating missing tangents");
+        for(size_t i = 0; i + 2 < (indexed ? mesh.indices.size() : mesh.positions.size()); i += 3) {
+            size_t i0 = indexed ? mesh.indices[i + 0] : i + 0;
+            size_t i1 = indexed ? mesh.indices[i + 1] : i + 1;
+            size_t i2 = indexed ? mesh.indices[i + 2] : i + 2;
+
+            glm::vec3 edge1 = mesh.positions[i1] - mesh.positions[i0];
+            glm::vec3 edge2 = mesh.positions[i2] - mesh.positions[i0];
+            glm::vec2 deltaUV1 = mesh.attributes[i1].uv - mesh.attributes[i0].uv;
+            glm::vec2 deltaUV2 = mesh.attributes[i1].uv - mesh.attributes[i0].uv;
+
+            float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
+            glm::vec3 tangent = {
+                f * (deltaUV2.y * edge1.x - deltaUV1.y * edge2.x),
+                f * (deltaUV2.y * edge1.y - deltaUV1.y * edge2.y),
+                f * (deltaUV2.y * edge1.z - deltaUV1.y * edge2.z),
+            };
+            glm::vec3 normal = mesh.attributes[i0].normal;
+            tangent = glm::normalize(tangent - normal * glm::dot(normal, tangent));
+
+            mesh.attributes[i0].tangent = tangent;
+            mesh.attributes[i1].tangent = tangent;
+            mesh.attributes[i2].tangent = tangent;
+        }
+    }
+}
+static ModelLoaderOptions::WindingOrder flipWindingOrder(ModelLoaderOptions::WindingOrder order, bool flip) {
+    if(!flip)
+        return order;
+
+    if(order == ModelLoaderOptions::WindingOrder::CCW)
+        return ModelLoaderOptions::WindingOrder::CW;
+    if(order == ModelLoaderOptions::WindingOrder::CW)
+        return ModelLoaderOptions::WindingOrder::CCW;
+
+    return order;
+}
+static void setWindingOrder(Mesh::Geometry &mesh, ModelLoaderOptions::WindingOrder windingOrder) {
+    MODEL_LOADER_PROFILE;
+
+    if(windingOrder == ModelLoaderOptions::WindingOrder::Keep) {
+        return;
+    }
+
+    MODEL_LOADER_TRACE("Setting winding order to {}", windingOrder == ModelLoaderOptions::WindingOrder::CCW ? "CCW" : "CW");
+    uint debugChanged = 0;
+
+    for(size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        auto const &iA = mesh.indices[i + 0];
+        auto &iB = mesh.indices[i + 1];
+        auto &iC = mesh.indices[i + 2];
+
+        auto const &A = mesh.positions[iA];
+        auto const &B = mesh.positions[iB];
+        auto const &C = mesh.positions[iC];
+        auto const &N = mesh.attributes[iA].normal;
+
+        ModelLoaderOptions::WindingOrder triangleOrder;
+        if(glm::dot(glm::cross(B - A, C - A), N) < 0) {
+            triangleOrder = ModelLoaderOptions::WindingOrder::CW;
+        } else {
+            triangleOrder = ModelLoaderOptions::WindingOrder::CCW;
+        }
+
+        if(triangleOrder != windingOrder) {
+            std::swap(iB, iC);
+            ++debugChanged;
+        }
+    }
+
+    MODEL_LOADER_TRACE("{} triangles flipped!", debugChanged);
+}
+// TODO: LOD's
+// TODO: Generate adjacency info if needed here
+static void optimizeMesh(Mesh::Geometry &mesh) {
+    MODEL_LOADER_PROFILE;
+
+    Mesh::Geometry oldMesh = mesh;
+    bool indexed = !oldMesh.indices.empty();
+
+    size_t index_count = indexed ? oldMesh.indices.size() : oldMesh.positions.size();
+    size_t vertex_count = indexed ? oldMesh.positions.size() : index_count;
+    std::vector<meshopt_Stream> streams = {
+        meshopt_Stream{ oldMesh.positions.data(), sizeof(glm::vec3), sizeof(glm::vec3) },
+        meshopt_Stream{ oldMesh.attributes.data(), sizeof(Mesh::Geometry::Attributes), sizeof(Mesh::Geometry::Attributes) },
+    };
+
+    std::vector<unsigned int> remap(vertex_count);
+    size_t new_vertex_count = meshopt_generateVertexRemapMulti(remap.data(), indexed ? oldMesh.indices.data() : nullptr, index_count, vertex_count,
+        streams.data(), streams.size());
+    mesh.indices.resize(index_count);
+    mesh.positions.resize(new_vertex_count);
+    mesh.attributes.resize(new_vertex_count);
+    meshopt_remapIndexBuffer(mesh.indices.data(), indexed ? oldMesh.indices.data() : nullptr, index_count, remap.data());
+    meshopt_remapVertexBuffer(mesh.positions.data(), streams[0].data, vertex_count, streams[0].size, remap.data());
+    meshopt_remapVertexBuffer(mesh.attributes.data(), streams[1].data, vertex_count, streams[1].size, remap.data());
+    meshopt_optimizeVertexCache(mesh.indices.data(), mesh.indices.data(), index_count, new_vertex_count);
+    meshopt_optimizeOverdraw(mesh.indices.data(), mesh.indices.data(), index_count, &mesh.positions[0].x, new_vertex_count, sizeof(glm::vec3), 1.05f);
+
+    remap.resize(new_vertex_count);
+    meshopt_optimizeVertexFetchRemap(remap.data(), mesh.indices.data(), index_count, new_vertex_count);
+    meshopt_remapIndexBuffer(mesh.indices.data(), mesh.indices.data(), index_count, remap.data());
+    meshopt_remapVertexBuffer(mesh.positions.data(), mesh.positions.data(), new_vertex_count, sizeof(mesh.positions[0]), remap.data());
+    meshopt_remapVertexBuffer(mesh.attributes.data(), mesh.attributes.data(), new_vertex_count, sizeof(mesh.attributes[0]), remap.data());
+
+    if(oldMesh.indices.size() == mesh.indices.size() && oldMesh.positions.size() == mesh.positions.size() &&
+        oldMesh.attributes.size() == mesh.attributes.size())
+        MODEL_LOADER_TRACE("Optimized mesh. Nothing changed.");
+    else
+        MODEL_LOADER_TRACE("Optimized mesh. Had {} indices and {} vertices. Has {} indices, {} vertices and {} attributes", oldMesh.indices.size(),
+            oldMesh.positions.size(), mesh.indices.size(), mesh.positions.size(), mesh.attributes.size());
+}
+static void transformMesh(Mesh::Geometry &primitives, glm::mat4 const &mat) {
+    MODEL_LOADER_PROFILE;
+
+    if(mat == glm::mat4{ 1.0f })
+        return;
+
+    MODEL_LOADER_TRACE("Applying transformation to a mesh.");
+
+    glm::mat4 normalMat = glm::inverse(glm::transpose(mat));
+
+    for(auto &position : primitives.positions) {
+        position = mat * glm::vec4(position, 1);
+    }
+    for(auto &attr : primitives.attributes) {
+        attr.normal = normalMat * glm::vec4(attr.normal, 0);
+        attr.tangent = normalMat * glm::vec4(attr.tangent, 0);
+    }
+}
+
+static VertexResult extractVertexData(aiMesh const *aimesh, Mesh::Geometry &mesh) {
+    MODEL_LOADER_PROFILE;
+
+    VertexResult res;
+    res.positions = true; // idk lol
+    mesh.positions.reserve(aimesh->mNumVertices);
+    mesh.attributes.reserve(aimesh->mNumVertices);
+    mesh.indices.reserve(aimesh->mNumFaces * 3);
+    for(unsigned i = 0; i < aimesh->mNumVertices; ++i) {
+        mesh.positions.emplace_back(aimesh->mVertices[i].x, aimesh->mVertices[i].y, aimesh->mVertices[i].z);
+        auto &attr = mesh.attributes.emplace_back();
+        if(aimesh->HasNormals()) {
+            attr.normal = { aimesh->mNormals[i].x, aimesh->mNormals[i].y, aimesh->mNormals[i].z };
+            res.normals = true;
+        }
+        if(aimesh->HasTangentsAndBitangents()) {
+            attr.tangent = { aimesh->mTangents[i].x, aimesh->mTangents[i].y, aimesh->mTangents[i].z };
+            res.tangents = true;
+        }
+        if(aimesh->HasTextureCoords(0)) {
+            attr.uv = { aimesh->mTextureCoords[0][i].x, aimesh->mTextureCoords[0][i].y };
+            res.uvs = true;
+        }
+    }
+    for(unsigned i = 0; i < aimesh->mNumFaces; ++i) {
+        aiFace face = aimesh->mFaces[i];
+        assert(face.mNumIndices == 3); // Assimp should have triangulated the faces
+        for(unsigned j = 0; j < face.mNumIndices; ++j) {
+            mesh.indices.push_back(face.mIndices[j]);
+            res.indices = true;
+        }
+    }
+
+    return res;
+}
+static void extractBoneData(aiMesh const *aimesh, Mesh::Geometry &mesh, Model::Skeleton &skeleton) {
+    MODEL_LOADER_PROFILE;
+
+    // i hate it -- april 2025
+    // it works -- october 2025
+    // i hate my life -- september 2026
+    assert(mesh.attributes.size() == mesh.positions.size());
+    for(unsigned boneIndex = 0; boneIndex < aimesh->mNumBones; ++boneIndex) {
+        int boneID = -1;
+        aiBone const *bone = aimesh->mBones[boneIndex];
+        std::string boneName = bone->mName.C_Str();
+        if(skeleton.boneMap.find(boneName) == skeleton.boneMap.end()) {
+            unsigned id = skeleton.boneMap.size();
+            skeleton.bindTransform.emplace_back(toMat4(bone->mOffsetMatrix));
+            skeleton.boneMap.try_emplace(boneName, id);
+            boneID = id;
+        } else {
+            boneID = skeleton.boneMap.at(boneName);
+        }
+        assert(boneID != -1);
+
+        for(unsigned weightIndex = 0; weightIndex < bone->mNumWeights; ++weightIndex) {
+            unsigned vertexID = bone->mWeights[weightIndex].mVertexId;
+            assert(vertexID < mesh.positions.size());
+            // record it in the first uninitialized slot
+            for(unsigned i = 0; i < 4; ++i) {
+                auto &attr = mesh.attributes[vertexID];
+                if(attr.boneIDs[i] == -1) {
+                    attr.boneIDs[i] = boneID;
+                    attr.weights[i] = bone->mWeights[weightIndex].mWeight;
+                    break;
+                }
+            }
+        }
+    }
+}
+static void normalizeWeights(Mesh::Geometry &geometry) {
+    MODEL_LOADER_PROFILE;
+
+    for(auto &attr : geometry.attributes) {
+        if(attr.weights[0] + attr.weights[1] + attr.weights[2] + attr.weights[3] > 1e-6f)
+            attr.weights /= attr.weights[0] + attr.weights[1] + attr.weights[2] + attr.weights[3];
+    }
+}
+
+struct egn::ModelLoaderImpl {
+    Material mDefaultMaterial;
+    ModelLoaderOptions mOptions;
+    TextureLoader mTextureLoader;
+
+    uint mFlags = 0; // Assimp flags used when loading
+    aiScene const *mScene = nullptr;
+    Model *mModel = nullptr;
+    ecs::registry *mRegistry = nullptr;
+
+    // === === === ===
+    ModelLoaderImpl(ecs::registry &reg);
+    ecs::entity fromRawAssimpTexture(aiTexture const *texture);
+    void loadMaterialTexture(aiMaterial const *material, aiTextureType const type, ecs::entity &out);
+    Material convertMaterial(aiMaterial const *aimaterial, Material::Properties const &defaultProperties);
+    Mesh processMesh(aiMesh const *aimesh, glm::mat4 const &transform);
+    ecs::entity load();
+    void processNodeMeshes(aiNode const *node, glm::mat4 parentTransform = glm::mat4{ 1.0f });
+    Animation processAnimation(aiAnimation const *animation);
+    ecs::entity processLight(aiLight const *light);
+};
+
+ModelLoaderImpl::ModelLoaderImpl(ecs::registry &reg) {
+    MODEL_LOADER_PROFILE;
+
+    mRegistry = &reg;
+    ecs::entity white = 0;
+    ecs::entity normal = 0;
+    ecs::entity black = 0;
+    ecs::entity tile = 0;
+
+    for(ecs::entity e_texture : mRegistry->view<Texture2D>()) {
+        auto &texture = mRegistry->get<Texture2D>(e_texture);
+
+        if(texture.path == "default/white")
+            white = e_texture;
+        if(texture.path == "default/normal")
+            normal = e_texture;
+        if(texture.path == "default/black")
+            black = e_texture;
+        if(texture.path == "default/tile")
+            tile = e_texture;
+    }
+
+    if(!white)
+        white = mRegistry->create(Texture{
+            .bitmap =
+                Bitmap<unsigned char>{
+                    .pixels = { 255, 255, 255 },
+                    .numComponents = 3,
+                    .size = { 1, 1 },
+                },
+            .path = "default/white",
+            .srgb = false,
+        });
+    if(!normal)
+        normal = mRegistry->create(Texture{
+            .bitmap =
+                Bitmap<unsigned char>{
+                    .pixels = { 128, 128, 255 },
+                    .numComponents = 3,
+                    .size = { 1, 1 },
+                },
+            .path = "default/normal",
+            .srgb = false,
+        });
+    if(!black)
+        black = mRegistry->create(Texture{
+            .bitmap =
+                Bitmap<unsigned char>{
+                    .pixels = { 0, 0, 0 },
+                    .numComponents = 3,
+                    .size = { 1, 1 },
+                },
+            .path = "default/black",
+            .srgb = false,
+        });
+    if(!tile)
+        tile = mRegistry ->create(Texture{
+            .bitmap = Bitmap<unsigned char>{
+                .pixels = { 
+                        // clang-format off
+                        255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 
+                        128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 
+                        255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 
+                        128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 
+                        255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 
+                        128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 
+                        255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 
+                        128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255, 128, 128, 128, 255, 255, 255 
+                        // clang-format on
+                    },
+                    .numComponents = 3,
+                    .size = { 8, 8 },
+                },
+                .path = "default/tile",
+                .srgb = true,
+            }
+        );
+
+    mDefaultMaterial = {
+        .textures = {
+            .albedo = tile,
+            .metallic = black,
+            .roughness = black,
+            .ambient = white,
+            .normal = normal,
+            .displacement = black,
+        },
+        .properties = {
+            .ambient = {0.1f, 0.1f, 0.1f},
+            .albedo = {1.0f, 1.0f, 1.0f, 1.0f},
+            .specular = {0.5f, 0.5f, 0.5f},
+            .emission = {0.0f, 0.0f, 0.0f},
+
+            .shininess = 32.0f,
+            .metallic = 1.0f,
+            .roughness = 1.0f,
+            .ior = 1.5f,
+        },
+    };
+}
+
+Material ModelLoader::getDefaultMaterial() const {
+    assert(mImpl && "Invalid loader! (make sure to not use default constructor when making an actual loader)");
+    if(!mImpl) {
+        LOG_ERROR("Invalid model loader! (make sure to not use default constructor when making an actual loader)");
+        return { };
+    }
+
+    return mImpl->mDefaultMaterial;
+}
+ecs::entity ModelLoaderImpl::fromRawAssimpTexture(aiTexture const *texture) {
+    MODEL_LOADER_PROFILE;
+
+    assert(texture->mHeight == 0);
+    unsigned const width = static_cast<unsigned>(texture->mWidth);
+    unsigned const height = static_cast<unsigned>(texture->mHeight);
+
+    if(!texture->pcData) {
+        LOG_ERROR("aiTexture has no texel data");
+        return INVALID_ENTITY;
+    }
+
+    Texture2D result;
+    result.bitmap = Bitmap<unsigned char>{ .numComponents = 4, .size = { width, height } };
+    // result.path = "raw resource " + stringID() + " aiTexture " + texture->mFilename.C_Str();
+
+    for(size_t i = 0; i < width * height; ++i) {
+        aiTexel const &texel = texture->pcData[i];
+        glm::uvec2 pixel{ static_cast<unsigned>(i % width), static_cast<unsigned>(i / width) };
+        *reinterpret_cast<glm::vec<4, unsigned char> *>(&result.bitmap.pixels[result.bitmap.offsetOf(pixel)]) = { /* u8ToFloat */ (texel.r),
+            /* u8ToFloat */ (texel.g),
+            /* u8ToFloat */ (texel.b),
+            /* u8ToFloat */ (texel.a) };
+    }
+
+    return mRegistry->create(std::move(result));
+}
+void ModelLoaderImpl::loadMaterialTexture(aiMaterial const *material, aiTextureType const type, ecs::entity &out) {
+    MODEL_LOADER_PROFILE;
+
+    if(material->GetTextureCount(type) == 0 || out)
+        return;
+
+    // load the first texture (multiple texture of the same type are not supported)
+    std::string directory = std::filesystem::path{ mModel->path }.parent_path().string();
+    aiString str;
+    if(material->GetTexture(type, 0, &str) != AI_SUCCESS)
+        return;
+    bool srgb = type == aiTextureType_DIFFUSE;
+
+    aiTexture const *embedded = mScene->GetEmbeddedTexture(str.C_Str());
+    if(embedded) {
+        if(embedded->mHeight == 0) {
+            MODEL_LOADER_TRACE("Loading embedded compressed texture \"{}\"", embedded->mFilename.C_Str());
+            out = mTextureLoader.loadFromMemory(embedded->pcData, embedded->mWidth, mOptions.textureOptions);
+            mRegistry->get<Texture2D>(out).path = embedded->mFilename.C_Str();
+        } else {
+            MODEL_LOADER_TRACE("Loading embedded raw texture \"{}\"", embedded->mFilename.C_Str());
+            out = fromRawAssimpTexture(embedded);
+        }
+    } else {
+        std::string filepath = directory + '/' + str.C_Str();
+
+        MODEL_LOADER_TRACE("Loading file texture \"{}\"", filepath);
+        out = mTextureLoader.loadFromFile(filepath, mOptions.textureOptions);
+    }
+
+    if(out) {
+        auto &tex = mRegistry->get<Texture2D>(out);
+        tex.srgb = srgb;
+    }
+}
+Material ModelLoaderImpl::convertMaterial(aiMaterial const *aimaterial, Material::Properties const &defaultProperties) {
+    MODEL_LOADER_PROFILE;
+
+    Material material;
+
+    // https://github.com/assimp/assimp/issues/430
+    loadMaterialTexture(aimaterial, aiTextureType_DIFFUSE, material.textures.albedo);
+    loadMaterialTexture(aimaterial, aiTextureType_NORMALS, material.textures.normal);
+    loadMaterialTexture(aimaterial, aiTextureType_HEIGHT, material.textures.normal);
+    loadMaterialTexture(aimaterial, aiTextureType_DISPLACEMENT, material.textures.displacement);
+    loadMaterialTexture(aimaterial, aiTextureType_AMBIENT_OCCLUSION, material.textures.ambient);
+    loadMaterialTexture(aimaterial, aiTextureType_DIFFUSE_ROUGHNESS, material.textures.roughness);
+    loadMaterialTexture(aimaterial, aiTextureType_METALNESS, material.textures.metallic);
+
+    material.properties = { .ambient = getColor(aimaterial, defaultProperties.ambient, AI_MATKEY_COLOR_AMBIENT),
+        .albedo = getColor(aimaterial, defaultProperties.albedo, AI_MATKEY_COLOR_DIFFUSE),
+        .specular = getColor(aimaterial, defaultProperties.specular, AI_MATKEY_COLOR_SPECULAR),
+        .emission = getColor(aimaterial, defaultProperties.emission, AI_MATKEY_COLOR_EMISSIVE),
+
+        .shininess = getColor(aimaterial, defaultProperties.shininess, AI_MATKEY_SHININESS),
+        .metallic = getColor(aimaterial, defaultProperties.metallic, AI_MATKEY_METALLIC_FACTOR),
+        .roughness = getColor(aimaterial, defaultProperties.roughness, AI_MATKEY_ROUGHNESS_FACTOR),
+        .ior = getColor(aimaterial, defaultProperties.ior, AI_MATKEY_REFRACTI) };
+
+    return material;
+}
+
+Mesh ModelLoaderImpl::processMesh(aiMesh const *aimesh, glm::mat4 const &transform) {
+    MODEL_LOADER_PROFILE;
+
+    MODEL_LOADER_TRACE("Loading mesh \"{}\"", aimesh->mName.C_Str());
+    Mesh mesh;
+    auto vertexRes = extractVertexData(aimesh, mesh.geometry);
+
+    if(aimesh->HasBones()) {
+        extractBoneData(aimesh, mesh.geometry, mModel->skeleton);
+        normalizeWeights(mesh.geometry);
+    }
+
+    if(!mScene->HasMaterials()) {
+        mesh.material = mDefaultMaterial;
+    } else {
+        aiMaterial const *aimaterial = mScene->mMaterials[aimesh->mMaterialIndex];
+        mesh.material = convertMaterial(aimaterial, mDefaultMaterial.properties);
+        setMissingTextures(mesh.material.textures, mDefaultMaterial.textures);
+    }
+
+    calculateMissingPrimitives(mesh.geometry, vertexRes);
+    setWindingOrder(mesh.geometry, flipWindingOrder(mOptions.windingOrder, mOptions.flipHandiness));
+    optimizeMesh(mesh.geometry);
+
+    // Apply transformation only for meshes.
+    // Models with bones should use the bone transformations.
+    if(!aimesh->HasBones())
+        transformMesh(mesh.geometry, transform);
+
+    return mesh;
+}
+void ModelLoaderImpl::processNodeMeshes(aiNode const *node, glm::mat4 parentTransform) {
+    MODEL_LOADER_PROFILE;
+
+    MODEL_LOADER_TRACE("Processing node \"{}\"", node->mName.C_Str());
+    glm::mat4 nodeTransform = parentTransform * toMat4(node->mTransformation);
+    for(unsigned i = 0; i < node->mNumMeshes; ++i) {
+        mModel->meshes.emplace_back(processMesh(mScene->mMeshes[node->mMeshes[i]], nodeTransform));
+    }
+    for(unsigned i = 0; i < node->mNumChildren; ++i) {
+        processNodeMeshes(node->mChildren[i], nodeTransform);
+    }
+}
+
+void processAnimationNode(Animation &result, aiAnimation const *animation, Model::Skeleton const &skeleton, aiNode const *node) {
+    MODEL_LOADER_PROFILE;
+
+    std::string nodeName = node->mName.C_Str();
+    aiNodeAnim const *nodeAnim = findNodeAnim(animation, nodeName);
+
+    if(nodeAnim && skeleton.boneMap.find(nodeName) != skeleton.boneMap.end()) {
+        auto &keyframes = result.bones.at(skeleton.boneMap.at(nodeName));
+        for(unsigned i = 0; i < nodeAnim->mNumPositionKeys; ++i) {
+            auto const &key = nodeAnim->mPositionKeys[i];
+            keyframes.positions.emplace_back(Animation::PositionKey{ .value = toVec3(key.mValue), .timeTicks = static_cast<float>(key.mTime) });
+        }
+        for(unsigned i = 0; i < nodeAnim->mNumRotationKeys; ++i) {
+            auto const &key = nodeAnim->mRotationKeys[i];
+            keyframes.orientations.emplace_back(Animation::OrientationKey{ .value = glm::normalize(toQuat(key.mValue)),
+                .timeTicks = static_cast<float>(key.mTime) });
+        }
+        for(unsigned i = 0; i < nodeAnim->mNumScalingKeys; ++i) {
+            auto const &key = nodeAnim->mScalingKeys[i];
+            keyframes.scales.emplace_back(Animation::ScaleKey{ .value = toVec3(key.mValue), .timeTicks = static_cast<float>(key.mTime) });
+        }
+    }
+
+    for(unsigned i = 0; i < node->mNumChildren; ++i) {
+        processAnimationNode(result, animation, skeleton, node->mChildren[i]);
+    }
+}
+Animation ModelLoaderImpl::processAnimation(aiAnimation const *animation) {
+    MODEL_LOADER_PROFILE;
+
+    MODEL_LOADER_TRACE("Processing animation \"{}\"", animation->mName.C_Str());
+
+    Animation result;
+    result.durationTicks = (float) animation->mDuration;
+    result.ticksPerSecond = (animation->mTicksPerSecond > 0) ? (float) animation->mTicksPerSecond : 24.0f;
+    result.name = animation->mName.C_Str();
+    result.bones.resize(mModel->skeleton.boneMap.size());
+
+    processAnimationNode(result, animation, mModel->skeleton, mScene->mRootNode);
+
+    for(auto &bone : result.bones) {
+        std::sort(bone.positions.begin(), bone.positions.end(),
+            [](Animation::PositionKey const &first, Animation::PositionKey const &second) { return first.timeTicks < second.timeTicks; });
+        std::sort(bone.orientations.begin(), bone.orientations.end(),
+            [](Animation::OrientationKey const &first, Animation::OrientationKey const &second) { return first.timeTicks < second.timeTicks; });
+        std::sort(bone.scales.begin(), bone.scales.end(),
+            [](Animation::ScaleKey const &first, Animation::ScaleKey const &second) { return first.timeTicks < second.timeTicks; });
+    }
+
+    return result;
+}
+
+void calculateParent(Model::Skeleton &skeleton, aiNode const *node, int parent) {
+    MODEL_LOADER_PROFILE;
+
+    std::string nodeName = node->mName.C_Str();
+
+    if(skeleton.boneMap.find(nodeName) != skeleton.boneMap.end()) {
+        unsigned bone = skeleton.boneMap.at(nodeName);
+        skeleton.parents.at(bone) = parent;
+        skeleton.nodeTransform.at(bone) = toMat4(node->mTransformation);
+        parent = bone;
+    }
+
+    for(unsigned i = 0; i < node->mNumChildren; ++i) {
+        calculateParent(skeleton, node->mChildren[i], parent);
+    }
+}
+ecs::entity ModelLoaderImpl::processLight([[maybe_unused]] aiLight const *light) {
+    MODEL_LOADER_PROFILE;
+
+    return 0;
+    // switch(light->mType)
+    // {
+    // case aiLightSource_POINT:
+    //     return mRegistry->create(
+    //         PointLight{
+    //             .color = toVec3(light->mColorDiffuse) * (1.0f / (light->mAttenuationQuadratic))
+    //         },
+    //         Transform{
+    //             .position = toVec3(light->mPosition)
+    //         }
+    //     );
+    // case aiLightSource_DIRECTIONAL:
+    //     return mRegistry->create(
+    //         DirectionalLight{
+    //             .color = toVec3(light->mColorDiffuse) * (1.0f / (light->mAttenuationQuadratic))
+    //         },
+    //         Transform{
+    //             .orientation = glm::quatLookAt(glm::normalize(toVec3(light->mDirection)), glm::normalize(toVec3(light->mUp)))
+    //             // .orientation = glm::quatLookAt(toVec3(light->mDirection), glm::abs(glm::dot(toVec3(light->mDirection), glm::vec3{0, 1, 0})) > 0.999 ? glm::vec3{1, 0, 0} : glm::vec3{0, 1, 0})
+    //         }
+    //     );
+    // case aiLightSource_SPOT:
+    //     return mRegistry->create(
+    //         SpotLight{
+    //             .color = toVec3(light->mColorDiffuse) * (1.0f / (light->mAttenuationQuadratic)),
+    //             .innerConeAngle = glm::degrees(light->mAngleInnerCone),
+    //             .outerConeAngle = glm::degrees(light->mAngleOuterCone)
+    //         },
+    //         Transform{
+    //             .position = toVec3(light->mPosition),
+    //             .orientation = glm::quatLookAt(glm::normalize(toVec3(light->mDirection)), glm::normalize(toVec3(light->mUp)))
+    //         }
+    //     );
+    // case aiLightSource_AREA:
+    //     return mRegistry->create(
+    //         AreaLight{
+    //             .color = toVec3(light->mColorDiffuse) * (1.0f / (light->mAttenuationQuadratic)),
+    //             .size = toVec2(light->mSize)
+    //         },
+    //         Transform{
+    //             .position = toVec3(light->mPosition),
+    //             .orientation = glm::quatLookAt(glm::normalize(toVec3(light->mDirection)), glm::normalize(toVec3(light->mUp)))
+    //         }
+    //     );
+    // default:
+    //     ENGINE_CORE_WARN("Unknown assimp light type: {}", (int) light->mType);
+    //     return 0;
+    // }
+}
+
+ecs::entity ModelLoaderImpl::load() {
+    MODEL_LOADER_PROFILE;
+
+    if(mScene->HasMeshes())
+        MODEL_LOADER_TRACE("Loading {} meshes.", mScene->mNumMeshes);
+    if(mScene->HasAnimations())
+        MODEL_LOADER_TRACE("Loading {} animations.", mScene->mNumAnimations);
+
+    processNodeMeshes(mScene->mRootNode);
+
+    MODEL_LOADER_TRACE("Model has {} bones.", mModel->skeleton.boneMap.size());
+
+    mModel->skeleton.globalInverseTransform = glm::inverse(toMat4(mScene->mRootNode->mTransformation));
+    mModel->skeleton.parents.resize(mModel->skeleton.boneMap.size());
+    mModel->skeleton.nodeTransform.resize(mModel->skeleton.boneMap.size());
+    calculateParent(mModel->skeleton, mScene->mRootNode, -1);
+
+    for(unsigned i = 0; i < mScene->mNumAnimations; ++i) {
+        mModel->animations.emplace_back(processAnimation(mScene->mAnimations[i]));
+    }
+    for(unsigned i = 0; i < mScene->mNumLights; ++i) {
+        mModel->lights.emplace_back(processLight(mScene->mLights[i]));
+    }
+
+    // TODO: morph targets
+
+    auto eModel = mRegistry->create(std::move(*mModel));
+    mModel = nullptr;
+    return eModel;
+}
+
+ModelLoader::ModelLoader(ecs::registry &reg) {
+    mImpl = new ModelLoaderImpl{ reg };
+    mImpl->mTextureLoader = TextureLoader{ *mImpl->mRegistry };
+}
+ModelLoader::ModelLoader(ModelLoader const &o) { *this = o; }
+ModelLoader &ModelLoader::operator=(ModelLoader const &o) {
+    if(o.mImpl)
+        mImpl = new ModelLoaderImpl(*o.mImpl);
+
+    return *this;
+}
+ModelLoader::~ModelLoader() {
+    if(mImpl)
+        delete mImpl;
+}
+static uint setFlags(ModelLoaderOptions options, Assimp::Importer &importer) {
+    unsigned flags = aiProcess_SplitLargeMeshes | aiProcess_GenUVCoords | aiProcess_FindInvalidData | aiProcess_CalcTangentSpace |
+                     aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_SortByPType | aiProcess_OptimizeGraph |
+                     aiProcess_ValidateDataStructure;
+
+    importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
+    importer.SetPropertyInteger(AI_CONFIG_PP_LBW_MAX_WEIGHTS, 4);
+    flags |= aiProcess_LimitBoneWeights;
+
+    options.smoothNormalAngle = glm::clamp(options.smoothNormalAngle, 0.0f, 175.0f);
+    if(options.smoothNormalAngle >= 1e-6) {
+        MODEL_LOADER_TRACE("Smooth normal angle is {}: recalculating normals.", options.smoothNormalAngle);
+        flags |= aiProcess_GenSmoothNormals;
+        flags |= aiProcess_RemoveComponent;
+        importer.SetPropertyFloat(AI_CONFIG_PP_GSN_MAX_SMOOTHING_ANGLE, options.smoothNormalAngle);
+        importer.SetPropertyInteger(AI_CONFIG_PP_RVC_FLAGS, aiComponent_NORMALS | aiComponent_TANGENTS_AND_BITANGENTS);
+    } else {
+        flags |= aiProcess_GenNormals;
+    }
+    if(options.flipWindingOrder) {
+        flags |= aiProcess_FlipWindingOrder;
+    }
+    if(options.flipUVs) {
+        flags |= aiProcess_FlipUVs;
+    }
+    MODEL_LOADER_TRACE("Flip uvs: {}; flip winding order: {}", static_cast<bool>(flags & aiProcess_FlipUVs),
+        static_cast<bool>(flags & aiProcess_FlipWindingOrder));
+
+    return flags;
+}
+ecs::entity ModelLoader::loadFromFile(std::string_view path, ModelLoaderOptions options) {
+    MODEL_LOADER_PROFILE;
+
+    assert(mImpl && "Invalid loader! (make sure to not use default constructor when making an actual loader)");
+    for(auto e_model : mImpl->mRegistry->view<Model>())
+        if(mImpl->mRegistry->get<Model>(e_model).path == path)
+            return e_model;
+
+    MODEL_LOADER_TRACE("---");
+    MODEL_LOADER_TRACE("Loading model \"{}\"", path);
+    Assimp::Importer importer;
+    mImpl->mFlags = setFlags(options, importer);
+    mImpl->mScene = importer.ReadFile(std::string{ path }, mImpl->mFlags);
+
+    if(!mImpl->mScene) {
+        LOG_ERROR("Error parsing \"{}\": {}", path, importer.GetErrorString());
+        return INVALID_ENTITY;
+    }
+
+    Model model;
+    model.path = path;
+
+    mImpl->mModel = &model;
+    mImpl->mOptions = options;
+
+    auto eModel = mImpl->load();
+
+    mImpl->mScene = nullptr;
+    mImpl->mFlags = 0;
+    mImpl->mModel = nullptr;
+    mImpl->mOptions = { };
+    return eModel;
+}
+ecs::entity ModelLoader::loadFromMemory(void const *data, size_t size, ModelLoaderOptions options) {
+    MODEL_LOADER_PROFILE;
+
+    assert(mImpl && "Invalid loader! (make sure to not use default constructor when making an actual loader)");
+    if(!mImpl) {
+        LOG_ERROR("Invalid model loader! (make sure to not use default constructor when making an actual loader)");
+        return 0;
+    }
+    MODEL_LOADER_TRACE("---");
+    MODEL_LOADER_TRACE("Loading model from memory");
+    Assimp::Importer importer;
+    mImpl->mFlags = setFlags(options, importer);
+    mImpl->mScene = importer.ReadFileFromMemory(data, size, mImpl->mFlags);
+
+    if(!mImpl->mScene) {
+        LOG_ERROR("Error parsing from memory: {}", importer.GetErrorString());
+        return INVALID_ENTITY;
+    }
+
+    Model model;
+    model.path = "";
+
+    mImpl->mModel = &model;
+    mImpl->mOptions = options;
+
+    auto eModel = mImpl->load();
+
+    mImpl->mScene = nullptr;
+    mImpl->mFlags = 0;
+    mImpl->mModel = nullptr;
+    mImpl->mOptions = { };
+    return eModel;
+}

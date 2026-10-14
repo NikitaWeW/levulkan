@@ -1,10 +1,10 @@
 // WARNING: nested spaghetti code incoming (works on hopes and dreams, or not)
 
-#include "Pipeline.hpp"
-#include "Utility.hpp"
-#include "Logging.hpp"
+#include "engine/vk/Pipeline.hpp"
+#include "engine/vk/Utility.hpp"
+#include "engine/io/Logging.hpp"
 
-using namespace vk;
+using namespace egn::vk;
 
 static constexpr std::string string_SpvReflectResult(SpvReflectResult res) {
     switch(res) {
@@ -98,8 +98,8 @@ static constexpr VkFormat toVulkanFormat(SpvReflectFormat const &format) {
 struct Reflection {
     std::unordered_map<std::string, DescriptorBinding> descriptorNames;
     std::vector<VkPipelineShaderStageCreateInfo> stages;
-    std::map<uint32_t, SparseSet<VkDescriptorSetLayoutBinding>> descSets;
-    std::map<uint32_t, SparseSet<VkDescriptorBindingFlags>> descFlags;
+    std::map<uint32_t, egn::SparseSet<VkDescriptorSetLayoutBinding>> descSets;
+    std::map<uint32_t, egn::SparseSet<VkDescriptorBindingFlags>> descFlags;
     std::map<DescriptorBinding, SpvReflectDescriptorBinding> descBindings;
     std::map<std::pair<uint32_t, uint32_t>, VkPushConstantRange> pushConstants;
     std::unordered_map<uint32_t, VkFormat> input;
@@ -268,7 +268,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
 
     return layout;
 }
-Pipeline vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout, GraphicsPipelineCreateInfo const &ci) {
+Pipeline egn::vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout, GraphicsPipelineCreateInfo const &ci) {
     auto const &dev = shader.createInfo.device;
 
     Pipeline pipeline{
@@ -379,7 +379,7 @@ Pipeline vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout,
     pipeline.valid = true;
     return pipeline;
 }
-Pipeline vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout, ComputePipelineCreateInfo const &ci) {
+Pipeline egn::vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout, ComputePipelineCreateInfo const &ci) {
     auto const &dev = shader.createInfo.device;
 
     Pipeline pipeline{
@@ -407,7 +407,7 @@ Pipeline vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout,
     pipeline.valid = true;
     return pipeline;
 }
-Pipeline vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout, RaytracingPipelineCreateInfo const &ci) {
+Pipeline egn::vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout, RaytracingPipelineCreateInfo const &ci) {
     auto const &dev = shader.createInfo.device;
 
     Pipeline pipeline{
@@ -428,7 +428,7 @@ Pipeline vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo layout,
     return pipeline;
 }
 
-void vk::allocateDescriptors(vk::Pipeline &pipeline, DescriptorAllocationInfo ci) {
+void egn::vk::allocateDescriptors(vk::Pipeline &pipeline, DescriptorAllocationInfo ci) {
     assert(ci.numFrames != 0);
     assert(pipeline._reflection);
     auto const &reflection = *static_cast<Reflection *>(pipeline._reflection);
@@ -491,7 +491,7 @@ void vk::allocateDescriptors(vk::Pipeline &pipeline, DescriptorAllocationInfo ci
         }
     }
 }
-bool vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite> const &writes, uint32_t frame) {
+bool egn::vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite> const &writes, uint32_t frame) {
     if(frame >= pipeline.descriptorSets.sets.size()) {
         LOG_ERROR("vk::writeDescriptors: Frame {} is outside of descriptor frames with size of {}!", frame, pipeline.descriptorSets.sets.size());
         LOG_WARN("Have you forgot to call vk::allocateDescriptors?");
@@ -533,7 +533,7 @@ bool vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite>
 
     return true;
 }
-bool vk::bindDescriptorSet(VkCommandBuffer cb, Pipeline const &pipeline, uint32_t set, uint32_t frame, std::vector<uint32_t> offsets) {
+bool egn::vk::bindDescriptorSet(VkCommandBuffer cb, Pipeline const &pipeline, uint32_t set, uint32_t frame, std::vector<uint32_t> offsets) {
     if(frame >= pipeline.descriptorSets.sets.size()) {
         LOG_ERROR(
             "vk::bindDescriptorSet: Frame {} is outside of descriptor frames with size of {}! (Have you forgot to call vk::allocateDescriptors?)",
@@ -582,7 +582,7 @@ bool vk::bindDescriptorSet(VkCommandBuffer cb, Pipeline const &pipeline, uint32_
     return true;
 }
 
-void vk::destroy(Pipeline &pipeline) {
+void egn::vk::destroy(Pipeline &pipeline) {
     if(!pipeline.device)
         return;
 
