@@ -194,7 +194,7 @@ static bool loadModelTo(std::string_view path, std::vector<Entity> &to, std::opt
 }
 static void dumpModels(std::string_view dir) {
     std::ofstream modelStr(std::string(dir.data()) + "/models.txt");
-    for(DirectEntity<Model> e : sReg.view<Model>()) {
+    for(RestrictedEntity<Model> e : sReg.view<Model>()) {
         modelStr << printModelData(e) << "Geometry dumps:\n";
         for(uint i = 0; i < e->meshes.size(); ++i) {
             auto const &mesh = e->meshes[i].geometry;
@@ -335,7 +335,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         return -1;
     }
 
-    DirectEntity<Window> window = makeWindow(sReg, "levulkan");
+    RestrictedEntity<Window> window = makeWindow(sReg, "levulkan");
 
     vk::InitInfo initInfo{
         .appName = "levulkan",
@@ -395,7 +395,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     VkSharingMode const SHARING_MODE = initRes.queueFamilies.uniqueFamilies.size() == 1 ? VK_SHARING_MODE_EXCLUSIVE : VK_SHARING_MODE_CONCURRENT;
     LOG_TRACE("SHARING_MODE={}", string_VkSharingMode(SHARING_MODE));
 
-    DirectEntity<vk::Swapchain> swapchain = sReg.create(vk::makeSwapchain(
+    RestrictedEntity<vk::Swapchain> swapchain = sReg.create(vk::makeSwapchain(
         {
             .alloc = {
                 .device = device,
@@ -480,7 +480,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     uint imageIndex = 0;
     float deltatime = 1e-6;
 
-    DirectEntity<Controller::Camera> eCamera = Controller::createCamera(sReg, { 0, 2, 4 }, { 0, 0, 0 });
+    RestrictedEntity<Controller::Camera> eCamera = Controller::createCamera(sReg, { 0, 2, 4 }, { 0, 0, 0 });
 
     [[maybe_unused]] VkPipelineColorBlendAttachmentState constexpr ALPHA_BLENDING{ .blendEnable = true,
         .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
@@ -567,14 +567,14 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     TracyVkCtx *currentTracyContext = nullptr;
 
     struct gbuffer_data {
-        DirectEntity<vk::Pipeline> pipeline;
-        DirectEntity<vk::Shader> shader;
+        RestrictedEntity<vk::Pipeline> pipeline;
+        RestrictedEntity<vk::Shader> shader;
 
-        DirectEntity<vk::Image> albedo;
-        DirectEntity<vk::Image> position;
-        DirectEntity<vk::Image> normal;
-        DirectEntity<vk::Image> pbr;
-        DirectEntity<vk::Image> depth;
+        RestrictedEntity<vk::Image> albedo;
+        RestrictedEntity<vk::Image> position;
+        RestrictedEntity<vk::Image> normal;
+        RestrictedEntity<vk::Image> pbr;
+        RestrictedEntity<vk::Image> depth;
     };
     builder.addPass<gbuffer_data>(
         "gbuffer",
@@ -864,10 +864,10 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         }
     );
     struct lighting_data {
-        DirectEntity<vk::Pipeline> pipeline;
-        DirectEntity<vk::Shader> shader;
+        RestrictedEntity<vk::Pipeline> pipeline;
+        RestrictedEntity<vk::Shader> shader;
 
-        DirectEntity<vk::Image> output;
+        RestrictedEntity<vk::Image> output;
     };
     builder.addPass<lighting_data>(
         "lighting",
@@ -1037,8 +1037,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     );
 
     struct swapchain_blit_data {
-        DirectEntity<vk::Image> lighting_out;
-        DirectEntity<vk::Image> swapchainImage;
+        RestrictedEntity<vk::Image> lighting_out;
+        RestrictedEntity<vk::Image> swapchainImage;
     };
     builder.addPass<swapchain_blit_data>(
         "swapchain_blit",
@@ -1430,41 +1430,41 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             vk::destroy(mesh.buffers.idx);
         }
     }
-    for(DirectEntity<vk::Image> e : sReg.view<vk::Image>()) {
+    for(RestrictedEntity<vk::Image> e : sReg.view<vk::Image>()) {
         if(e->owns) {
-            LOG_TRACE("= Destroying {} {} (valid: {} owns: {})", static_cast<Entity>(e), e->createInfo.name, e->valid(), e->owns);
+            LOG_TRACE("= Destroying {} {} (valid: {} owns: {})", e, e->createInfo.name, e->valid(), e->owns);
             vk::destroy(*e);
-            e.erase<decltype(e)::Component>();
+            e.erase<decltype(e)::Component<0>>();
             if(e.empty())
                 e.destroy();
         }
     }
-    for(DirectEntity<vk::Buffer> e : sReg.view<vk::Buffer>()) {
+    for(RestrictedEntity<vk::Buffer> e : sReg.view<vk::Buffer>()) {
         if(e->owns) {
-            LOG_TRACE("= Destroying {} {} (valid: {} owns: {})", static_cast<Entity>(e), e->createInfo.name, e->valid(), e->owns);
+            LOG_TRACE("= Destroying {} {} (valid: {} owns: {})", e, e->createInfo.name, e->valid(), e->owns);
             vk::destroy(*e);
-            e.erase<decltype(e)::Component>();
+            e.erase<decltype(e)::Component<0>>();
             if(e.empty())
                 e.destroy();
         }
     }
-    for(DirectEntity<vk::Pipeline> e : sReg.view<vk::Pipeline>()) {
-        LOG_TRACE("= Destroying {}", static_cast<Entity>(e));
+    for(RestrictedEntity<vk::Pipeline> e : sReg.view<vk::Pipeline>()) {
+        LOG_TRACE("= Destroying {}", e);
         vk::destroy(*e);
-        e.erase<decltype(e)::Component>();
+        e.erase<decltype(e)::Component<0>>();
         if(e.empty())
             e.destroy();
     }
-    for(DirectEntity<vk::Shader> e : sReg.view<vk::Shader>()) {
-        LOG_TRACE("= Destroying {} {}", static_cast<Entity>(e), e->createInfo.src);
+    for(RestrictedEntity<vk::Shader> e : sReg.view<vk::Shader>()) {
+        LOG_TRACE("= Destroying {} {}", e, e->createInfo.src);
         vk::destroy(*e);
-        e.erase<decltype(e)::Component>();
+        e.erase<decltype(e)::Component<0>>();
         if(e.empty())
             e.destroy();
     }
-    for(DirectEntity<vk::Swapchain> e : sReg.view<vk::Swapchain>()) {
+    for(RestrictedEntity<vk::Swapchain> e : sReg.view<vk::Swapchain>()) {
         vk::destroy(*e);
-        e.erase<decltype(e)::Component>();
+        e.erase<decltype(e)::Component<0>>();
         if(e.empty())
             e.destroy();
     }

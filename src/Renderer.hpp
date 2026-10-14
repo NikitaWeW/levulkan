@@ -17,9 +17,6 @@ struct Transform {
         return glm::translate(glm::mat4{ 1.0f }, position) * glm::mat4_cast(orientation) * glm::scale(glm::mat4{ 1.0f }, scale);
     };
 };
-struct ModelInstance {
-    Entity eModel;
-};
 
 struct VulkanMaterial {
     struct Properties {

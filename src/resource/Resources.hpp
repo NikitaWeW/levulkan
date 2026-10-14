@@ -112,3 +112,7 @@ struct Model {
         std::unordered_map<std::string, unsigned> boneMap; // bone name to bone id
     } skeleton;
 };
+
+struct ModelInstance {
+    RestrictedEntity<Model> eModel;
+};
