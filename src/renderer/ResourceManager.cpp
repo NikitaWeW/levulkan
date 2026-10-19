@@ -1,4 +1,4 @@
-#include "engine/renderer/Renderer.hpp"
+#include "engine/renderer/ResourceManager.hpp"
 
 using namespace egn;
 

@@ -1,7 +1,7 @@
 #include "engine/vk/RingBuffer.hpp"
 #include "engine/vk/Resource.hpp"
 #include "engine/io/Logging.hpp"
-#include "engine/renderer/Renderer.hpp" // ResourceDirty
+#include "engine/renderer/ResourceManager.hpp" // ResourceDirty
 
 using namespace egn::vk;
 

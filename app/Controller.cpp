@@ -25,7 +25,7 @@ static void updateOrientation(glm::vec2 offset, glm::quat &q) {
 void Controller::update(egn::Registry &reg, float dt) {
     for(egn::Entity eCamera : reg.view<CAMERA_COMPONENTS>()) {
         auto &camera = eCamera.get<Controller::Camera>();
-        auto &listener = eCamera.get<egn::EventListener>();
+        auto &listener = eCamera.get<egn::WindowEventListener>();
         auto &window = camera.window.get<egn::Window>();
 
         auto invView = glm::mat3(glm::inverse(camera.viewMat));

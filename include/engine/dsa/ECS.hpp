@@ -114,7 +114,7 @@ public:
 /// @brief A lightweight helper class to group the entity and the registry it belongs to with oop syntax.
 /// WARNING: Invalidates if the registry is moved or if the entity invalidates obviously.
 class Entity {
-private:
+protected:
     Registry *mReg = nullptr;
     ecs::entity mEntity = 0;
 public:
@@ -185,8 +185,7 @@ template <typename What, typename... Args> constexpr inline bool is_present_v = 
 template <ecs::entity e> inline constexpr bool is_entity_null = false;
 template <> inline constexpr bool is_entity_null<0> = true;
 
-/// @brief Entity handle that requires specified components
-/// @brief xxxSafe() member functions fail on compilation if the component is not present.
+/// @brief Entity handle that requires specified components.
 template <typename Op, typename... Components> class RestrictedEntity_t : public Entity {
 private:
     class OpWrapper {
@@ -227,6 +226,10 @@ public:
         this->Entity::operator=(std::move(e));
         ECS_ASSERT(valid(), "Invalid RestrictedEntity!");
         return *this;
+    }
+
+    inline void reset() {
+        mEntity = 0;
     }
 
     template <size_t N = 0> inline decltype(auto) getc() const {

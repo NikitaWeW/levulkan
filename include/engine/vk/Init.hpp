@@ -53,7 +53,7 @@ inline void enableValidationLayers(InitInfo &info) {
 
 struct QueueFamilies {
     VkDevice device;
-    std::map<VkQueueFlagBits, uint32_t> indices;
+    std::unordered_map<VkQueueFlagBits, uint32_t> indices;
     std::optional<uint32_t> presentQueue;
 
     SparseSet<VkDeviceQueueCreateInfo> deviceCreateInfo;

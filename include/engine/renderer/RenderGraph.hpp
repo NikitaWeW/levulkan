@@ -43,21 +43,43 @@ struct ResourceTraits {
 struct RenderGraphImageCreateInfo {
     vk::ImageCreateInfo::ImageInfo imageInfo;
     bool resizeToSwapchain = false;
+    bool keep = false;
 };
 struct RenderGraphBufferCreateInfo {
     VkDeviceSize size = 0;
+};
+struct RenderGraphExternalResourceInfo {
+    Entity eResource;
+    bool keep = false;  
 };
 
 struct ResizeToSwapchain { };
 struct RenderGraphResource { };
 
 class RenderGraphBuilder;
-class RenderPassBuilder {
+class RenderGraphResourceBuilder {
 private:
-    std::unordered_map<std::string, Entity> mExternalResources;
+    std::unordered_map<std::string, RenderGraphExternalResourceInfo> mExternalResources;
     std::unordered_map<std::string, RenderGraphImageCreateInfo> mImageResources;
     std::unordered_map<std::string, RenderGraphBufferCreateInfo> mBufferResources;
+public:
+    /// @brief Yup it adds an external resource.
+    /// If a resource already exists it gets overridden.
+    /// @param eResource Either valid entity containing vk::Image or vk::Buffer or invalid entity.
+    /// @param keep Keeps the contents of the resource from a previous frame (whether to set the barrier layout to undefined). Image only
+    /// @returns True if the resource was added successfully.
+    bool addExternalResource(std::string const &name, RenderGraphExternalResourceInfo info);
+    bool addImageResource(std::string const &name, RenderGraphImageCreateInfo info);
+    bool addBufferResource(std::string const &name, RenderGraphBufferCreateInfo info);
 
+    bool contains(std::string const &name) const;
+
+    std::unordered_map<std::string, RenderGraphExternalResourceInfo> const &getExternal() const;
+    std::unordered_map<std::string, RenderGraphImageCreateInfo> const &getImage() const;
+    std::unordered_map<std::string, RenderGraphBufferCreateInfo> const &getBuffer() const;
+};
+class RenderPassBuilder {
+private:
     struct ResourceUsage {
         std::string name;
         ResourceTraits traits;
@@ -65,13 +87,13 @@ private:
     std::vector<ResourceUsage> mReads;
     std::vector<ResourceUsage> mWrites;
 
+    RenderGraphResourceBuilder *mResourceBuilder = nullptr;
+
     friend bool setupRenderGraph(RenderGraphBuilder &&, struct RenderGraphImpl &);
 public:
-    /// @brief Yup it adds an external resource.
-    /// @param keep Keeps the contents of the resource from a previous frame (whether to set the barrier layout to undefined). Image only
-    void addExternalResource(std::string_view name, RestrictedEntityAny<vk::Image, vk::Buffer> eResource, bool keep = false);
-    void addImageResource(std::string_view name, RenderGraphImageCreateInfo info);
-    void addBufferResource(std::string_view name, RenderGraphBufferCreateInfo info);
+    RenderPassBuilder(RenderGraphResourceBuilder *resourceBuilder);
+    RenderGraphResourceBuilder *resource();
+    inline RenderGraphResourceBuilder *operator->() { return resource(); }
 
     void attachResourceRead(std::string_view resourceName, ResourceTraits traits);
     void attachResourceWrite(std::string_view resourceName, ResourceTraits traits);
@@ -194,6 +216,7 @@ private:
     std::unordered_map<std::string, Pass> passes;
     std::optional<vk::AllocationCreateInfo> allocInfo;
     std::optional<vk::QueueFamilies> queueFamilies;
+    RenderGraphResourceBuilder mResources;
     Registry *reg = nullptr;
     bool fresh = true;
     friend bool setupRenderGraph(RenderGraphBuilder &&, struct RenderGraphImpl &);
@@ -205,6 +228,8 @@ public:
     RenderGraphBuilder &operator=(RenderGraphBuilder &&) = default;
     ~RenderGraphBuilder() = default;
 
+    inline RenderGraphResourceBuilder &resource() { return mResources; }
+
     /// @brief Required for allocating stuff (optional)
     /// If not called only RenderPassBuilder::addExternalResource is allowed!
     void setAllocInfo(vk::AllocationCreateInfo const &allocInfo, Registry &reg);
@@ -213,8 +238,10 @@ public:
     void setQueueFamilies(vk::QueueFamilies const &queueFamilies);
 
     template <typename Data_t>
-    void addPass(std::string_view name, VkQueueFlagBits queue, std::function<RenderPassSetupCallback_t<Data_t>> setup,
+    void addPass(std::string const &name, VkQueueFlagBits queue, std::function<RenderPassSetupCallback_t<Data_t>> setup,
         std::function<RenderPassPostCompileCallback_t<Data_t>> post, std::function<RenderPassRenderCallback_t<Data_t>> render);
+
+    void removePass(std::string const &name);
 };
 
 struct GraphvizSettings {
@@ -237,10 +264,10 @@ public:
     bool success() const;
 
     // Just in case. Who knows... hehe...
-    void setResource(std::string_view name, Entity eResource);
-    Entity getResource(std::string_view name) const;
+    void setResource(std::string const &name, Entity eResource);
+    Entity getResource(std::string const &name) const;
 
-    RenderPass const *getPass(std::string_view name) const;
+    RenderPass const *getPass(std::string const &name) const;
 
     /// @brief Get the execution order of the passes
     std::vector<std::string> const &getPassStack() const;
@@ -256,7 +283,7 @@ RenderGraphResult buildRenderGraph(RenderGraphBuilder &&builder);
 // ===================================================================================
 
 template <typename Data_t>
-inline void RenderGraphBuilder::addPass(std::string_view name, VkQueueFlagBits queue, std::function<RenderPassSetupCallback_t<Data_t>> setup,
+inline void RenderGraphBuilder::addPass(std::string const &name, VkQueueFlagBits queue, std::function<RenderPassSetupCallback_t<Data_t>> setup,
     std::function<RenderPassPostCompileCallback_t<Data_t>> post, std::function<RenderPassRenderCallback_t<Data_t>> render) {
     if(passes.contains(std::string(name))) {
         LOG_ERROR("Pass \"{}\" already exists!", name);
