@@ -50,7 +50,7 @@ struct RenderGraphBufferCreateInfo {
 };
 struct RenderGraphExternalResourceInfo {
     Entity eResource;
-    bool keep = false;  
+    bool keep = false;
 };
 
 struct ResizeToSwapchain { };
@@ -78,6 +78,12 @@ public:
     std::unordered_map<std::string, RenderGraphImageCreateInfo> const &getImage() const;
     std::unordered_map<std::string, RenderGraphBufferCreateInfo> const &getBuffer() const;
 };
+
+namespace _impl {
+    struct RenderGraphImpl;
+    bool setupRenderGraph(::egn::RenderGraphBuilder &&, RenderGraphImpl &);
+}
+
 class RenderPassBuilder {
 private:
     struct ResourceUsage {
@@ -89,7 +95,7 @@ private:
 
     RenderGraphResourceBuilder *mResourceBuilder = nullptr;
 
-    friend bool setupRenderGraph(RenderGraphBuilder &&, struct RenderGraphImpl &);
+    friend bool ::egn::_impl::setupRenderGraph(RenderGraphBuilder &&, _impl::RenderGraphImpl &);
 public:
     RenderPassBuilder(RenderGraphResourceBuilder *resourceBuilder);
     RenderGraphResourceBuilder *resource();
@@ -219,7 +225,7 @@ private:
     RenderGraphResourceBuilder mResources;
     Registry *reg = nullptr;
     bool fresh = true;
-    friend bool setupRenderGraph(RenderGraphBuilder &&, struct RenderGraphImpl &);
+    friend bool ::egn::_impl::setupRenderGraph(RenderGraphBuilder &&, _impl::RenderGraphImpl &);
 public:
     RenderGraphBuilder() = default;
     RenderGraphBuilder(RenderGraphBuilder const &) = delete;

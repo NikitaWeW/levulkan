@@ -36,7 +36,7 @@ CPMAddPackage(
     GITHUB_REPOSITORY "glfw/glfw"
 )
 CPMAddPackage("gh:wolfpld/tracy#23755c9")
-CPMAddPackage("gh:nikitawew/nicecs#02403c8a")
+CPMAddPackage("gh:nikitawew/nicecs#988e791")
 CPMAddPackage("gh:zeux/meshoptimizer@1.0")
 CPMAddPackage(URI "gh:gabime/spdlog@1.17.0" FORCE ON)
 CPMAddPackage("gh:g-truc/glm#1.0.2")
@@ -74,6 +74,7 @@ set(ENGINE_SOURCE
 
     "src/renderer/RenderGraph.cpp"
     "src/renderer/ResourceManager.cpp"
+    "src/renderer/RenderGraphRenderer.cpp"
 
     "src/scene/ModelLoader.cpp"
     "src/scene/TextureLoader.cpp"

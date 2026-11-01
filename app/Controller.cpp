@@ -1,14 +1,15 @@
 #include "Controller.hpp"
 #include "engine/io/Logging.hpp"
+#include "engine/io/Window.hpp"
 
-#define CAMERA_COMPONENTS Controller::Camera, egn::EventListener
+#define CAMERA_COMPONENTS Controller::Camera, egn::WindowEventListener
 
-egn::Entity Controller::createCamera(egn::Registry &reg, glm::vec3 pos, glm::vec3 target) {
-    auto e = reg.create<CAMERA_COMPONENTS>();
+egn::Entity Controller::createCamera(egn::RestrictedEntity<egn::Window> window, glm::vec3 pos, glm::vec3 target) {
+    auto e = window.reg().create<CAMERA_COMPONENTS>();
     auto up = glm::abs(glm::dot(glm::normalize(target - pos), glm::vec3{ 0, 1, 0 })) > 0.99 ? glm::vec3{ 1, 0, 0 } : glm::vec3{ 0, 1, 0 };
     auto q = glm::quat_cast(glm::lookAt(pos, target, up));
     e.get<Controller::Camera>() = {
-        .window = reg.view<egn::Window>().at(0),
+        .window = window,
         .position = pos,
         // .pitchYaw = glm::vec2(glm::degrees(glm::pitch(q)), glm::degrees(glm::yaw(q)))
         .orientation = q,

@@ -5,7 +5,9 @@
 #include <mutex>
 #include <shared_mutex>
 #include <functional>
+#include <string_view>
 #include "Exception.hpp"
+#include "engine/dsa/Algorithm.hpp"
 
 namespace egn {
 
@@ -24,11 +26,13 @@ struct EcsException : EngineException {
 
 namespace egn {
 
-class Entity;
-
 template <typename... T> using exclude = ecs::exclude<T...>;
 
-/// @brief A thin layer above the ecs::registry with more oop syntax.
+class Entity;
+
+template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t> class RegistryView;
+
+/// @brief ecs::registry wrapper with more oop syntax.
 class Registry {
 private:
     mutable std::shared_mutex mMutex;
@@ -94,21 +98,51 @@ public:
     std::size_t size() const;
 
     /// @copydoc ecs::registry::view
-    template <typename... Include, typename... Exclude> std::vector<Entity> const view(exclude<Exclude...> toExclude = exclude{ }) const;
+    template <typename... Include, typename... Exclude>
+    RegistryView<sizeof...(Include), sizeof...(Exclude), Entity const> view(exclude<Exclude...> toExclude = exclude{ }) const;
     /// @copydoc ecs::registry::view
-    template <typename... Include, typename... Exclude> std::vector<Entity> view(exclude<Exclude...> toExclude = exclude{ });
+    template <typename... Include, typename... Exclude>
+    RegistryView<sizeof...(Include), sizeof...(Exclude), Entity> view(exclude<Exclude...> toExclude = exclude{ });
+};
 
-    /// @copydoc ecs::registry::viewAny
-    template <typename... May, typename... Exclude> std::vector<Entity> const viewAny(exclude<Exclude...> toExclude = exclude{ }) const;
-    /// @copydoc ecs::registry::viewAny
-    template <typename... May, typename... Exclude> std::vector<Entity> viewAny(exclude<Exclude...> toExclude = exclude{ });
+template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t> class RegistryView : protected ecs::view<Include, Exclude> {
+private:
+    Registry *mParent;
+public:
+    /// @brief View iterator.
+    class iterator {
+    public:
+        using iterator_concept = std::forward_iterator_tag;
+        using iterator_category = std::input_iterator_tag;
+        using value_type = Entity;
+        using difference_type = std::ptrdiff_t;
+        using pointer = void;
+        using reference = Entity_t;
+    private:
+        ecs::view<Include, Exclude>::iterator mIt;
+        Registry *mParent = nullptr;
+    public:
+        explicit iterator(ecs::view<Include, Exclude>::iterator &&it, Registry *parent);
+        iterator &operator++() noexcept;
+        iterator operator++(int) noexcept;
 
-    /// @copydoc ecs::registry::merged
-    Registry merged(Registry const &other) const;
-    /// @copydoc ecs::registry::merged
-    void merge(Registry const &other);
-    /// @copydoc ecs::registry::copy
-    Entity copy(Entity const &entity);
+        reference operator*() const noexcept;
+
+        constexpr bool operator==(iterator const &other) const noexcept;
+        constexpr bool operator!=(iterator const &other) const noexcept;
+    };
+
+    constexpr explicit RegistryView(ecs::view<Include, Exclude> &&view, Registry *parent) noexcept;
+
+    iterator begin() const noexcept;
+    iterator end() const noexcept;
+    ecs::size_t estimate() const noexcept;
+};
+
+struct EntityWrapper;
+
+struct DebugName {
+    std::string name;
 };
 
 /// @brief A lightweight helper class to group the entity and the registry it belongs to with oop syntax.
@@ -117,10 +151,9 @@ class Entity {
 protected:
     Registry *mReg = nullptr;
     ecs::entity mEntity = 0;
+    ecs::version_t mVersion = 0;
 public:
     inline constexpr Entity() = default;
-    inline explicit constexpr Entity(Registry *reg, ecs::entity e): mReg(reg), mEntity(e) {
-    }
     inline constexpr ecs::entity id() const {
         return mEntity;
     }
@@ -138,9 +171,12 @@ public:
         assert(pReg() && "Invalid registry!");
         return *pReg();
     }
+    inline explicit constexpr Entity(Registry *reg, ecs::entity e);
     inline constexpr operator ecs::entity() const {
         return mEntity;
     }
+    constexpr EntityWrapper wrap();
+    constexpr operator EntityWrapper();
 
     inline constexpr bool operator==(Entity const &o) const {
         return mEntity == o.mEntity && pReg() == o.pReg();
@@ -152,7 +188,7 @@ public:
     /// @copydoc ecs::registry::emplace
     template <typename component_t, class... Args> component_t &emplace(Args &&...args);
 
-    template <typename component_t, class... Args> component_t &tryEmplace(Args &&...args);
+    template <typename component_t, class... Args> component_t &try_emplace(Args &&...args);
 
     /// @copydoc ecs::registry::contains
     template <typename component_t> bool contains() const;
@@ -176,7 +212,31 @@ public:
 
     /// @copydoc ecs::registry::valid
     /// Also checks if the registry pointer is valid (not nullptr)
+    /// Checks entity version.
     bool valid() const;
+
+    /// @brief Get the entity's debug name.
+    std::string_view name() const;
+    /// @brief Set the entity's debug name.
+    void name(std::string &&string);
+};
+
+/// Trivial entity wrapper
+struct EntityWrapper {
+    Registry *registry;
+    ecs::entity entity;
+
+    inline EntityWrapper &from(Entity &e) {
+        registry = e.pReg();
+        entity = e.id();
+        return *this;
+    }
+    inline Entity get() const {
+        return Entity(registry, entity);
+    }
+    inline constexpr operator Entity() const {
+        return get();
+    }
 };
 
 // https://stackoverflow.com/questions/2118541/check-if-parameter-pack-contains-a-type#comment121318358_54346836
@@ -266,10 +326,6 @@ template <typename Component_t> using RestrictedEntity = RestrictedEntity_t<std:
 
 constexpr ecs::entity INVALID_ENTITY = 0;
 
-struct DebugName {
-    std::string name;
-};
-
 template <typename T> class SparseSet : public ecs::sparse_set<T> {
 public:
     inline SparseSet(std::size_t capacity = 10, std::uint32_t pageSize = 64): ecs::sparse_set<T>(capacity, pageSize) {
@@ -309,29 +365,34 @@ public:
             e.valid() ? "" : "-invalid");
     }
 };
+template <> class fmt::formatter<egn::EntityWrapper> {
+public:
+    constexpr auto parse(format_parse_context &ctx) {
+        return ctx.begin();
+    }
+    template <typename Context> constexpr auto format(egn::EntityWrapper const &e, Context &ctx) const {
+        return fmt::formatter<egn::Entity>{ }.format(e, ctx);
+    }
+};
 namespace fmt {
-    template <typename Op, typename... Components> class formatter<egn::RestrictedEntity_t<Op, Components...>> {
-    public:
-        constexpr auto parse(format_parse_context &ctx) {
-            return ctx.begin();
-        }
-        template <typename Context> constexpr auto format(egn::Entity const &e, Context &ctx) const {
-            return fmt::formatter<egn::Entity>{ }.format(e, ctx);
-        }
-    };
+template <typename Op, typename... Components> class formatter<egn::RestrictedEntity_t<Op, Components...>> {
+public:
+    constexpr auto parse(format_parse_context &ctx) {
+        return ctx.begin();
+    }
+    template <typename Context> constexpr auto format(egn::RestrictedEntity_t<Op, Components...> const &e, Context &ctx) const {
+        return fmt::formatter<egn::Entity>{ }.format(e, ctx);
+    }
+};
 };
 
-namespace std {
-    template <typename Stream> Stream &operator<<(Stream &str, egn::Entity const &e) {
-        str << fmt::format("{}", e);
-        return str;
-    }
+template <typename Stream> inline Stream &operator<<(Stream &str, egn::Entity const &e) {
+    str << fmt::format("{}", e);
+    return str;
 }
 template <> struct std::hash<egn::Entity> {
-    size_t operator()(egn::Entity const &e) const {
-        size_t seed = std::hash<ecs::entity>{ }(e.id());
-        seed ^= std::hash<std::uintptr_t>{ }(reinterpret_cast<std::uintptr_t>(e.pReg())) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-        return seed;
+    inline size_t operator()(egn::Entity const &e) const {
+        return egn::hash_combine(std::hash<ecs::entity>{ }(e.id()), std::hash<std::uintptr_t>{ }(reinterpret_cast<std::uintptr_t>(e.pReg())));
     }
 };
 
@@ -347,58 +408,76 @@ inline void egn::Registry::destroy(Entity const &entity) {
 inline std::size_t egn::Registry::size() const {
     return getReg().size();
 }
-template <typename... Include, typename... Exclude> inline std::vector<egn::Entity> const egn::Registry::view(exclude<Exclude...> toExclude) const {
-    std::vector<Entity> res;
-    res.reserve(size() / 20u);
-    for(auto const &e : getReg().view<Include...>(toExclude))
-        res.emplace_back(const_cast<Registry *>(this), e); // Should be fine because the entity is const
-
-    return res;
+template <typename... Include, typename... Exclude>
+inline egn::RegistryView<sizeof...(Include), sizeof...(Exclude), egn::Entity const> egn::Registry::view(exclude<Exclude...> toExclude) const {
+    return egn::RegistryView<sizeof...(Include), sizeof...(Exclude), egn::Entity const>(getReg().view<Include...>(toExclude),
+        const_cast<Registry *>(this));
 }
-template <typename... Include, typename... Exclude> inline std::vector<egn::Entity> egn::Registry::view(exclude<Exclude...> toExclude) {
-    std::vector<Entity> res;
-    res.reserve(size() / 20u);
-    for(auto const &e : getReg().view<Include...>(toExclude))
-        res.emplace_back(const_cast<Registry *>(this), e);
-
-    return res;
-}
-template <typename... Include, typename... Exclude> inline std::vector<egn::Entity> const egn::Registry::viewAny(exclude<Exclude...> toExclude) const {
-    std::vector<Entity> res;
-    res.reserve(size() / 20u);
-    for(auto const &e : getReg().viewAny<Include...>(toExclude))
-        res.emplace_back(const_cast<Registry *>(this), e);
-
-    return res;
-}
-template <typename... Include, typename... Exclude> inline std::vector<egn::Entity> egn::Registry::viewAny(exclude<Exclude...> toExclude) {
-    std::vector<Entity> res;
-    res.reserve(size() / 20u);
-    for(auto const &e : getReg().viewAny<Include...>(toExclude))
-        res.emplace_back(const_cast<Registry *>(this), e);
-
-    return res;
-}
-inline void egn::Registry::merge(Registry const &other) {
-    for(auto e : other.view())
-        copy(e);
-}
-inline egn::Registry egn::Registry::merged(Registry const &other) const {
-    Registry reg;
-    reg.merge(*this);
-    reg.merge(other);
-    return reg;
-}
-inline egn::Entity egn::Registry::copy(Entity const &other) {
-    return Entity(this, getReg().copy(other.id(), other.reg().getReg()));
+template <typename... Include, typename... Exclude>
+inline egn::RegistryView<sizeof...(Include), sizeof...(Exclude), egn::Entity> egn::Registry::view(exclude<Exclude...> toExclude) {
+    return egn::RegistryView<sizeof...(Include), sizeof...(Exclude), egn::Entity>(getReg().view<Include...>(toExclude), this);
 }
 
+template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
+inline egn::RegistryView<Include, Exclude, Entity_t>::iterator::iterator(ecs::view<Include, Exclude>::iterator &&it, Registry *parent):
+    mIt(std::move(it)), mParent(parent) {
+}
+template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
+inline egn::RegistryView<Include, Exclude, Entity_t>::iterator &egn::RegistryView<Include, Exclude, Entity_t>::iterator::operator++() noexcept {
+    ++mIt;
+    return *this;
+}
+template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
+inline egn::RegistryView<Include, Exclude, Entity_t>::iterator egn::RegistryView<Include, Exclude, Entity_t>::iterator::operator++(int) noexcept {
+    auto original = *this;
+    this->operator++();
+    return original;
+}
+template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
+inline egn::RegistryView<Include, Exclude, Entity_t>::iterator::reference
+egn::RegistryView<Include, Exclude, Entity_t>::iterator::operator*() const noexcept {
+    return reference(mParent, *mIt);
+}
+template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
+constexpr inline bool egn::RegistryView<Include, Exclude, Entity_t>::iterator::operator==(iterator const &other) const noexcept {
+    return mIt == other.mIt && mParent == other.mParent;
+}
+template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
+constexpr inline bool egn::RegistryView<Include, Exclude, Entity_t>::iterator::operator!=(iterator const &other) const noexcept {
+    return !operator==(other);
+}
+
+template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
+constexpr inline egn::RegistryView<Include, Exclude, Entity_t>::RegistryView(ecs::view<Include, Exclude> &&view, Registry *parent) noexcept:
+    ecs::view<Include, Exclude>(std::move(view)), mParent(parent) {
+}
+template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
+inline egn::RegistryView<Include, Exclude, Entity_t>::iterator egn::RegistryView<Include, Exclude, Entity_t>::begin() const noexcept {
+    return iterator(ecs::view<Include, Exclude>::begin(), mParent);
+}
+template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
+inline egn::RegistryView<Include, Exclude, Entity_t>::iterator egn::RegistryView<Include, Exclude, Entity_t>::end() const noexcept {
+    return iterator(ecs::view<Include, Exclude>::end(), mParent);
+}
+template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
+inline ecs::size_t egn::RegistryView<Include, Exclude, Entity_t>::estimate() const noexcept {
+    ecs::view<Include, Exclude>::size();
+}
+
+inline constexpr egn::EntityWrapper egn::Entity::wrap() {
+    return EntityWrapper{ }.from(*this);
+}
+inline constexpr egn::Entity::operator EntityWrapper() {
+    return wrap();
+}
+inline constexpr egn::Entity::Entity(Registry *reg, ecs::entity e): mReg(reg), mEntity(e) {
+    mVersion = this->reg()->version(mEntity);
+}
 template <typename component_t, class... Args> inline component_t &egn::Entity::emplace(Args &&...args) {
     assert(pReg());
-    reg()->emplace<component_t, Args...>(id(), std::forward<Args>(args)...);
-    return get<component_t>();
+    return reg()->emplace<component_t, Args...>(id(), std::forward<Args>(args)...);
 }
-template <typename component_t, class... Args> inline component_t &egn::Entity::tryEmplace(Args &&...args) {
+template <typename component_t, class... Args> inline component_t &egn::Entity::try_emplace(Args &&...args) {
     assert(pReg());
     if(!contains<component_t>())
         return emplace<component_t>(std::forward<Args>(args)...);
@@ -434,5 +513,14 @@ inline bool egn::Entity::empty() const {
     return size() == 0;
 }
 inline bool egn::Entity::valid() const {
-    return pReg() && reg()->valid(id());
+    return pReg() && reg()->valid(id()) && reg()->version(id()) == mVersion;
+}
+inline std::string_view egn::Entity::name() const {
+    if(contains<DebugName>()) {
+        return get<DebugName>().name;
+    }
+    return "";
+}
+inline void egn::Entity::name(std::string &&string) {
+    try_emplace<DebugName>().name = string;
 }

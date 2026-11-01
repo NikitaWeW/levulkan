@@ -172,18 +172,18 @@ uint32_t ResourceAllocator::processImage(Entity eImage) {
             {VK_IMAGE_ASPECT_COLOR_BIT, 0, ci.image.dimensions.mipLevels, 0, 1}
         );
 
-        LOG_TRACE("Allocated image e{} \"{}\" {}x{}, {} {} mips of type {} format {} usage {} filter {} address mode {}", 
-            eImage.id(), 
-            image.path, 
-            image.bitmap.size.x, image.bitmap.size.y,
-            image.srgb ? "srgb" : "linear",
-            image.numMipLevels,
-            string_VkImageViewType(eImage.get<vk::Image>().createInfo.image.view.viewType), 
-            string_VkFormat(eImage.get<vk::Image>().createInfo.image.format),
-            string_VkImageUsageFlags(eImage.get<vk::Image>().createInfo.usage),
-            string_VkFilter(ci.image.sampler.minFilter),
-            string_VkSamplerAddressMode(ci.image.sampler.addressModeU)
-        );
+        // LOG_TRACE("Allocated image e{} \"{}\" {}x{}, {} {} mips of type {} format {} usage {} filter {} address mode {}", 
+        //     eImage.id(), 
+        //     image.path, 
+        //     image.bitmap.size.x, image.bitmap.size.y,
+        //     image.srgb ? "srgb" : "linear",
+        //     image.numMipLevels,
+        //     string_VkImageViewType(eImage.get<vk::Image>().createInfo.image.view.viewType), 
+        //     string_VkFormat(eImage.get<vk::Image>().createInfo.image.format),
+        //     string_VkImageUsageFlags(eImage.get<vk::Image>().createInfo.usage),
+        //     string_VkFilter(ci.image.sampler.minFilter),
+        //     string_VkSamplerAddressMode(ci.image.sampler.addressModeU)
+        // );
     }
     // TODO: cubemaps
 
@@ -253,7 +253,7 @@ void ResourceAllocator::end() {
 void DescriptorManager::addResource(DescriptorWrite write) {
     assert(!write.imageInfo.empty() || !write.bufferInfo.empty());
     mWrites.emplace_back(write);
-    write.dstPipeline.tryEmplace<ResourceDirty>();
+    write.dstPipeline.try_emplace<ResourceDirty>();
     for(auto const &res : write.imageInfo) {
         mFrameUsage[res.resource].emplace(write.dstFrame);
     }
@@ -312,7 +312,7 @@ void DescriptorManager::update(uint frame, bool force) {
             }
         }
 
-        if(ePipeline.reg().view<ResourceDirty>().size())
+        if(egn::distance(ePipeline.reg().view<ResourceDirty>()))
             LOG_TRACE("Pipeline {} dirty {}", ePipeline, dirty);
 
         if(!dirty) {

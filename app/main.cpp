@@ -243,7 +243,7 @@ static egn::Entity makeWindow(egn::Registry &reg, std::string_view name) {
     glfwSwapInterval(1);
     if(glfwRawMouseMotionSupported())
         glfwSetInputMode(window.handle, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
-    egn::setCallbacks(window.handle, reg.getReg());
+    egn::setCallbacks(eWindow);
 
     return eWindow;
 }
@@ -500,7 +500,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     uint imageIndex = 0;
     float deltatime = 1e-6;
 
-    egn::RestrictedEntity<Controller::Camera> eCamera = Controller::createCamera(sReg, { 0, 2, 4 }, { 0, 0, 0 });
+    egn::RestrictedEntity<Controller::Camera> eCamera = Controller::createCamera(window, { 0, 2, 4 }, { 0, 0, 0 });
 
     [[maybe_unused]] VkPipelineColorBlendAttachmentState constexpr ALPHA_BLENDING{ .blendEnable = true,
         .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
@@ -583,6 +583,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     egn::RenderGraphBuilder builder;
     builder.setAllocInfo(ALLOCATION_INFO, sReg);
     builder.setQueueFamilies(initRes.queueFamilies);
+    builder.resource().addExternalResource("target", {});
 
     struct gbuffer_data {
         egn::RestrictedEntity<egn::vk::Pipeline> pipeline;
@@ -1052,7 +1053,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
     struct swapchain_blit_data {
         egn::RestrictedEntity<egn::vk::Image> lighting_out;
-        egn::RestrictedEntity<egn::vk::Image> swapchainImage;
+        egn::Entity target;
     };
     builder.addPass<swapchain_blit_data>(
         "target_blit",
@@ -1062,12 +1063,13 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             builder.attachResourceWrite("target", TRANSFER_DST_TRAITS);
         },
         [&](swapchain_blit_data &data, egn::RenderGraphResult const &res) {
-            data.swapchainImage = res.getResource("target");
+            data.target = res.getResource("target");
             data.lighting_out = res.getResource("lighting_out");
         },
         [&](swapchain_blit_data &data, VkCommandBuffer cb) {
+            assert(data.target);
             auto const &src = data.lighting_out.getc();
-            auto const &dst = data.swapchainImage.getc();
+            auto const &dst = data.target.get<egn::vk::Image>();
 
             VkImageBlit2 region{
                 .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
@@ -1152,9 +1154,9 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         };
 
         for(uint i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-            CHECK_VK_RES(vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, &commandBuffers[i][queue]));
+            auto &cb = commandBuffers[i][queue];
+            CHECK_VK_RES(vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, &cb));
 
-            auto cb = commandBuffers[queue][i];
             auto name = fmt::format("cb #{} {}", i, string_VkQueueFlags(queue));
 
             VkQueue physQueue;
@@ -1200,7 +1202,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         // Resize swapchain
         if(shouldResize) {
             LOG_INFO("Resizing the swapchain and {} image resources to {}x{}",
-                sReg.view<egn::vk::Image, egn::ResizeToSwapchain>().size(),
+                egn::distance(sReg.view<egn::vk::Image, egn::ResizeToSwapchain>()),
                 windowExtent.width,
                 windowExtent.height);
             CHECK_VK_RES(vkDeviceWaitIdle(device));
@@ -1213,7 +1215,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 image.createInfo.image.dimensions.width = windowExtent.width;
                 image.createInfo.image.dimensions.height = windowExtent.height;
                 image = egn::vk::makeImage(image.createInfo);
-                e.tryEmplace<egn::ResourceDirty>();
+                e.try_emplace<egn::ResourceDirty>();
             }
 
             shouldResize = false;
@@ -1291,13 +1293,13 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         uniformBuffer.free(frameIndex);
         uniformBuffer.realloc();
 
-        if(sReg.view<egn::ResourceDirty>().size())
-            LOG_TRACE("{} resources are dirty! {}", sReg.view<egn::ResourceDirty>().size(), sReg.view<egn::ResourceDirty>());
+        if(egn::distance(sReg.view<egn::ResourceDirty>()))
+            LOG_TRACE("{} resources are dirty! {}", egn::distance(sReg.view<egn::ResourceDirty>()), sReg.view<egn::ResourceDirty>());
 
         // FIXME: ResourceDirty flag removes too early for resources that are used in multiple frames.
-        // FIXME: writes are added only for frame 0
+        // FIXME: writes are added only for frame 0.
+        // FIX: Add a counter to the component.
         descManager.update(0);
-        // FIXME: shit
         for(auto e : sReg.view<egn::ResourceDirty>()) {
             e.erase<egn::ResourceDirty>();
         }
@@ -1307,13 +1309,25 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             .queueIndices = initRes.queueFamilies.indices,
         };
 
+        VkCommandBufferBeginInfo beginInfo{
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        };
+        for(auto const &[queue, cb] : frameCommandBuffers.commandBuffers) {
+            vkBeginCommandBuffer(cb, &beginInfo);
+        }
+
+        // TODO: measure performance of rebuilding render graph every frame
         renderer->preFrame(sReg);
         renderer->render(swapchain->images[imageIndex], frameCommandBuffers);
 
         // Submit command buffer
-        for(auto queue : frameCommandBuffers.usedCommandBuffers) {
-            auto cb = frameCommandBuffers.getCommandBuffer(queue);
+        for(auto [queue, cb] : frameCommandBuffers.commandBuffers) {
             vkEndCommandBuffer(cb);
+
+            if(!frameCommandBuffers.usedCommandBuffers.contains(queue)) {
+                continue;
+            }
 
             VkPipelineStageFlags waitStages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
             VkSubmitInfo submitInfo{
@@ -1409,8 +1423,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     }
 
     LOG_INFO("Ran for {:.3}s avg deltatime: {:.3}ms ({:.3} fps)", runtime, runtime / frameCount * 1e3, frameCount / runtime);
-    std::ofstream("tmp/runtime.txt", std::ios::out | std::ios::app) << getDateTime() << "    rtm " << std::setprecision(4) << runtime << " s    avg "
-                                                                    << runtime / frameCount * 1e3 << " ms    " << frameCount / runtime << " fps\n";
+    std::ofstream("tmp/runtime.txt", std::ios::out | std::ios::app) << getDateTime() << "    rtm " << std::setprecision(4) << runtime << " s    avg ";
+
     LOG_INFO("Exiting");
     return 0;
 }

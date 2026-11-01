@@ -25,7 +25,7 @@ public:
         bool locked = true;
     };
 
-    static egn::Entity createCamera(egn::Registry &reg, glm::vec3 pos = {0, 0, 0}, glm::vec3 target = {0, 0, -10});
+    static egn::Entity createCamera(egn::RestrictedEntity<egn::Window> window, glm::vec3 pos = {0, 0, 0}, glm::vec3 target = {0, 0, -10});
 
     void update(egn::Registry &reg, float dt);
 };

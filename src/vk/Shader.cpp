@@ -323,7 +323,10 @@ static std::vector<ShaderStage> collectSources(Shader &program) {
     return stages;
 }
 
-static spdlog::level::level_enum spvMessageLevelToSpdlog(spv_message_level_t level) {
+static spdlog::level::level_enum spvMessageLevelToSpdlog(spv_message_level_t level, std::string_view message) {
+    if(message.find("This is may be allowed") != std::string_view::npos) {
+        return spdlog::level::warn;
+    }
     switch(level) {
         case SPV_MSG_FATAL: return spdlog::level::err;
         case SPV_MSG_INTERNAL_ERROR: return spdlog::level::err;
@@ -337,7 +340,7 @@ static spdlog::level::level_enum spvMessageLevelToSpdlog(spv_message_level_t lev
 static void runOptimizer(Shader &program, spvtools::Optimizer &optimizer) {
     for(auto &bin : program.binaries) {
         auto messageCallback = [&program, &bin](spv_message_level_t level, char const *, spv_position_t const &position, char const *message) {
-            LOG(spvMessageLevelToSpdlog(level),
+            LOG(spvMessageLevelToSpdlog(level, message),
                 "Spirv optimizer at {}:{}:{} from {} -- {}",
                 bin.path,
                 position.line,
@@ -397,7 +400,7 @@ static bool validateSpirv(Shader &program) {
 
     for(auto &bin : program.binaries) {
         auto messageCallback = [&program, &bin](spv_message_level_t level, char const *, spv_position_t const &position, char const *message) {
-            LOG(spvMessageLevelToSpdlog(level),
+            LOG(spvMessageLevelToSpdlog(level, message),
                 "Spirv validator at {}:{}:{} from {} -- {}",
                 bin.path,
                 position.line,

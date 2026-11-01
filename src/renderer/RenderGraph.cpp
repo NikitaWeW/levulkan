@@ -21,6 +21,20 @@ struct ResourceCreateInfo {
         RenderGraphImageCreateInfo image;
         RenderGraphBufferCreateInfo buffer;
     };
+
+    ResourceCreateInfo() {}
+    ResourceCreateInfo(RenderGraphExternalResourceInfo const &info) {
+        type = External;
+        external = info;
+    }
+    ResourceCreateInfo(RenderGraphImageCreateInfo const &info) {
+        type = Image;
+        image = info;
+    }
+    ResourceCreateInfo(RenderGraphBufferCreateInfo const &info) {
+        type = Buffer;
+        buffer = info;
+    }
 };
 struct ResourceAllocationInfo {
     ResourceCreateInfo ci;
@@ -43,7 +57,7 @@ struct ResourceInfo {
     ResourceUsage written;
 };
 // To pass intermediate data between functions
-struct egn::RenderGraphImpl {
+struct egn::_impl::RenderGraphImpl {
     vk::AllocationCreateInfo allocInfo;
     Registry *reg = nullptr;
     vk::QueueFamilies queueFamilies;
@@ -239,7 +253,7 @@ std::string RenderGraphResult::dumpGraphviz(int indent, GraphvizSettings setting
     return ss.str();
 }
 
-bool egn::setupRenderGraph(RenderGraphBuilder &&builder, RenderGraphImpl &renderGraph) {
+bool egn::_impl::setupRenderGraph(RenderGraphBuilder &&builder, RenderGraphImpl &renderGraph) {
     ZoneScoped;
 
     assert(builder.fresh && "Cannot use same RenderGraphBuilder twice!");
@@ -309,7 +323,7 @@ bool egn::setupRenderGraph(RenderGraphBuilder &&builder, RenderGraphImpl &render
         auto &resourceInfo = renderGraph.resources[name];
         resourceInfo.name = name;
         resourceInfo.eResource = info.eResource;
-        resourceInfo.ci = { .type = ResourceCreateInfo::External, .external = info };
+        resourceInfo.ci = ResourceCreateInfo(info);
     }
     for(auto const &[name, info] : resourceBuilder.getImage()) {
         LOG_TRACE("  Image resource {} {} {} {}x{}x{} resize to swapchain {} keep {}",
@@ -328,7 +342,7 @@ bool egn::setupRenderGraph(RenderGraphBuilder &&builder, RenderGraphImpl &render
 
         auto &resourceInfo = renderGraph.resources[name];
         resourceInfo.name = name;
-        resourceInfo.ci = { .type = ResourceCreateInfo::Type::Image, .image = info };
+        resourceInfo.ci = info;
     }
     for(auto const &[name, info] : resourceBuilder.getBuffer()) {
         LOG_TRACE("  Buffer resource {} {} bytes", name, info.size);
@@ -339,7 +353,7 @@ bool egn::setupRenderGraph(RenderGraphBuilder &&builder, RenderGraphImpl &render
 
         auto &resourceInfo = renderGraph.resources[name];
         resourceInfo.name = name;
-        resourceInfo.ci = { .type = ResourceCreateInfo::Type::Buffer, .buffer = info };
+        resourceInfo.ci = info;
     }
 
     for(auto const &[_, pass] : renderGraph.passes) {
@@ -361,7 +375,7 @@ bool egn::setupRenderGraph(RenderGraphBuilder &&builder, RenderGraphImpl &render
 }
 
 // Simplified version of vk::RenderGraph's processPass
-static bool processPass(std::string const &passName, RenderGraphImpl &renderGraph, uint depth, bool backtrack = false) {
+static bool processPass(std::string const &passName, _impl::RenderGraphImpl &renderGraph, uint depth, bool backtrack = false) {
     ZoneScoped;
 
     assert(!passName.empty());
@@ -429,7 +443,7 @@ static std::string printDependencies(Pass const &pass) {
 
     return fmt::format("reads {:>40} | writes {:>40}", reads, writes);
 }
-static void calculateLifetimes(RenderGraphImpl &renderGraph) {
+static void calculateLifetimes(_impl::RenderGraphImpl &renderGraph) {
     ZoneScoped;
 
     for(auto &[_, resource] : renderGraph.resources) {
@@ -483,7 +497,7 @@ static ResourceCreateInfo::Type getResourceType(RestrictedEntityAny<ResourceCrea
         return ci.type;
     }
 }
-static Entity findPoolResource(ResourceCreateInfo const &ci, RenderGraphImpl &renderGraph, VkImageUsageFlags usage = 0) {
+static Entity findPoolResource(ResourceCreateInfo const &ci, _impl::RenderGraphImpl &renderGraph, VkImageUsageFlags usage = 0) {
     ZoneScoped;
 
     for(auto poolRes : renderGraph.resourcePool) {
@@ -511,7 +525,7 @@ static Entity findPoolResource(ResourceCreateInfo const &ci, RenderGraphImpl &re
 
     return Entity();
 }
-static void aliasResources(RenderGraphImpl &renderGraph) {
+static void aliasResources(_impl::RenderGraphImpl &renderGraph) {
     ZoneScoped;
 
     LOG_TRACE("Aliasing resources");
@@ -545,8 +559,7 @@ static void aliasResources(RenderGraphImpl &renderGraph) {
             }
 
             if(!e.contains<ResourceAllocationInfo>()) {
-                auto &allocInfo = e.emplace<ResourceAllocationInfo>();
-                allocInfo.ci = resource.ci;
+                e.emplace<ResourceAllocationInfo>(ResourceAllocationInfo{ .ci = resource.ci });
             }
 
             auto &allocInfo = e.get<ResourceAllocationInfo>();
@@ -585,13 +598,13 @@ static void aliasResources(RenderGraphImpl &renderGraph) {
         }
     }
 }
-static void allocateResources(RenderGraphImpl &renderGraph) {
+static void allocateResources(_impl::RenderGraphImpl &renderGraph) {
     ZoneScoped;
 
     LOG_TRACE("Allocating resources");
     if(!renderGraph.reg)
         return;
-    for(auto &e : renderGraph.reg->view<ResourceAllocationInfo>()) {
+    for(auto e : renderGraph.reg->view<ResourceAllocationInfo>()) {
         auto allocInfo = e.get<ResourceAllocationInfo>();
         e.erase<ResourceAllocationInfo>();
 
@@ -634,7 +647,7 @@ static void allocateResources(RenderGraphImpl &renderGraph) {
         }
     }
 }
-static bool buildBarriers(RenderGraphImpl &renderGraph) {
+static bool buildBarriers(_impl::RenderGraphImpl &renderGraph) {
     ZoneScoped;
 
     std::unordered_map<Entity, Barrier::Scope> lastScope;
@@ -722,7 +735,7 @@ static bool buildBarriers(RenderGraphImpl &renderGraph) {
 RenderGraphResult egn::buildRenderGraph(RenderGraphBuilder &&builder) {
     ZoneScoped;
 
-    RenderGraphImpl renderGraph;
+    _impl::RenderGraphImpl renderGraph;
 
     if(!setupRenderGraph(std::move(builder), renderGraph)) {
         LOG_ERROR("Failed to set up render graph!");

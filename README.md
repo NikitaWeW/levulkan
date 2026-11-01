@@ -57,3 +57,4 @@ build/levulkan # profit
 - [How to vulkan](https://howtovulkan.com)
 - [Vulkan docs](https://docs.vulkan.org)
 - [Sasha Willems' vulkan samples](https://github.com/SaschaWillems/Vulkan)
+- Rindfleischetikettierungsüberwachungsaufgabenübertragungsgesetz

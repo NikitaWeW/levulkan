@@ -15,15 +15,15 @@
 #include "meshoptimizer.h"
 
 // Enable verbose loading by uncommenting the lines below.
-#include "engine/io/Logging.hpp"
-#define MODEL_LOADER_TRACE(...) LOG_TRACE(__VA_ARGS__)
+// #include "engine/io/Logging.hpp"
+// #define MODEL_LOADER_TRACE(...) LOG_TRACE(__VA_ARGS__)
 #ifndef MODEL_LOADER_TRACE
 #define MODEL_LOADER_TRACE(...)
 #endif
 
 // Scope profiler, enable tracy profiler by uncommenting the lines below.
-#include "tracy/Tracy.hpp"
-#define MODEL_LOADER_PROFILE ZoneScoped
+// #include "tracy/Tracy.hpp"
+// #define MODEL_LOADER_PROFILE ZoneScoped
 #ifndef MODEL_LOADER_PROFILE
 #define MODEL_LOADER_PROFILE
 #endif
@@ -51,10 +51,18 @@ constexpr glm::mat4 toMat4(aiMatrix4x4 const &from) {
     to[3][3] = from.d4;
     return to;
 }
-constexpr glm::vec3 toVec3(aiVector3D const &aivector) { return glm::vec3{ (float) aivector.x, (float) aivector.y, (float) aivector.z }; }
-constexpr glm::vec3 toVec3(aiColor3D const &aivector) { return glm::vec3{ (float) aivector.r, (float) aivector.g, (float) aivector.b }; }
-constexpr glm::vec2 toVec2(aiVector2D const &aivector) { return glm::vec2((float) aivector.x, (float) aivector.y); }
-constexpr glm::quat toQuat(aiQuaternion const &aiquaternion) { return glm::quat{ aiquaternion.w, aiquaternion.x, aiquaternion.y, aiquaternion.z }; }
+constexpr glm::vec3 toVec3(aiVector3D const &aivector) {
+    return glm::vec3{ (float) aivector.x, (float) aivector.y, (float) aivector.z };
+}
+constexpr glm::vec3 toVec3(aiColor3D const &aivector) {
+    return glm::vec3{ (float) aivector.r, (float) aivector.g, (float) aivector.b };
+}
+constexpr glm::vec2 toVec2(aiVector2D const &aivector) {
+    return glm::vec2((float) aivector.x, (float) aivector.y);
+}
+constexpr glm::quat toQuat(aiQuaternion const &aiquaternion) {
+    return glm::quat{ aiquaternion.w, aiquaternion.x, aiquaternion.y, aiquaternion.z };
+}
 // static float u8ToFloat(unsigned char v) { return v / 255.0f; }
 static glm::vec3 getColor(aiMaterial const *material, glm::vec3 defaultColor, const char *key, unsigned int type, unsigned int idx) {
     aiColor3D color;
@@ -202,7 +210,7 @@ static void setWindingOrder(Mesh::Geometry &mesh, ModelLoaderOptions::WindingOrd
     }
 
     MODEL_LOADER_TRACE("Setting winding order to {}", windingOrder == ModelLoaderOptions::WindingOrder::CCW ? "CCW" : "CW");
-    uint debugChanged = 0;
+    [[maybe_unused]] uint debugChanged = 0;
 
     for(size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
         auto const &iA = mesh.indices[i + 0];
@@ -263,11 +271,12 @@ static void optimizeMesh(Mesh::Geometry &mesh) {
     meshopt_remapVertexBuffer(mesh.attributes.data(), mesh.attributes.data(), new_vertex_count, sizeof(mesh.attributes[0]), remap.data());
 
     if(oldMesh.indices.size() == mesh.indices.size() && oldMesh.positions.size() == mesh.positions.size() &&
-        oldMesh.attributes.size() == mesh.attributes.size())
+        oldMesh.attributes.size() == mesh.attributes.size()) {
         MODEL_LOADER_TRACE("Optimized mesh. Nothing changed.");
-    else
+    } else {
         MODEL_LOADER_TRACE("Optimized mesh. Had {} indices and {} vertices. Has {} indices, {} vertices and {} attributes", oldMesh.indices.size(),
             oldMesh.positions.size(), mesh.indices.size(), mesh.positions.size(), mesh.attributes.size());
+    }
 }
 static void transformMesh(Mesh::Geometry &primitives, glm::mat4 const &mat) {
     MODEL_LOADER_PROFILE;
@@ -758,10 +767,12 @@ ecs::entity ModelLoaderImpl::processLight([[maybe_unused]] aiLight const *light)
 ecs::entity ModelLoaderImpl::load() {
     MODEL_LOADER_PROFILE;
 
-    if(mScene->HasMeshes())
+    if(mScene->HasMeshes()) {
         MODEL_LOADER_TRACE("Loading {} meshes.", mScene->mNumMeshes);
-    if(mScene->HasAnimations())
+    }
+    if(mScene->HasAnimations()) {
         MODEL_LOADER_TRACE("Loading {} animations.", mScene->mNumAnimations);
+    }
 
     processNodeMeshes(mScene->mRootNode);
 
@@ -790,7 +801,9 @@ ModelLoader::ModelLoader(ecs::registry &reg) {
     mImpl = new ModelLoaderImpl{ reg };
     mImpl->mTextureLoader = TextureLoader{ *mImpl->mRegistry };
 }
-ModelLoader::ModelLoader(ModelLoader const &o) { *this = o; }
+ModelLoader::ModelLoader(ModelLoader const &o) {
+    *this = o;
+}
 ModelLoader &ModelLoader::operator=(ModelLoader const &o) {
     if(o.mImpl)
         mImpl = new ModelLoaderImpl(*o.mImpl);

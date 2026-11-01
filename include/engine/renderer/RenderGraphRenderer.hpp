@@ -13,7 +13,7 @@ public:
     RenderGraphRenderer(RenderGraphBuilder &&builder);
     void render(RestrictedEntity<vk::Image> target, CommandBuffers &commandBuffers) override;
 
-    inline void setResource(std::string_view name, Entity eResource) {
+    inline void setResource(std::string const &name, Entity eResource) {
         mRenderGraph.setResource(name, eResource);
     }
     inline RenderGraphResult const &getRenderGraph() const {
