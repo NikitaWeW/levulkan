@@ -130,12 +130,15 @@ public:
 
         constexpr bool operator==(iterator const &other) const noexcept;
         constexpr bool operator!=(iterator const &other) const noexcept;
+
+        bool operator==(ecs::view_sentinel const &s) const noexcept;
+        bool operator!=(ecs::view_sentinel const &s) const noexcept;
     };
 
     constexpr explicit RegistryView(ecs::view<Include, Exclude> &&view, Registry *parent) noexcept;
 
     iterator begin() const noexcept;
-    iterator end() const noexcept;
+    ecs::view_sentinel end() const noexcept;
     ecs::size_t estimate() const noexcept;
 };
 
@@ -156,6 +159,9 @@ public:
     inline constexpr Entity() = default;
     inline constexpr ecs::entity id() const {
         return mEntity;
+    }
+    inline ecs::version_t version() const {
+        return mVersion;
     }
     inline constexpr Registry const *pReg() const {
         return mReg;
@@ -218,7 +224,7 @@ public:
     /// @brief Get the entity's debug name.
     std::string_view name() const;
     /// @brief Set the entity's debug name.
-    void name(std::string &&string);
+    void name(std::string_view string);
 };
 
 /// Trivial entity wrapper
@@ -361,8 +367,7 @@ public:
         return ctx.begin();
     }
     template <typename Context> constexpr auto format(egn::Entity const &e, Context &ctx) const {
-        return format_to(ctx.out(), "e{}{}{}", e.id(), e.valid() && e.contains<egn::DebugName>() ? ("-\"" + e.get<egn::DebugName>().name + "\"") : "",
-            e.valid() ? "" : "-invalid");
+        return format_to(ctx.out(), "e{}{}", e.id(), e.valid() ? ("-\"" + std::string(e.name()) + "\"") : "-invalid");
     }
 };
 template <> class fmt::formatter<egn::EntityWrapper> {
@@ -446,6 +451,14 @@ template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
 constexpr inline bool egn::RegistryView<Include, Exclude, Entity_t>::iterator::operator!=(iterator const &other) const noexcept {
     return !operator==(other);
 }
+template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
+bool egn::RegistryView<Include, Exclude, Entity_t>::iterator::operator==(ecs::view_sentinel const &s) const noexcept {
+    return mIt == s;
+}
+template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
+bool egn::RegistryView<Include, Exclude, Entity_t>::iterator::operator!=(ecs::view_sentinel const &s) const noexcept {
+    return mIt != s;
+}
 
 template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
 constexpr inline egn::RegistryView<Include, Exclude, Entity_t>::RegistryView(ecs::view<Include, Exclude> &&view, Registry *parent) noexcept:
@@ -456,8 +469,8 @@ inline egn::RegistryView<Include, Exclude, Entity_t>::iterator egn::RegistryView
     return iterator(ecs::view<Include, Exclude>::begin(), mParent);
 }
 template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
-inline egn::RegistryView<Include, Exclude, Entity_t>::iterator egn::RegistryView<Include, Exclude, Entity_t>::end() const noexcept {
-    return iterator(ecs::view<Include, Exclude>::end(), mParent);
+inline ecs::view_sentinel egn::RegistryView<Include, Exclude, Entity_t>::end() const noexcept {
+    return { };
 }
 template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
 inline ecs::size_t egn::RegistryView<Include, Exclude, Entity_t>::estimate() const noexcept {
@@ -516,11 +529,12 @@ inline bool egn::Entity::valid() const {
     return pReg() && reg()->valid(id()) && reg()->version(id()) == mVersion;
 }
 inline std::string_view egn::Entity::name() const {
-    if(contains<DebugName>()) {
+    if(valid() && contains<DebugName>()) {
         return get<DebugName>().name;
     }
     return "";
 }
-inline void egn::Entity::name(std::string &&string) {
-    try_emplace<DebugName>().name = string;
+inline void egn::Entity::name(std::string_view string) {
+    if(valid())
+        try_emplace<DebugName>().name = string;
 }

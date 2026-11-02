@@ -548,14 +548,15 @@ static void aliasResources(_impl::RenderGraphImpl &renderGraph) {
 
             if(!e.valid()) {
                 assert(renderGraph.reg && "Should have called RenderGraphBuilder::setAllocInfo!");
-                e = renderGraph.reg->create(resource.ci, DebugName(resourceName));
+                e = renderGraph.reg->create(resource.ci);
+                e.name(resourceName);
                 if(resource.ci.type == ResourceCreateInfo::Image && resource.ci.image.keep) {
                     e.emplace<PleaseKeepTheImageContents>();
                 }
                 LOG_TRACE("    Adding new pool resource {} for {} {}", e, resourceName, string_VkAccessFlagBits2(traits.access));
             } else {
                 LOG_TRACE("    Found pool resource {} for resource {} {}", e, resourceName, string_VkAccessFlagBits2(traits.access));
-                e.get<DebugName>().name += "," + resourceName;
+                e.name(std::string(e.name()) + "," + resourceName);
             }
 
             if(!e.contains<ResourceAllocationInfo>()) {
@@ -618,8 +619,7 @@ static void allocateResources(_impl::RenderGraphImpl &renderGraph) {
                 .allocInfo = renderGraph.allocInfo,
                 .image = allocInfo.ci.image.imageInfo,
             };
-            if(e.contains<DebugName>())
-                imageCreateInfo.name = e.get<DebugName>().name;
+            imageCreateInfo.name = e.name();
             if(allocInfo.ci.image.resizeToSwapchain)
                 e.emplace<ResizeToSwapchain>();
 
@@ -640,8 +640,7 @@ static void allocateResources(_impl::RenderGraphImpl &renderGraph) {
                 .size = allocInfo.bufferSize,
                 .map = false,
             };
-            if(e.contains<DebugName>())
-                bufferCreateInfo.name = e.get<DebugName>().name;
+            bufferCreateInfo.name = e.name();
 
             e.emplace<vk::Buffer>(vk::makeBuffer(bufferCreateInfo));
         }

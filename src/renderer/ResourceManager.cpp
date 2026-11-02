@@ -159,7 +159,7 @@ uint32_t ResourceAllocator::processImage(Entity eImage) {
         };
         eImage.emplace<vk::Image>(vk::makeImage(ci));
         eImage.emplace<ImageIndex>(mProcessedImages.size());
-        eImage.emplace<DebugName>(ci.name);
+        eImage.name(ci.name);
         mProcessedImages.emplace_back(eImage);
 
         vk::insertImageMemoryBarrier(mCommandBuffer, eImage.get<vk::Image>().image,
@@ -312,7 +312,7 @@ void DescriptorManager::update(uint frame, bool force) {
             }
         }
 
-        if(egn::distance(ePipeline.reg().view<ResourceDirty>()))
+        if(std::ranges::distance(ePipeline.reg().view<ResourceDirty>()))
             LOG_TRACE("Pipeline {} dirty {}", ePipeline, dirty);
 
         if(!dirty) {

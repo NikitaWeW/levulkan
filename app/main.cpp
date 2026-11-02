@@ -234,7 +234,8 @@ static egn::Transform lookat(glm::vec3 pos, glm::vec3 center) {
     return { .position = pos, .orientation = glm::normalize(glm::quatLookAt(dir, up)) };
 }
 static egn::Entity makeWindow(egn::Registry &reg, std::string_view name) {
-    auto eWindow = reg.create(egn::Window{ }, egn::DebugName("window_" + std::string(name)));
+    auto eWindow = reg.create(egn::Window{ });
+    eWindow.name("window_" + std::string(name));
     auto &window = eWindow.get<egn::Window>();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     window.handle = glfwCreateWindow(800, 600, name.data(), nullptr, nullptr);
@@ -257,8 +258,8 @@ static void makeWindowSwapchain(egn::RestrictedEntity<egn::Window> &window, VkDe
             .size = {window->size.x, window->size.y},
             .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
             .registry = &sReg,
-        }),
-    egn::DebugName("swapchain_" + (window.contains<egn::DebugName>() ? window.get<egn::DebugName>().name : "")));
+        }));
+    swapchain.name("swapchain_" + std::string(window.name()));
     window->swapchain = swapchain;
 }
 static VkCommandPool createCommandPool(uint32_t index, VkDevice device) {
@@ -583,7 +584,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     egn::RenderGraphBuilder builder;
     builder.setAllocInfo(ALLOCATION_INFO, sReg);
     builder.setQueueFamilies(initRes.queueFamilies);
-    builder.resource().addExternalResource("target", {});
+    builder.resource().addExternalResource("target", { });
 
     struct gbuffer_data {
         egn::RestrictedEntity<egn::vk::Pipeline> pipeline;
@@ -698,7 +699,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 data.shader = e;
                 e.emplace<egn::vk::Pipeline>(egn::vk::makePipeline(*data.shader, layoutCi, pipelineCi));
                 data.pipeline = e;
-                e.emplace<egn::DebugName>("gbuffer_pipeline");
+                e.name("gbuffer_pipeline");
                 egn::vk::allocateDescriptors(data.pipeline.getc());
                 descManager.addResource({
                     .dstPipeline = data.pipeline,
@@ -932,7 +933,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 data.shader = e;
                 e.emplace<egn::vk::Pipeline>(egn::vk::makePipeline(data.shader.get<egn::vk::Shader>(), layoutCi, pipelineCi));
                 data.pipeline = e;
-                e.emplace<egn::DebugName>("lighting_pipeline");
+                e.name("lighting_pipeline");
                 egn::vk::allocateDescriptors(data.pipeline.getc());
                 descManager.addResource({
                     .dstPipeline = data.pipeline,
@@ -1174,12 +1175,11 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     // TODO: Better shader/pipeline creation + better uniform buffer
 
     LOG_INFO("Starting rendering.");
+    egn::IRenderer *renderer = nullptr;
 
     egn::RenderGraphRenderer theRenderer(std::move(builder));
     assert(theRenderer.initSuccess());
     std::ofstream("tmp/RenderGraph.dot", std::ios::trunc) << theRenderer.getRenderGraph().dumpGraphviz(2);
-
-    egn::IRenderer *renderer = nullptr;
     renderer = &theRenderer;
 
     bool shouldResize = false;
@@ -1202,7 +1202,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         // Resize swapchain
         if(shouldResize) {
             LOG_INFO("Resizing the swapchain and {} image resources to {}x{}",
-                egn::distance(sReg.view<egn::vk::Image, egn::ResizeToSwapchain>()),
+                std::ranges::distance(sReg.view<egn::vk::Image, egn::ResizeToSwapchain>()),
                 windowExtent.width,
                 windowExtent.height);
             CHECK_VK_RES(vkDeviceWaitIdle(device));
@@ -1293,8 +1293,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         uniformBuffer.free(frameIndex);
         uniformBuffer.realloc();
 
-        if(egn::distance(sReg.view<egn::ResourceDirty>()))
-            LOG_TRACE("{} resources are dirty! {}", egn::distance(sReg.view<egn::ResourceDirty>()), sReg.view<egn::ResourceDirty>());
+        if(std::ranges::distance(sReg.view<egn::ResourceDirty>()))
+            LOG_TRACE("{} resources are dirty! {}", std::ranges::distance(sReg.view<egn::ResourceDirty>()), sReg.view<egn::ResourceDirty>());
 
         // FIXME: ResourceDirty flag removes too early for resources that are used in multiple frames.
         // FIXME: writes are added only for frame 0.
@@ -1423,7 +1423,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     }
 
     LOG_INFO("Ran for {:.3}s avg deltatime: {:.3}ms ({:.3} fps)", runtime, runtime / frameCount * 1e3, frameCount / runtime);
-    std::ofstream("tmp/runtime.txt", std::ios::out | std::ios::app) << getDateTime() << "    rtm " << std::setprecision(4) << runtime << " s    avg ";
+    std::ofstream("tmp/runtime.txt", std::ios::out | std::ios::app)
+        << getDateTime() << "    rtm " << std::setprecision(4) << runtime << " s    avg " << runtime / frameCount * 1e3 << "ms" << "    " << frameCount / runtime << "fps\n";
 
     LOG_INFO("Exiting");
     return 0;
