@@ -8,6 +8,7 @@ add_subdirectory(.. ${PROJECT_BINARY_DIR}/egn)
 set(APP_SOURCES 
     "main.cpp"
     "Controller.cpp"
+    "Scene.cpp"
 )
 
 add_executable(levulkan ${APP_SOURCES})

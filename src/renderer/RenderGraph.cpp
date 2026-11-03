@@ -22,7 +22,36 @@ struct ResourceCreateInfo {
         RenderGraphBufferCreateInfo buffer;
     };
 
-    ResourceCreateInfo() {}
+    ResourceCreateInfo() {
+    }
+    ResourceCreateInfo(ResourceCreateInfo const &o) {
+        *this = o;
+    }
+    ResourceCreateInfo(ResourceCreateInfo &&o) {
+        *this = std::move(o);
+    }
+    ResourceCreateInfo &operator=(ResourceCreateInfo const &o) {
+        type = o.type;
+        switch(type) {
+            case External: external = o.external; break;
+            case Image: image = o.image; break;
+            case Buffer: buffer = o.buffer; break;
+            case Unknown: break;
+        }
+        return *this;
+    }
+    ResourceCreateInfo &operator=(ResourceCreateInfo &&o) {
+        type = std::move(o.type);
+        switch(type) {
+            case External: external = std::move(o.external); break;
+            case Image: image = std::move(o.image); break;
+            case Buffer: buffer = std::move(o.buffer); break;
+            case Unknown: break;
+        }
+        return *this;
+    }
+    ~ResourceCreateInfo() {
+    }
     ResourceCreateInfo(RenderGraphExternalResourceInfo const &info) {
         type = External;
         external = info;
@@ -326,15 +355,17 @@ bool egn::_impl::setupRenderGraph(RenderGraphBuilder &&builder, RenderGraphImpl 
         resourceInfo.ci = ResourceCreateInfo(info);
     }
     for(auto const &[name, info] : resourceBuilder.getImage()) {
-        LOG_TRACE("  Image resource {} {} {} {}x{}x{} resize to swapchain {} keep {}",
+        LOG_TRACE("  Image resource {} {} {} {}x{}x{} resize to target {} -> {}x{} allow reuse {}",
             name,
             string_VkFormat(info.imageInfo.format),
             string_VkImageType(info.imageInfo.imageType),
             info.imageInfo.dimensions.width,
             info.imageInfo.dimensions.height,
             info.imageInfo.dimensions.depth,
-            info.resizeToSwapchain,
-            info.keep);
+            info.resizeToTarget,
+            info.resizeRatio.x,
+            info.resizeRatio.y,
+            !info.keep);
         if(renderGraph.resources.contains(name) && renderGraph.resources.at(name).ci.type != ResourceCreateInfo::Unknown) {
             LOG_ERROR("Resoure \"{}\" of different type already exists", name);
             return false;
@@ -459,16 +490,17 @@ static void calculateLifetimes(_impl::RenderGraphImpl &renderGraph) {
 }
 static bool isCompatible(RenderGraphImageCreateInfo const &first, RenderGraphImageCreateInfo const &second) {
     return // oh god here we go again
-        first.resizeToSwapchain == second.resizeToSwapchain && first.imageInfo.imageType == second.imageInfo.imageType &&
-        first.imageInfo.format == second.imageInfo.format && first.imageInfo.dimensions.width == second.imageInfo.dimensions.width &&
-        first.imageInfo.dimensions.height == second.imageInfo.dimensions.height &&
-        first.imageInfo.dimensions.depth == second.imageInfo.dimensions.depth &&
-        first.imageInfo.dimensions.mipLevels == second.imageInfo.dimensions.mipLevels &&
-        first.imageInfo.dimensions.arrayLayers == second.imageInfo.dimensions.arrayLayers &&
-        first.imageInfo.dimensions.samples == second.imageInfo.dimensions.samples &&
+        first.resizeToTarget == second.resizeToTarget && vecEquals(first.resizeRatio, second.resizeRatio) &&
+        first.imageInfo.imageType == second.imageInfo.imageType && first.imageInfo.format == second.imageInfo.format &&
+        (first.resizeToTarget || (first.imageInfo.dimensions.width == second.imageInfo.dimensions.width &&
+                                     first.imageInfo.dimensions.height == second.imageInfo.dimensions.height &&
+                                     first.imageInfo.dimensions.depth == second.imageInfo.dimensions.depth &&
+                                     first.imageInfo.dimensions.mipLevels == second.imageInfo.dimensions.mipLevels &&
+                                     first.imageInfo.dimensions.arrayLayers == second.imageInfo.dimensions.arrayLayers &&
+                                     first.imageInfo.dimensions.samples == second.imageInfo.dimensions.samples)) &&
         (first.imageInfo.sampler.flags & second.imageInfo.sampler.flags) && first.imageInfo.sampler.magFilter == second.imageInfo.sampler.magFilter &&
         first.imageInfo.sampler.minFilter == second.imageInfo.sampler.minFilter &&
-        first.imageInfo.sampler.mipmapMode == second.imageInfo.sampler.mipmapMode &&
+        first.imageInfo.sampler.mipmapMode == second.imageInfo.sampler.mipmapMode && // still... going...
         first.imageInfo.sampler.addressModeU == second.imageInfo.sampler.addressModeU &&
         first.imageInfo.sampler.addressModeV == second.imageInfo.sampler.addressModeV &&
         first.imageInfo.sampler.addressModeW == second.imageInfo.sampler.addressModeW &&
@@ -484,7 +516,7 @@ static bool isCompatible(RenderGraphImageCreateInfo const &first, RenderGraphIma
         std::abs(first.imageInfo.sampler.customBorderColor.b - second.imageInfo.sampler.customBorderColor.b) <= 1e-6 &&
         std::abs(first.imageInfo.sampler.customBorderColor.a - second.imageInfo.sampler.customBorderColor.a) <= 1e-6 &&
         first.imageInfo.sampler.unnormalizedCoordinates == second.imageInfo.sampler.unnormalizedCoordinates;
-}
+} // let's never do THAT again...
 // Additionally checks the type of an external resource
 static ResourceCreateInfo::Type getResourceType(RestrictedEntityAny<ResourceCreateInfo> e) {
     ZoneScoped;
@@ -608,6 +640,7 @@ static void allocateResources(_impl::RenderGraphImpl &renderGraph) {
     for(auto e : renderGraph.reg->view<ResourceAllocationInfo>()) {
         auto allocInfo = e.get<ResourceAllocationInfo>();
         e.erase<ResourceAllocationInfo>();
+        e.emplace<RenderGraphResource>();
 
         assert(allocInfo.ci.type == ResourceCreateInfo::Image || allocInfo.ci.type == ResourceCreateInfo::Buffer);
 
@@ -620,13 +653,15 @@ static void allocateResources(_impl::RenderGraphImpl &renderGraph) {
                 .image = allocInfo.ci.image.imageInfo,
             };
             imageCreateInfo.name = e.name();
-            if(allocInfo.ci.image.resizeToSwapchain)
-                e.emplace<ResizeToSwapchain>();
 
-            e.emplace<vk::Image>(vk::makeImage(imageCreateInfo));
-            assert(e.get<vk::Image>().image);
-            assert(e.get<vk::Image>().view);
-            e.emplace<RenderGraphResource>();
+            if(allocInfo.ci.image.resizeToTarget) {
+                e.emplace<ResizeToTarget>(allocInfo.ci.image.resizeRatio);
+                e.emplace<vk::ImageCreateInfo>(imageCreateInfo);
+            } else { // Deffer the image creation.
+                e.emplace<vk::Image>(vk::makeImage(imageCreateInfo));
+                assert(e.get<vk::Image>().image);
+                assert(e.get<vk::Image>().view);
+            }
         } else {
             LOG_TRACE("  Allocating buffer resource {} for {} {} bytes",
                 static_cast<Entity &>(e),

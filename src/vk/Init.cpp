@@ -9,7 +9,7 @@ std::string _sChkLastFileLine;
 
 #define nullptr nullptr
 
-static bool createInstance(InitInfo const &info, InitResult &result) {
+static bool createInstance(InstanceCreateInfo const &info, Instance &result) {
     VkApplicationInfo appInfo{ .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = info.appName.c_str(), .apiVersion = info.version };
 
     uint numExtensionsAvailable;
@@ -17,29 +17,11 @@ static bool createInstance(InitInfo const &info, InitResult &result) {
     std::vector<VkExtensionProperties> availableExtensions(numExtensionsAvailable);
     vkEnumerateInstanceExtensionProperties(nullptr, &numExtensionsAvailable, availableExtensions.data());
 
-    std::vector<char const *> requiredExtensions;
-    if(!info.offscreen) {
-        uint32_t glfwExtensionCount = 0;
-        const char **glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-        requiredExtensions = std::vector<char const *>(glfwExtensions, glfwExtensions + glfwExtensionCount);
-    }
-
-    for(auto const &extension : requiredExtensions) {
-        if(std::find_if(availableExtensions.begin(), availableExtensions.end(), [&](VkExtensionProperties const &p) {
-               return std::strcmp(p.extensionName, extension) == 0;
-           }) == availableExtensions.end()) {
-            LOG_ERROR("Required extension \"{}\" not present!", extension);
-            return false;
-        } else {
-            result.enabledInstanceExtensions.emplace_back(extension);
-        }
-    }
-
     for(auto const &extension : info.instanceExtensions) {
         if(std::find_if(availableExtensions.begin(), availableExtensions.end(), [&](VkExtensionProperties const &p) {
                return std::strcmp(p.extensionName, extension) == 0;
            }) == availableExtensions.end()) {
-            LOG_WARN("Wanted extension \"{}\" not present!", extension);
+            LOG_WARN("Extension \"{}\" not present!", extension);
         } else {
             result.enabledInstanceExtensions.emplace_back(extension);
         }
@@ -209,8 +191,8 @@ VkQueue QueueFamilies::getQueue(VkQueueFlagBits type, uint32_t queueIndex) const
 // You cant get this from an egg!
 // A sensation of your screen! A show that makes you scream!
 // Say it with him folks!
-static InitInfo::DeviceFeatures getFeaturesSupport(VkPhysicalDevice dev) {
-    InitInfo::DeviceFeatures features;
+static DeviceCreateInfo::DeviceFeatures getFeaturesSupport(VkPhysicalDevice dev) {
+    DeviceCreateInfo::DeviceFeatures features;
 
     features.vulkan14 = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES, .pNext = nullptr };
     features.vulkan13 = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, .pNext = &features.vulkan14 };
@@ -239,16 +221,16 @@ template <typename T, typename B = VkBool32> static bool checkFeaturesSupport(T 
 
     return true;
 }
-static bool checkFeaturesSupport(InitInfo::DeviceFeatures const &required, InitInfo::DeviceFeatures const &supported) {
+static bool checkFeaturesSupport(DeviceCreateInfo::DeviceFeatures const &required, DeviceCreateInfo::DeviceFeatures const &supported) {
     return checkFeaturesSupport(required.features, supported.features, 0) &&
            checkFeaturesSupport(required.vulkan11, supported.vulkan11, sizeof(VkStructureType) + sizeof(void *)) && // skip sType and pNext
            checkFeaturesSupport(required.vulkan12, supported.vulkan12, sizeof(VkStructureType) + sizeof(void *)) &&
            checkFeaturesSupport(required.vulkan13, supported.vulkan13, sizeof(VkStructureType) + sizeof(void *)) &&
            checkFeaturesSupport(required.vulkan14, supported.vulkan14, sizeof(VkStructureType) + sizeof(void *));
 }
-static bool isDeviceSuitable(VkPhysicalDevice dev, VkSurfaceKHR surface, InitInfo const &info) {
+static bool isDeviceSuitable(VkPhysicalDevice dev, VkSurfaceKHR surface, DeviceCreateInfo const &info) {
     bool presentSupport = false;
-    if(!info.offscreen) {
+    if(info.surface) {
         std::vector<VkSurfaceFormatKHR> formats;
         uint32_t formatCount;
         vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &formatCount, nullptr);
@@ -271,10 +253,10 @@ static bool isDeviceSuitable(VkPhysicalDevice dev, VkSurfaceKHR surface, InitInf
 
     bool featureSupport = checkFeaturesSupport(info.deviceFeatures, getFeaturesSupport(dev));
 
-    bool queueSupport = complete(findQueueFamilies(dev, surface, info.queues), info.queues, info.offscreen);
+    bool queueSupport = complete(findQueueFamilies(dev, surface, info.queues), info.queues, info.surface);
     bool extensionSupport = checkDeviceExtensionSupport(dev, info.deviceExtensions);
 
-    bool suitable = featureSupport && queueSupport && extensionSupport && (info.offscreen || presentSupport);
+    bool suitable = featureSupport && queueSupport && extensionSupport && (!info.surface || presentSupport);
 
     if(!suitable) {
         LOG_WARN("Device suitability:");
@@ -286,11 +268,11 @@ static bool isDeviceSuitable(VkPhysicalDevice dev, VkSurfaceKHR surface, InitInf
 
     return suitable;
 }
-static bool pickPhysicalDevice(InitInfo const &info, InitResult &result) {
+static bool pickPhysicalDevice(Instance const &instance, DeviceCreateInfo const &info, Device &result) {
     uint32_t deviceCount = 0;
-    CHECK_VK_RES(vkEnumeratePhysicalDevices(result.instance, &deviceCount, nullptr));
+    CHECK_VK_RES(vkEnumeratePhysicalDevices(instance.instance, &deviceCount, nullptr));
     std::vector<VkPhysicalDevice> devices(deviceCount);
-    CHECK_VK_RES(vkEnumeratePhysicalDevices(result.instance, &deviceCount, devices.data()));
+    CHECK_VK_RES(vkEnumeratePhysicalDevices(instance.instance, &deviceCount, devices.data()));
 
     if(devices.size() == 0)
         LOG_ERROR("No vulkan devices!");
@@ -302,7 +284,7 @@ static bool pickPhysicalDevice(InitInfo const &info, InitResult &result) {
         vkGetPhysicalDeviceProperties2(dev, &deviceProperties);
         vkGetPhysicalDeviceFeatures2(dev, &deviceFeatures);
 
-        if(!isDeviceSuitable(dev, result.surface, info)) {
+        if(!isDeviceSuitable(dev, info.surface, info)) {
             LOG_WARN("Physical device \"{}\" is not suitable!", deviceProperties.properties.deviceName);
             continue;
         }
@@ -348,37 +330,28 @@ static VkDevice createDevice(VkPhysicalDevice const &physicalDevice, QueueFamili
     return device;
 }
 
-static void createAllocator(InitInfo const &info, InitResult &result) {
+static void createAllocator(Instance const &instance, DeviceCreateInfo const &info, Device &result) {
     VmaAllocatorCreateInfo allocatorCI{ .flags = info.allocatorFlags,
         .physicalDevice = result.physicalDevice,
         .device = result.device,
-        .instance = result.instance,
-        .vulkanApiVersion = info.version };
+        .instance = instance.instance,
+        .vulkanApiVersion = instance.version };
     VmaVulkanFunctions functions;
     CHECK_VK_RES(vmaImportVulkanFunctionsFromVolk(&allocatorCI, &functions));
     allocatorCI.pVulkanFunctions = &functions;
     CHECK_VK_RES(vmaCreateAllocator(&allocatorCI, &result.vma));
 }
 
-InitResult egn::vk::init(InitInfo info) {
-    InitResult result;
+Instance egn::vk::createInstance(InstanceCreateInfo info) {
+    Instance result;
 
-    if(!createInstance(info, result)) {
+    if(!::createInstance(info, result)) {
         LOG_ERROR("Failed to create the instance!");
         return result;
     }
 
     LOG_TRACE("Instance extensions: {}", result.enabledInstanceExtensions);
     LOG_TRACE("Layers: {}", result.enabledLayers);
-
-    if(!info.offscreen && info.window) {
-        LOG_TRACE("Creating window surface");
-        auto res = glfwCreateWindowSurface(result.instance, info.window, nullptr, &result.surface);
-        if(res != VK_SUCCESS) {
-            LOG_ERROR("Failed to create window surface: {}!", string_VkResult(res));
-            return result;
-        }
-    }
 
     if(contains(info.instanceExtensions, VK_EXT_DEBUG_UTILS_EXTENSION_NAME)) {
         LOG_TRACE("Creating debug messenger");
@@ -393,11 +366,17 @@ InitResult egn::vk::init(InitInfo info) {
         vkCreateDebugUtilsMessengerEXT(result.instance, &debugMessengerCI, nullptr, &result.debugMessenger);
     }
 
-    if(!info.offscreen) {
+    result.valid = true;
+    return result;
+}
+
+Device egn::vk::createDevice(Instance const &instance, DeviceCreateInfo info) {
+    Device result;
+    if(info.surface) {
         info.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
     }
 
-    if(!pickPhysicalDevice(info, result)) {
+    if(!pickPhysicalDevice(instance, info, result)) {
         LOG_ERROR("No suitable device found!");
         return result;
     }
@@ -406,14 +385,14 @@ InitResult egn::vk::init(InitInfo info) {
     vkGetPhysicalDeviceProperties(result.physicalDevice, &properties);
     LOG_TRACE("Physical device: \"{}\"", properties.deviceName);
 
-    result.queueFamilies = findQueueFamilies(result.physicalDevice, result.surface, info.queues);
+    result.queueFamilies = findQueueFamilies(result.physicalDevice, info.surface, info.queues);
     result.device = createDevice(result.physicalDevice, result.queueFamilies, info.deviceExtensions);
     result.queueFamilies.device = result.device;
 
     LOG_TRACE("Device extensions: {}", result.enabledDeviceExtensions);
 
-    createAllocator(info, result);
+    createAllocator(instance, info, result);
 
-    result.success = true;
+    result.valid = true;
     return result;
 }

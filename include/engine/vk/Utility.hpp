@@ -8,7 +8,6 @@ $$ |   $$ |$$ |$$  /   https://opensource.org/license/mit
    \$  /   $$ | \$$\   
     \_/    \__|  \__|  Various vulkan qol and utility functions.
 */
-// FIXME: Why do I keep hearing wine booms when reading this code?
 #pragma once
 #include "engine/vk/Resource.hpp"
 #include "vulkan.h"

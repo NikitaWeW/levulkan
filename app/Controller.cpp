@@ -2,17 +2,19 @@
 #include "engine/io/Logging.hpp"
 #include "engine/io/Window.hpp"
 
-#define CAMERA_COMPONENTS Controller::Camera, egn::WindowEventListener
 
 egn::Entity Controller::createCamera(egn::RestrictedEntity<egn::Window> window, glm::vec3 pos, glm::vec3 target) {
-    auto e = window.reg().create<CAMERA_COMPONENTS>();
+    auto e = window.reg().create();
     auto up = glm::abs(glm::dot(glm::normalize(target - pos), glm::vec3{ 0, 1, 0 })) > 0.99 ? glm::vec3{ 1, 0, 0 } : glm::vec3{ 0, 1, 0 };
     auto q = glm::quat_cast(glm::lookAt(pos, target, up));
-    e.get<Controller::Camera>() = {
+    e.emplace<Controller::Camera>() = {
         .window = window,
         .position = pos,
         // .pitchYaw = glm::vec2(glm::degrees(glm::pitch(q)), glm::degrees(glm::yaw(q)))
         .orientation = q,
+    };
+    e.emplace<egn::WindowEventListener>() = {
+        .window = window
     };
     return e;
 }
@@ -24,7 +26,7 @@ static void updateOrientation(glm::vec2 offset, glm::quat &q) {
 }
 
 void Controller::update(egn::Registry &reg, float dt) {
-    for(egn::Entity eCamera : reg.view<CAMERA_COMPONENTS>()) {
+    for(egn::Entity eCamera : reg.view<Controller::Camera, egn::WindowEventListener>()) {
         auto &camera = eCamera.get<Controller::Camera>();
         auto &listener = eCamera.get<egn::WindowEventListener>();
         auto &window = camera.window.get<egn::Window>();

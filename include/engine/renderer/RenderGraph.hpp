@@ -40,9 +40,24 @@ struct ResourceTraits {
     }
 };
 
+/// Resize to render graph resource.
+// struct ResizeToResource {
+//     inline bool operator==(ResizeToResource const &lhs) const {
+//         return (name.empty() && lhs.name.empty()) ||
+//                (name == lhs.name && glm::abs(ratio.x - lhs.ratio.x) <= 1e-6f && glm::abs(ratio.y - lhs.ratio.y) <= 1e-6f);
+//     }
+// };
+
+// Component (for external resources)
+struct ResizeToTarget {
+    glm::vec2 ratio;
+};
 struct RenderGraphImageCreateInfo {
     vk::ImageCreateInfo::ImageInfo imageInfo;
-    bool resizeToSwapchain = false;
+    /// Whether to resize the image resource to the target image.
+    /// When set to true the dimensions in imageInfo may be omitted.
+    bool resizeToTarget = false;
+    glm::vec2 resizeRatio{ 1.0f };
     bool keep = false;
 };
 struct RenderGraphBufferCreateInfo {
@@ -52,8 +67,7 @@ struct RenderGraphExternalResourceInfo {
     Entity eResource;
     bool keep = false;
 };
-
-struct ResizeToSwapchain { };
+// Tag component
 struct RenderGraphResource { };
 
 class RenderGraphBuilder;
@@ -99,7 +113,9 @@ private:
 public:
     RenderPassBuilder(RenderGraphResourceBuilder *resourceBuilder);
     RenderGraphResourceBuilder *resource();
-    inline RenderGraphResourceBuilder *operator->() { return resource(); }
+    inline RenderGraphResourceBuilder *operator->() {
+        return resource();
+    }
 
     void attachResourceRead(std::string_view resourceName, ResourceTraits traits);
     void attachResourceWrite(std::string_view resourceName, ResourceTraits traits);
@@ -234,7 +250,9 @@ public:
     RenderGraphBuilder &operator=(RenderGraphBuilder &&) = default;
     ~RenderGraphBuilder() = default;
 
-    inline RenderGraphResourceBuilder &resource() { return mResources; }
+    inline RenderGraphResourceBuilder &resource() {
+        return mResources;
+    }
 
     /// @brief Required for allocating stuff (optional)
     /// If not called only RenderPassBuilder::addExternalResource is allowed!
@@ -269,7 +287,6 @@ public:
 
     bool success() const;
 
-    // Just in case. Who knows... hehe...
     void setResource(std::string const &name, Entity eResource);
     Entity getResource(std::string const &name) const;
 

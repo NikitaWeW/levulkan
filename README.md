@@ -9,7 +9,7 @@ Yeah...
 - ECS driven.
 - Vulkan only.
 - Has too many gifs
-
+- No generative "AI" was used.
 
 ## How to use
 
@@ -23,7 +23,7 @@ Yeah...
 ![image](https://media1.tenor.com/m/b4LEpOGvktEAAAAd/the-square-hole-square-hole.gif)
 ![image](https://media.tenor.com/ihzUC8LA1CgAAAAj/komik.gif)
 
-- ECS
+- ECS (lots of it, the entire architecture is ecs-centric)
 - GLSL and Slang Shader compilation and binary management.
 - Pipeline and descriptor set management with shader reflection.
   - Automatic descriptor updates.

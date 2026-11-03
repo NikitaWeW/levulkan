@@ -17,6 +17,7 @@ namespace egn::vk {
 
 struct AllocationCreateInfo {
     VkDevice device = VK_NULL_HANDLE;
+    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     VmaAllocator allocator = VK_NULL_HANDLE;
     VmaPool pool = VK_NULL_HANDLE;
     VkMemoryAllocateFlags allocFlags = 0;

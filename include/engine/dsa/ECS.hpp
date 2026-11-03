@@ -185,10 +185,10 @@ public:
     constexpr operator EntityWrapper();
 
     inline constexpr bool operator==(Entity const &o) const {
-        return mEntity == o.mEntity && pReg() == o.pReg();
+        return mEntity == o.mEntity && pReg() == o.pReg() && mVersion == o.mVersion;
     }
     inline constexpr bool operator<(Entity const &o) const {
-        return pReg() < o.pReg() || mEntity < o.mEntity;
+        return pReg() < o.pReg() || mEntity < o.mEntity || mVersion < o.mVersion;
     }
 
     /// @copydoc ecs::registry::emplace
@@ -330,7 +330,7 @@ template <typename... Components> using RestrictedEntityAny = RestrictedEntity_t
 
 template <typename Component_t> using RestrictedEntity = RestrictedEntity_t<std::logical_or<>, Component_t>;
 
-constexpr ecs::entity INVALID_ENTITY = 0;
+constexpr Entity INVALID_ENTITY = {};
 
 template <typename T> class SparseSet : public ecs::sparse_set<T> {
 public:
@@ -397,7 +397,15 @@ template <typename Stream> inline Stream &operator<<(Stream &str, egn::Entity co
 }
 template <> struct std::hash<egn::Entity> {
     inline size_t operator()(egn::Entity const &e) const {
-        return egn::hash_combine(std::hash<ecs::entity>{ }(e.id()), std::hash<std::uintptr_t>{ }(reinterpret_cast<std::uintptr_t>(e.pReg())));
+        // clang-format off
+        return egn::hash_combine(
+            egn::hash_combine(
+                std::hash<ecs::entity>{ }(e.id()), 
+                std::hash<std::uintptr_t>{ }(reinterpret_cast<std::uintptr_t>(e.pReg()))
+            ), 
+            std::hash<ecs::version_t>{}(e.version())
+        );
+        // clang-format on
     }
 };
 
