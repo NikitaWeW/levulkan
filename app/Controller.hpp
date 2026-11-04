@@ -9,8 +9,6 @@ public:
     struct Camera
     {
         egn::Entity window;
-        glm::mat4 projMat{1.0f};
-        glm::mat4 viewMat{1.0f};
         glm::vec3 position;
         glm::quat orientation;
         // glm::vec2 pitchYaw;

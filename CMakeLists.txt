@@ -24,6 +24,8 @@ set(ASSIMP_WARNINGS_AS_ERRORS OF)
 
 # set(TRACY_ENABLE ON) # From the cli
 
+CPMAddPackage("gh:nikitawew/nicecs#d47e318f1") # Mine :D
+
 CPMAddPackage(
     NAME assimp
     VERSION 6.0.2
@@ -36,7 +38,6 @@ CPMAddPackage(
     GITHUB_REPOSITORY "glfw/glfw"
 )
 CPMAddPackage("gh:wolfpld/tracy#23755c9")
-CPMAddPackage("gh:nikitawew/nicecs#d47e318f1")
 CPMAddPackage("gh:zeux/meshoptimizer@1.0")
 CPMAddPackage(URI "gh:gabime/spdlog@1.17.0" FORCE ON)
 CPMAddPackage("gh:g-truc/glm#1.0.2")

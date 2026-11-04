@@ -139,6 +139,8 @@ public:
 
     iterator begin() const noexcept;
     ecs::view_sentinel end() const noexcept;
+    bool empty() const noexcept;
+
     ecs::size_t estimate() const noexcept;
 };
 
@@ -330,7 +332,7 @@ template <typename... Components> using RestrictedEntityAny = RestrictedEntity_t
 
 template <typename Component_t> using RestrictedEntity = RestrictedEntity_t<std::logical_or<>, Component_t>;
 
-constexpr Entity INVALID_ENTITY = {};
+constexpr Entity INVALID_ENTITY = { };
 
 template <typename T> class SparseSet : public ecs::sparse_set<T> {
 public:
@@ -479,6 +481,10 @@ inline egn::RegistryView<Include, Exclude, Entity_t>::iterator egn::RegistryView
 template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
 inline ecs::view_sentinel egn::RegistryView<Include, Exclude, Entity_t>::end() const noexcept {
     return { };
+}
+template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
+inline bool egn::RegistryView<Include, Exclude, Entity_t>::empty() const noexcept {
+    ecs::view<Include, Exclude>::size() == 0;
 }
 template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
 inline ecs::size_t egn::RegistryView<Include, Exclude, Entity_t>::estimate() const noexcept {

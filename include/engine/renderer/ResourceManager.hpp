@@ -53,6 +53,7 @@ private:
     VkFence mFence = nullptr;
     VkQueue mQueue = nullptr;
     std::vector<Entity> mProcessedImages;
+    uint mProcessedCount = 0;
 public:
     /// @brief The index in the images array.
     /// Every processed image has this component.

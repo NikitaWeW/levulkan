@@ -1,19 +1,20 @@
 #include "engine/renderer/RenderGraphRenderer.hpp"
 
-egn::RenderGraphRenderer::RenderGraphRenderer(RenderGraphBuilder &&builder):
-    mRenderGraph(buildRenderGraph(std::move(builder))) {
-    assert(mRenderGraph.success() && "Bro skill issue lol");
+void egn::RenderGraphRenderer::build(RenderGraphBuilder &&builder, void *data) {
+    mRenderGraph = buildRenderGraph(std::move(builder), data);
+    if(!mRenderGraph.success()) {
+        return;
+    }
     if(mRenderGraph.getResource("target")) {
         LOG_WARN("Render graph resource name \"target\" is reserved by RenderGraphRenderer!");
     }
 }
 
 void egn::RenderGraphRenderer::render(RestrictedEntity<vk::Image> target, CommandBuffers &commandBuffers) {
-    // auto &reg = target.reg();
     mRenderGraph.setResource("target", target);
     for(auto const &passName : mRenderGraph.getPassStack()) {
         auto const &pass = mRenderGraph.getPass(passName);
-        pass->storage->postCompile(mRenderGraph);
+        pass->storage->postCompile(mRenderGraph, mData);
     }
 
     for(auto passIndex : mRenderGraph.getPassStack()) {
@@ -57,6 +58,4 @@ void egn::RenderGraphRenderer::render(RestrictedEntity<vk::Image> target, Comman
 
         pass->render(passCB);
     }
-
-
 }

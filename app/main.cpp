@@ -69,21 +69,21 @@ public:
             .deviceExtensions = { VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME },
             .queues = {VK_QUEUE_GRAPHICS_BIT, VK_QUEUE_COMPUTE_BIT, VK_QUEUE_TRANSFER_BIT},
             .deviceFeatures = {
-                .features =
-                    {
-                        .geometryShader = true,
-                        .shaderSampledImageArrayDynamicIndexing = true,
-                    },
-                .vulkan12 =
-                    {
-                        .descriptorIndexing = true,
-                        .descriptorBindingVariableDescriptorCount = true,
-                        .runtimeDescriptorArray = true,
-                        .bufferDeviceAddress = true,
-                    },
+                .features = {
+                    .geometryShader = true,
+                    .shaderSampledImageArrayDynamicIndexing = true,
+                },
+                .vulkan12 = {
+                    .descriptorIndexing = true,
+                    .descriptorBindingVariableDescriptorCount = true,
+                    .runtimeDescriptorArray = true,
+                    .bufferDeviceAddress = true,
+                },
                 .vulkan13 = {
                     .synchronization2 = true,
                     .dynamicRendering = true,
+                },
+                .vulkan14 = {
                 },
             },
         };
@@ -156,19 +156,6 @@ static VkCommandPool createCommandPool(uint32_t index, VkDevice device) {
     vkCreateCommandPool(device, &commandPoolCI, nullptr, &commandPool);
     return commandPool;
 }
-template <typename T> static uint64_t pushUniform(egn::vk::RingBuffer &uniformBuffer, T const &data, uint frame, uint alignment = 16) {
-    uint64_t offset = uniformBuffer.request(sizeof(data), frame, alignment);
-    std::memcpy(static_cast<char *>(uniformBuffer.getBuffer()->hostAddress) + offset, &data, sizeof(data));
-    offset += uniformBuffer.getBuffer()->deviceAddress;
-    return offset;
-}
-template <std::ranges::range T> static uint64_t pushUniform(egn::vk::RingBuffer &uniformBuffer, T const &data, uint frame, uint alignment = 16) {
-    uint32_t size = std::ranges::size(data) * sizeof(*std::ranges::data(data));
-    uint64_t offset = uniformBuffer.request(size, frame, alignment);
-    std::memcpy(static_cast<char *>(uniformBuffer.getBuffer()->hostAddress) + offset, std::ranges::data(data), size);
-    offset += uniformBuffer.getBuffer()->deviceAddress;
-    return offset;
-}
 
 ////////////////////////////////////////////////////////////////
 
@@ -194,13 +181,12 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     if(!vulkanInitializer.Success()) {
         return -1;
     }
-    
+
     auto &instance = vulkanInitializer.Instance().instance;
     auto &physicalDevice = vulkanInitializer.Context().physicalDevice;
     auto &queueFamilies = vulkanInitializer.Context().queueFamilies;
     auto &vma = vulkanInitializer.Context().vma;
     auto &device = vulkanInitializer.Context().device;
-
 
     egn::vk::AllocationCreateInfo const ALLOCATION_INFO{
         .device = device,
@@ -217,17 +203,6 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
     VkCommandPool commandPool = createCommandPool(queueFamilies.indices.at(VK_QUEUE_GRAPHICS_BIT), device);
 
-    egn::DescriptorManager descManager;
-
-    egn::vk::RingBuffer uniformBuffer(sReg,
-        {
-            .usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-            .allocInfo = ALLOCATION_INFO,
-            .size = static_cast<uint32_t>(64 * 1e6), // 64MB
-            .map = true,
-            .name = "uniform_buffer",
-        });
-
     VkPhysicalDeviceProperties2 properties{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
     vkGetPhysicalDeviceProperties2(physicalDevice, &properties);
 
@@ -240,12 +215,11 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     // History resources
     // Per frame in flight resource descriptors
     // Compute buffers
-    egn::RenderGraphBuilder builder;
-    builder.setAllocInfo(ALLOCATION_INFO, sReg);
-    builder.setQueueFamilies(queueFamilies);
-    builder.resource().addExternalResource("target", { });
-
-    scene->setupRenderer(sReg, builder, descManager, swapchain.get<egn::vk::Device>());
+    // ---
+    // Draw scene to file as proof of concept.
+    egn::DescriptorManager descManager;
+    egn::IRenderer *renderer = nullptr;
+    scene->setupRenderer(sReg, &renderer, descManager, swapchain.get<egn::vk::Device>());
 
     ////////////////////////////////////////////////////////////////
 
@@ -310,12 +284,10 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     // TODO: Better shader/pipeline creation + better uniform buffer
 
     LOG_INFO("Starting rendering.");
-    egn::IRenderer *renderer = nullptr;
 
-    egn::RenderGraphRenderer theRenderer(std::move(builder));
-    assert(theRenderer.initSuccess());
-    std::ofstream("tmp/RenderGraph.dot", std::ios::trunc) << theRenderer.getRenderGraph().dumpGraphviz(2);
-    renderer = &theRenderer;
+    // egn::RenderGraphRenderer theRenderer(std::move(builder));
+    // assert(theRenderer.initSuccess());
+    // std::ofstream("tmp/RenderGraph.dot", std::ios::trunc) << theRenderer.getRenderGraph().dumpGraphviz(2);
 
     bool shouldResize = false;
     uint64_t frameCount = 0;
@@ -389,9 +361,6 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             break;
         }
 
-        uniformBuffer.free(frameIndex);
-        uniformBuffer.realloc();
-
         if(std::ranges::distance(sReg.view<egn::ResourceDirty>()))
             LOG_TRACE("{} resources are dirty! {}", std::ranges::distance(sReg.view<egn::ResourceDirty>()), sReg.view<egn::ResourceDirty>());
 
@@ -416,7 +385,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         }
 
         // TODO: measure performance of rebuilding render graph every frame
-        renderer->preFrame(sReg);
+        renderer->preFrame(sReg, frameIndex);
         renderer->render(swapchain->images[imageIndex], frameCommandBuffers);
 
         // Submit command buffer

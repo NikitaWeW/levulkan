@@ -9,10 +9,15 @@ namespace egn {
 class RenderGraphRenderer : public IRenderer {
 private:
     RenderGraphResult mRenderGraph;
+    void *mData = nullptr;
 public:
-    RenderGraphRenderer(RenderGraphBuilder &&builder);
+    RenderGraphRenderer() = default;
+    void build(RenderGraphBuilder &&builder, void *data = nullptr);
     void render(RestrictedEntity<vk::Image> target, CommandBuffers &commandBuffers) override;
 
+    inline void setData(void *data) {
+        mData = data;
+    }
     inline void setResource(std::string const &name, Entity eResource) {
         mRenderGraph.setResource(name, eResource);
     }

@@ -7,10 +7,10 @@
 namespace egn {
 
 class RenderPassBuilder;
-template <typename T> using RenderPassSetupCallback_t = void(RenderPassBuilder &);
+template <typename T> using RenderPassSetupCallback_t = void(RenderPassBuilder &, void *);
 class RenderGraphResult;
-template <typename T> using RenderPassPostCompileCallback_t = void(T &, RenderGraphResult const &);
-template <typename T> using RenderPassRenderCallback_t = void(T &, VkCommandBuffer);
+template <typename T> using RenderPassPostCompileCallback_t = void(T &, RenderGraphResult const &, void *);
+template <typename T> using RenderPassRenderCallback_t = void(T &, VkCommandBuffer, void *);
 
 struct ResourceTraits {
     struct {
@@ -95,7 +95,7 @@ public:
 
 namespace _impl {
     struct RenderGraphImpl;
-    bool setupRenderGraph(::egn::RenderGraphBuilder &&, RenderGraphImpl &);
+    bool setupRenderGraph(::egn::RenderGraphBuilder &&, void *, RenderGraphImpl &);
 }
 
 class RenderPassBuilder {
@@ -109,7 +109,7 @@ private:
 
     RenderGraphResourceBuilder *mResourceBuilder = nullptr;
 
-    friend bool ::egn::_impl::setupRenderGraph(RenderGraphBuilder &&, _impl::RenderGraphImpl &);
+    friend bool ::egn::_impl::setupRenderGraph(RenderGraphBuilder &&, void *, _impl::RenderGraphImpl &);
 public:
     RenderPassBuilder(RenderGraphResourceBuilder *resourceBuilder);
     RenderGraphResourceBuilder *resource();
@@ -124,9 +124,9 @@ public:
 class IRenderPassStorage {
 public:
     virtual ~IRenderPassStorage() = default;
-    virtual void setup(RenderPassBuilder &builder) = 0;
-    virtual void postCompile(RenderGraphResult const &res) = 0;
-    virtual void render(VkCommandBuffer cb) = 0;
+    virtual void setup(RenderPassBuilder &builder, void *data = nullptr) = 0;
+    virtual void postCompile(RenderGraphResult const &res, void *data = nullptr) = 0;
+    virtual void render(VkCommandBuffer cb, void *data = nullptr) = 0;
 
     virtual IRenderPassStorage *clone() = 0;
 };
@@ -148,14 +148,14 @@ public:
         mRenderCallback = renderCallback;
     }
 
-    inline void setup(RenderPassBuilder &builder) override {
-        mSetupCallback(builder);
+    inline void setup(RenderPassBuilder &builder, void *data) override {
+        mSetupCallback(builder, data);
     }
-    inline void postCompile(RenderGraphResult const &res) override {
-        mPostCompileCallback(mData, res);
+    inline void postCompile(RenderGraphResult const &res, void *data) override {
+        mPostCompileCallback(mData, res, data);
     }
-    inline void render(VkCommandBuffer cb) override {
-        mRenderCallback(mData, cb);
+    inline void render(VkCommandBuffer cb, void *data) override {
+        mRenderCallback(mData, cb, data);
     }
     inline IRenderPassStorage *clone() override {
         return new RenderPassStorage<T>(*this);
@@ -241,7 +241,7 @@ private:
     RenderGraphResourceBuilder mResources;
     Registry *reg = nullptr;
     bool fresh = true;
-    friend bool ::egn::_impl::setupRenderGraph(RenderGraphBuilder &&, _impl::RenderGraphImpl &);
+    friend bool ::egn::_impl::setupRenderGraph(RenderGraphBuilder &&, void * , _impl::RenderGraphImpl &);
 public:
     RenderGraphBuilder() = default;
     RenderGraphBuilder(RenderGraphBuilder const &) = delete;
@@ -278,7 +278,7 @@ class RenderGraphResult {
 private:
     struct RenderGraphResultImpl *mImpl = nullptr;
 public:
-    RenderGraphResult(RenderGraphResultImpl *data); // data could be nullptr if failed
+    RenderGraphResult(RenderGraphResultImpl *data = nullptr); // data could be nullptr if failed
     RenderGraphResult(RenderGraphResult const &) = delete;
     RenderGraphResult &operator=(RenderGraphResult const &) = delete;
     RenderGraphResult(RenderGraphResult &&);
@@ -301,7 +301,7 @@ public:
     std::string dumpGraphviz(int indent = -1, GraphvizSettings settings = { }) const;
 };
 
-RenderGraphResult buildRenderGraph(RenderGraphBuilder &&builder);
+RenderGraphResult buildRenderGraph(RenderGraphBuilder &&builder, void *userData = nullptr);
 
 // ===================================================================================
 

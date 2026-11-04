@@ -28,7 +28,7 @@ public:
     virtual ~IRenderer() = default;
 
     /// Prepares for the frame (update resources, etc.)
-    virtual void preFrame(Registry &) { };
+    virtual void preFrame(Registry &reg, uint frameIndex) { };
 
     /// Renders the registry of the #target entity the #target image.
     virtual void render(RestrictedEntity<vk::Image> target, CommandBuffers &commandBuffers) = 0;

@@ -232,6 +232,7 @@ void ResourceAllocator::processModel(Entity eModel) {
     }
 }
 void ResourceAllocator::begin() {
+    assert(mProcessedCount == 0 && "Call end() before begin()");
     VkCommandBufferBeginInfo beginInfo{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
@@ -239,6 +240,9 @@ void ResourceAllocator::begin() {
     CHECK_VK_RES(vkBeginCommandBuffer(mCommandBuffer, &beginInfo));
 }
 void ResourceAllocator::end() {
+    if(mProcessedCount == 0) {
+        return;
+    }
     vkEndCommandBuffer(mCommandBuffer);
 
     VkSubmitInfo submitInfo{
@@ -248,6 +252,7 @@ void ResourceAllocator::end() {
     };
     CHECK_VK_RES(vkQueueSubmit(mQueue, 1, &submitInfo, mFence));
     CHECK_VK_RES(vkWaitForFences(mAllocInfo.device, 1, &mFence, true, UINT64_MAX));
+    mProcessedCount = 0;
 }
 
 void DescriptorManager::addResource(DescriptorWrite write) {

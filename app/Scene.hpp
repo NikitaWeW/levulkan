@@ -11,18 +11,20 @@ class IScene {
 public:
     virtual ~IScene() = default;
     virtual void setup(egn::Registry &reg) = 0;
-    virtual void setupRenderer(egn::Registry &reg, egn::RenderGraphBuilder &builder, egn::DescriptorManager &descManager, egn::vk::Device const &device) = 0;
+    virtual void setupRenderer(egn::Registry &reg, egn::IRenderer **renderer, egn::vk::Device const &device) = 0;
     virtual void update(egn::Registry &reg, float deltatime) = 0;
 };
 
 class TestScene : public IScene {
 protected:
     Controller mController;
-    egn::WindowEventListener mEventListener;
+    egn::Entity mEventListener;
     egn::Entity mCamera;
+    VkCommandPool mCommandPool = nullptr;
+    egn::vk::Device mDevice;
 public:
     void setup(egn::Registry &reg) override;
-    void setupRenderer(egn::Registry &reg, egn::IRenderer **renderer, egn::DescriptorManager &descManager, egn::vk::Device const &device) override;
+    void setupRenderer(egn::Registry &reg, egn::IRenderer **renderer, egn::vk::Device const &device) override;
     void update(egn::Registry &reg, float deltatime) override;
 };
 

@@ -1,7 +1,7 @@
 #include "Controller.hpp"
 #include "engine/io/Logging.hpp"
 #include "engine/io/Window.hpp"
-
+#include "engine/scene/Camera.hpp"
 
 egn::Entity Controller::createCamera(egn::RestrictedEntity<egn::Window> window, glm::vec3 pos, glm::vec3 target) {
     auto e = window.reg().create();
@@ -13,6 +13,7 @@ egn::Entity Controller::createCamera(egn::RestrictedEntity<egn::Window> window, 
         // .pitchYaw = glm::vec2(glm::degrees(glm::pitch(q)), glm::degrees(glm::yaw(q)))
         .orientation = q,
     };
+    e.emplace<egn::Camera>();
     e.emplace<egn::WindowEventListener>() = {
         .window = window
     };

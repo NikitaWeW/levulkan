@@ -282,7 +282,7 @@ std::string RenderGraphResult::dumpGraphviz(int indent, GraphvizSettings setting
     return ss.str();
 }
 
-bool egn::_impl::setupRenderGraph(RenderGraphBuilder &&builder, RenderGraphImpl &renderGraph) {
+bool egn::_impl::setupRenderGraph(RenderGraphBuilder &&builder, void *data, RenderGraphImpl &renderGraph) {
     ZoneScoped;
 
     assert(builder.fresh && "Cannot use same RenderGraphBuilder twice!");
@@ -311,7 +311,7 @@ bool egn::_impl::setupRenderGraph(RenderGraphBuilder &&builder, RenderGraphImpl 
         LOG_TRACE("Adding pass {} queue {}", renderGraphPass.name, string_VkQueueFlagBits(renderGraphPass.queue));
 
         RenderPassBuilder passBuilder(&resourceBuilder);
-        renderGraphPass.storage->setup(passBuilder);
+        renderGraphPass.storage->setup(passBuilder, data);
         for(auto const &[name, traits] : passBuilder.mWrites) {
             LOG_TRACE("  Writes {} {}", name, string_VkAccessFlags2(traits.access));
             auto &resourceInfo = renderGraph.resources[name];
@@ -766,12 +766,12 @@ static bool buildBarriers(_impl::RenderGraphImpl &renderGraph) {
     return true;
 }
 
-RenderGraphResult egn::buildRenderGraph(RenderGraphBuilder &&builder) {
+RenderGraphResult egn::buildRenderGraph(RenderGraphBuilder &&builder, void *data) {
     ZoneScoped;
 
     _impl::RenderGraphImpl renderGraph;
 
-    if(!setupRenderGraph(std::move(builder), renderGraph)) {
+    if(!setupRenderGraph(std::move(builder), data, renderGraph)) {
         LOG_ERROR("Failed to set up render graph!");
         return RenderGraphResult(nullptr);
     }
@@ -822,7 +822,7 @@ RenderGraphResult egn::buildRenderGraph(RenderGraphBuilder &&builder) {
     RenderGraphResult result(res);
 
     for(auto &[_, pass] : res->passes) {
-        pass.storage->postCompile(result);
+        pass.storage->postCompile(result, data);
     }
 
     return result;
