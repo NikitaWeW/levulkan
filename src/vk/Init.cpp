@@ -169,8 +169,9 @@ static QueueFamilies findQueueFamilies(VkPhysicalDevice const &device, VkSurface
             }
         }
 
-        if(complete(indices, queues, offscreen))
+        if(complete(indices, queues, offscreen)) {
             break;
+        }
     }
 
     return indices;
@@ -253,7 +254,7 @@ static bool isDeviceSuitable(VkPhysicalDevice dev, VkSurfaceKHR surface, DeviceC
 
     bool featureSupport = checkFeaturesSupport(info.deviceFeatures, getFeaturesSupport(dev));
 
-    bool queueSupport = complete(findQueueFamilies(dev, surface, info.queues), info.queues, info.surface);
+    bool queueSupport = complete(findQueueFamilies(dev, surface, info.queues), info.queues, !info.surface);
     bool extensionSupport = checkDeviceExtensionSupport(dev, info.deviceExtensions);
 
     bool suitable = featureSupport && queueSupport && extensionSupport && (!info.surface || presentSupport);
@@ -263,7 +264,7 @@ static bool isDeviceSuitable(VkPhysicalDevice dev, VkSurfaceKHR surface, DeviceC
         LOG_WARN("Feature support:   {}", featureSupport);
         LOG_WARN("Queue support:     {}", queueSupport);
         LOG_WARN("Extension support: {}", extensionSupport);
-        LOG_WARN("Present support:   {}", presentSupport);
+        LOG_WARN("Present support:   {}, required - {}", presentSupport, bool(info.surface));
     }
 
     return suitable;

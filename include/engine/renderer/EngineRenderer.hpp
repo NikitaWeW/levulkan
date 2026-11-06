@@ -76,20 +76,21 @@ egn::ResourceTraits constexpr TRANSFER_DST_TRAITS{
     .stages = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
 };
 
-class EngineRenderer : protected RenderGraphRenderer {
+class EngineRenderer : public RenderGraphRenderer {
 private:
     struct EngineRendererImpl *mImpl = nullptr;
 public:
     EngineRenderer(Registry &reg, vk::Device const &device);
-    EngineRenderer(EngineRenderer const &) = delete;
-    EngineRenderer(EngineRenderer &&) = default;
-    EngineRenderer &operator=(EngineRenderer const &) = delete;
-    EngineRenderer &operator=(EngineRenderer &&) = default;
+    EngineRenderer(EngineRenderer &&o);
+    EngineRenderer &operator=(EngineRenderer &&o);
     ~EngineRenderer();
 
+    EngineRenderer(EngineRenderer const &) = delete;
+    EngineRenderer &operator=(EngineRenderer const &) = delete;
+
     void setCamera(RestrictedEntity<Camera> camera);
-    void preFrame(Registry &reg, uint frameIndex) override;
-    void render(RestrictedEntity<vk::Image> target, CommandBuffers &commandBuffers) override;
+    void preFrame(RestrictedEntity<vk::Image> target, uint frameIndex);
+    void render(CommandBuffers &commandBuffers);
 };
 
 };

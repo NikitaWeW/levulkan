@@ -128,6 +128,9 @@ public:
     virtual void postCompile(RenderGraphResult const &res, void *data = nullptr) = 0;
     virtual void render(VkCommandBuffer cb, void *data = nullptr) = 0;
 
+    virtual void const *data() const = 0;
+    virtual void *data() = 0;
+
     virtual IRenderPassStorage *clone() = 0;
 };
 template <typename T> class RenderPassStorage : public IRenderPassStorage {
@@ -159,6 +162,12 @@ public:
     }
     inline IRenderPassStorage *clone() override {
         return new RenderPassStorage<T>(*this);
+    }
+    inline void const *data() const {
+        return &mData;
+    }
+    inline void *data() {
+        return &mData;
     }
 };
 

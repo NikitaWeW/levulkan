@@ -1,4 +1,5 @@
 #include <bits/stdc++.h>
+#include <signal.h>
 
 #include "engine/renderer/ResourceManager.hpp"
 #include "engine/scene/Animation.hpp"
@@ -26,7 +27,7 @@ egn::Registry sReg;
 class VulkanInitializer {
 private:
     egn::vk::Instance instance;
-    egn::vk::Device context;
+    egn::vk::Device device;
     VkSurfaceKHR surface = nullptr;
     bool success = false;
 public:
@@ -46,11 +47,11 @@ public:
         const char **glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
         egn::vk::InstanceCreateInfo instanceCI{
             .appName = "levulkan",
-            .version = VK_API_VERSION_1_4,
+            .version = VK_API_VERSION_1_3,
             .instanceExtensions = std::vector<char const *>(glfwExtensions, glfwExtensions + glfwExtensionCount),
         };
         egn::vk::enableValidationLayers(instanceCI);
-        egn::vk::createInstance(instanceCI);
+        instance = egn::vk::createInstance(instanceCI);
         if(!instance.valid) {
             LOG_ERROR("Failed to create vulkan instance!");
             return;
@@ -64,7 +65,7 @@ public:
             }
         }
 
-        egn::vk::DeviceCreateInfo contextCI {
+        egn::vk::DeviceCreateInfo deviceCI {
             .surface = surface,
             .deviceExtensions = { VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME },
             .queues = {VK_QUEUE_GRAPHICS_BIT, VK_QUEUE_COMPUTE_BIT, VK_QUEUE_TRANSFER_BIT},
@@ -75,6 +76,7 @@ public:
                 },
                 .vulkan12 = {
                     .descriptorIndexing = true,
+                    .descriptorBindingPartiallyBound = true,
                     .descriptorBindingVariableDescriptorCount = true,
                     .runtimeDescriptorArray = true,
                     .bufferDeviceAddress = true,
@@ -88,8 +90,8 @@ public:
             },
         };
 
-        context = egn::vk::createDevice(instance, contextCI);
-        if(!context.valid) {
+        device = egn::vk::createDevice(instance, deviceCI);
+        if(!device.valid) {
             LOG_ERROR("Failed to init vulkan!");
             return;
         }
@@ -106,8 +108,8 @@ public:
     inline VkSurfaceKHR Surface() const {
         return surface;
     }
-    inline egn::vk::Device const &Context() const {
-        return context;
+    inline egn::vk::Device const &Device() const {
+        return device;
     }
 };
 
@@ -169,24 +171,25 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
     /////////////////////////////////////////////////////////
 
-    scene->setup(sReg);
-
     if(!glfwInit()) {
         LOG_ERROR("Failed to init glfw!");
         return -1;
     }
 
     egn::RestrictedEntity<egn::Window> window = makeWindow(sReg, "levulkan");
-    VulkanInitializer vulkanInitializer;
+    window.emplace<scene::MainWindow>();
+    VulkanInitializer vulkanInitializer(window->handle);
     if(!vulkanInitializer.Success()) {
         return -1;
     }
 
+    window->surface = vulkanInitializer.Surface();
+
     auto &instance = vulkanInitializer.Instance().instance;
-    auto &physicalDevice = vulkanInitializer.Context().physicalDevice;
-    auto &queueFamilies = vulkanInitializer.Context().queueFamilies;
-    auto &vma = vulkanInitializer.Context().vma;
-    auto &device = vulkanInitializer.Context().device;
+    auto &physicalDevice = vulkanInitializer.Device().physicalDevice;
+    auto &queueFamilies = vulkanInitializer.Device().queueFamilies;
+    auto &vma = vulkanInitializer.Device().vma;
+    auto &device = vulkanInitializer.Device().device;
 
     egn::vk::AllocationCreateInfo const ALLOCATION_INFO{
         .device = device,
@@ -199,7 +202,9 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     makeWindowSwapchain(window, device, physicalDevice);
     auto swapchain = window->swapchain;
     swapchain.emplace<egn::vk::Instance>(vulkanInitializer.Instance());
-    swapchain.emplace<egn::vk::Device>(vulkanInitializer.Context());
+    swapchain.emplace<egn::vk::Device>(vulkanInitializer.Device());
+
+    scene->setup(sReg);
 
     VkCommandPool commandPool = createCommandPool(queueFamilies.indices.at(VK_QUEUE_GRAPHICS_BIT), device);
 
@@ -217,9 +222,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     // Compute buffers
     // ---
     // Draw scene to file as proof of concept.
-    egn::DescriptorManager descManager;
     egn::IRenderer *renderer = nullptr;
-    scene->setupRenderer(sReg, &renderer, descManager, swapchain.get<egn::vk::Device>());
+    scene->setupRenderer(sReg, &renderer, swapchain.get<egn::vk::Device>());
 
     ////////////////////////////////////////////////////////////////
 
@@ -281,13 +285,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         }
     }
 
-    // TODO: Better shader/pipeline creation + better uniform buffer
-
     LOG_INFO("Starting rendering.");
-
-    // egn::RenderGraphRenderer theRenderer(std::move(builder));
-    // assert(theRenderer.initSuccess());
-    // std::ofstream("tmp/RenderGraph.dot", std::ios::trunc) << theRenderer.getRenderGraph().dumpGraphviz(2);
 
     bool shouldResize = false;
     uint64_t frameCount = 0;
@@ -311,32 +309,18 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
         // Resize swapchain
         if(shouldResize) {
-            LOG_INFO("Resizing the swapchain and {} image resources to {}x{}",
-                std::ranges::distance(sReg.view<egn::vk::Image, egn::ResizeToTarget>()),
+            LOG_INFO("Resizing the swapchain and {} images to {}x{}",
+                std::ranges::distance(sReg.view<egn::ResizeToTarget>()),
                 windowExtent.width,
                 windowExtent.height);
             CHECK_VK_RES(vkDeviceWaitIdle(device));
 
             egn::vk::resizeSwapchain(swapchain.getc(), windowExtent);
 
-            for(auto e : sReg.view<egn::ResizeToTarget>()) {
-                auto &image = e.get<egn::vk::Image>();
-                auto const &ratio = e.get<egn::ResizeToTarget>().ratio;
-                egn::vk::destroy(image);
-                image.createInfo.image.dimensions.width = windowExtent.width * ratio.x;
-                image.createInfo.image.dimensions.height = windowExtent.height * ratio.y;
-                image = egn::vk::makeImage(image.createInfo);
-                e.try_emplace<egn::ResourceDirty>();
-            }
-
             shouldResize = false;
         }
 
         scene->update(sReg, deltatime);
-
-        for(auto e : sReg.view<egn::ModelInstance, egn::CurrentAnimation>()) {
-            animate(e, deltatime);
-        }
 
         /////////////////////////////////////////////////////////////////////
 
@@ -366,7 +350,6 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
         // FIXME: ResourceDirty flag removes too early for resources that are used in multiple frames. Writes are added only for frame 0.
         // FIX: Add a counter to the component.
-        descManager.update(0);
         for(auto e : sReg.view<egn::ResourceDirty>()) {
             e.erase<egn::ResourceDirty>();
         }
@@ -385,8 +368,8 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         }
 
         // TODO: measure performance of rebuilding render graph every frame
-        renderer->preFrame(sReg, frameIndex);
-        renderer->render(swapchain->images[imageIndex], frameCommandBuffers);
+        renderer->preFrame(swapchain->images[imageIndex], frameIndex);
+        renderer->render(frameCommandBuffers);
 
         // Submit command buffer
         for(auto [queue, cb] : frameCommandBuffers.commandBuffers) {
@@ -508,6 +491,7 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     LOG_INFO("Exiting");
     return 0;
 }
+
 int main(int argc, char **argv) {
     std::filesystem::create_directory("tmp/");
 

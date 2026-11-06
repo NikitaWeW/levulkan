@@ -28,9 +28,10 @@ struct DescriptorBinding {
 
 struct PipelineLayoutCreateInfo {
     std::set<DescriptorBinding> dynamicDescriptors;
-    std::map<DescriptorBinding, uint32_t> unsizedDescriptorSize; ///< Self explanatory. Each unsized descriptor array must have an entry here.
+    std::set<DescriptorBinding> unsizedDescriptors;
     std::map<DescriptorBinding, VkDescriptorBindingFlags> descriptorBindingFlags; ///< Optional additional flags for descriptor bindings. VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT is set automatically.
     std::map<uint32_t, VkDescriptorSetLayoutCreateFlags> descriptorSetFlags; ///< Optional flags for descriptor sets.
+    uint maxUnsizedDescriptorSize = 1024;
 };
 struct GraphicsPipelineCreateInfo {
     VkPipelineCreateFlags flags = 0;
@@ -112,8 +113,11 @@ struct Pipeline {
         SparseSet<VkDescriptorSetLayout> descLayouts;
     };
     
+    struct DescriptorSet {
+        VkDescriptorSet set;
+    };
     struct DescriptorSets {
-        std::vector<SparseSet<VkDescriptorSet>> sets;
+        std::vector<SparseSet<DescriptorSet>> sets;
         VkDescriptorPool pool;
     };
     
@@ -136,8 +140,7 @@ struct Pipeline {
 };
 struct DescriptorAllocationInfo {
     uint numFrames = 1; 
-    uint maxVariableCountSize = 100; 
-    uint maxDescriptorSets = 16;
+    uint unsizedDescSize = 512;
 };
 struct DescriptorWrite {
     uint32_t dstSet = 0;

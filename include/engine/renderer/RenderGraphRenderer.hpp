@@ -12,8 +12,10 @@ private:
     void *mData = nullptr;
 public:
     RenderGraphRenderer() = default;
-    void build(RenderGraphBuilder &&builder, void *data = nullptr);
-    void render(RestrictedEntity<vk::Image> target, CommandBuffers &commandBuffers) override;
+    void build(RenderGraphBuilder &&builder);
+    
+    void preFrame(RestrictedEntity<vk::Image> target, uint frameIndex);
+    void render(CommandBuffers &commandBuffers);
 
     inline void setData(void *data) {
         mData = data;

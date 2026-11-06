@@ -104,6 +104,9 @@ struct Reflection {
     std::map<std::pair<uint32_t, uint32_t>, VkPushConstantRange> pushConstants;
     std::unordered_map<uint32_t, VkFormat> input;
     std::unordered_map<uint32_t, VkFormat> output;
+
+    uint maxUnsizedDescSize = 0;
+    uint allocatedDescSize = 0;
 };
 static Reflection reflect(Shader const &shader) {
     Reflection reflection;
@@ -170,7 +173,9 @@ static Reflection reflect(Shader const &shader) {
 }
 
 template <> struct fmt::formatter<SpvReflectDescriptorBinding> {
-    constexpr auto parse(format_parse_context &ctx) { return ctx.begin(); }
+    constexpr auto parse(format_parse_context &ctx) {
+        return ctx.begin();
+    }
     auto format(SpvReflectDescriptorBinding const &binding, format_context &ctx) const {
         return fmt::format_to(ctx.out(),
             "layout(set = {}, binding = {}) ({})",
@@ -180,7 +185,9 @@ template <> struct fmt::formatter<SpvReflectDescriptorBinding> {
     }
 };
 template <> struct fmt::formatter<DescriptorBinding> {
-    constexpr auto parse(format_parse_context &ctx) { return ctx.begin(); }
+    constexpr auto parse(format_parse_context &ctx) {
+        return ctx.begin();
+    }
     auto format(DescriptorBinding const &binding, format_context &ctx) const {
         return fmt::format_to(ctx.out(), "layout(set = {}, binding = {})", binding.set, binding.binding);
     }
@@ -191,6 +198,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
     Pipeline::Layout layout;
     *pReflection = new Reflection(reflect(shader));
     auto &reflection = *static_cast<Reflection *>(*pReflection);
+    reflection.maxUnsizedDescSize = ci.maxUnsizedDescriptorSize;
 
     LOG_TRACE("Making pipeline layout");
 
@@ -201,7 +209,7 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
             flags |= ci.descriptorBindingFlags.at(binding);
 
         if((desc.array.dims_count > 0 && desc.array.dims[0] == 0) || desc.type_description->op == SpvOpTypeRuntimeArray ||
-            ci.unsizedDescriptorSize.contains({ binding.set, binding.binding }))
+            ci.unsizedDescriptors.contains({ binding.set, binding.binding }))
             flags |= VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
     }
 
@@ -210,10 +218,10 @@ static Pipeline::Layout makePipelineLayout(VkDevice dev, PipelineLayoutCreateInf
         for(auto [binding, desc] : bindings) {
             LOG_TRACE("    Binding {}: {} of {} in {} unsized {} dynamic {}", desc.binding, desc.descriptorCount,
                 string_VkDescriptorType(desc.descriptorType), string_VkShaderStageFlags(desc.stageFlags),
-                ci.unsizedDescriptorSize.contains({ set, (uint32_t) binding }), ci.dynamicDescriptors.contains({ set, (uint32_t) binding }));
+                ci.unsizedDescriptors.contains({ set, (uint32_t) binding }), ci.dynamicDescriptors.contains({ set, (uint32_t) binding }));
 
-            if(ci.unsizedDescriptorSize.contains({ set, (uint32_t) binding })) {
-                desc.descriptorCount = std::max(desc.descriptorCount, ci.unsizedDescriptorSize.at({ set, (uint32_t) binding }));
+            if(ci.unsizedDescriptors.contains({ set, (uint32_t) binding })) {
+                desc.descriptorCount = std::max(desc.descriptorCount, ci.maxUnsizedDescriptorSize);
             }
             if(ci.dynamicDescriptors.contains({ set, (uint32_t) binding })) {
                 if(desc.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
@@ -431,14 +439,25 @@ Pipeline egn::vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo la
 void egn::vk::allocateDescriptors(vk::Pipeline &pipeline, DescriptorAllocationInfo ci) {
     assert(ci.numFrames != 0);
     assert(pipeline._reflection);
-    auto const &reflection = *static_cast<Reflection *>(pipeline._reflection);
+    auto &reflection = *static_cast<Reflection *>(pipeline._reflection);
+    uint32_t numDescriptors = reflection.descSets.size();
 
     if(pipeline.descriptorSets.sets.size() != 0) {
-        LOG_WARN("vk::allocateDescriptors: Reallocating descriptors!");
+        if(ci.unsizedDescSize <= reflection.allocatedDescSize && ci.numFrames <= pipeline.descriptorSets.sets.size()) {
+            return;
+        }
 
+        // Reallocating
         vkDeviceWaitIdle(pipeline.device);
         vkDestroyDescriptorPool(pipeline.device, pipeline.descriptorSets.pool, nullptr);
         pipeline.descriptorSets.sets.clear();
+    }
+
+    LOG_TRACE("Allocating descriptor sets.");
+
+    if(ci.unsizedDescSize > reflection.maxUnsizedDescSize) {
+        LOG_ERROR("Unsized descriptors with size {} are over capacity of the pipeline layout {}!", ci.unsizedDescSize, reflection.maxUnsizedDescSize);
+        assert(false);
     }
 
     // Descriptor pool
@@ -448,13 +467,12 @@ void egn::vk::allocateDescriptors(vk::Pipeline &pipeline, DescriptorAllocationIn
             auto const &flags = reflection.descFlags.at(set).get(binding.binding);
             auto &size = poolSizes[binding.descriptorType];
             size.type = binding.descriptorType;
-            size.descriptorCount += (flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT ? ci.maxVariableCountSize :
-                                                                                                   binding.descriptorCount) *
+            size.descriptorCount += (flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT ? ci.unsizedDescSize : binding.descriptorCount) *
                                     ci.numFrames;
         }
     }
     VkDescriptorPoolCreateInfo poolCI{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .maxSets = ci.maxDescriptorSets * ci.numFrames,
+        .maxSets = numDescriptors * ci.numFrames,
         .poolSizeCount = (uint32_t) poolSizes.size(),
         .pPoolSizes = poolSizes.dense().data() };
     CHECK_VK_RES(vkCreateDescriptorPool(pipeline.device, &poolCI, nullptr, &pipeline.descriptorSets.pool));
@@ -463,33 +481,35 @@ void egn::vk::allocateDescriptors(vk::Pipeline &pipeline, DescriptorAllocationIn
     for(uint i = 0; i < ci.numFrames; ++i) {
         auto &sets = pipeline.descriptorSets.sets.emplace_back();
         for(auto const &[set, bindings] : reflection.descSets) {
+            auto &dstSet = sets[set];
+
             uint32_t count;
             std::optional<VkDescriptorSetVariableDescriptorCountAllocateInfo> variableSizedBinding;
             for(auto binding : bindings.dense()) {
                 auto const &flags = reflection.descFlags.at(set).get(binding.binding);
                 if(flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT) {
-                    if(pipeline.createInfo.layout.unsizedDescriptorSize.contains({ set, binding.binding })) {
-                        count = pipeline.createInfo.layout.unsizedDescriptorSize.at({ set, binding.binding });
-                        variableSizedBinding = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO,
-                            .descriptorSetCount = 1,
-                            .pDescriptorCounts = &count };
-                        break;
-                    } else {
-                        LOG_ERROR("You must specify an unsizedDescriptorSize a variable sized array descriptor binding {}",
-                            reflection.descBindings.at({ set, binding.binding }));
-                        continue;
-                    }
+                    count = ci.unsizedDescSize;
+                    variableSizedBinding = {
+                        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO,
+                        .descriptorSetCount = 1,
+                        .pDescriptorCounts = &count,
+                    };
+                    break;
                 }
             }
 
-            VkDescriptorSetAllocateInfo descSetAlloc{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            VkDescriptorSetAllocateInfo descSetAlloc{
+                .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
                 .pNext = variableSizedBinding.has_value() ? &variableSizedBinding.value() : nullptr,
                 .descriptorPool = pipeline.descriptorSets.pool,
                 .descriptorSetCount = 1,
-                .pSetLayouts = &pipeline.layout.descLayouts.get(set) };
-            CHECK_VK_RES(vkAllocateDescriptorSets(pipeline.device, &descSetAlloc, &sets[set]));
+                .pSetLayouts = &pipeline.layout.descLayouts.get(set),
+            };
+            vkAllocateDescriptorSets(pipeline.device, &descSetAlloc, &dstSet.set);
         }
     }
+
+    reflection.allocatedDescSize = ci.unsizedDescSize;
 }
 bool egn::vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorWrite> const &writes, uint32_t frame) {
     if(frame >= pipeline.descriptorSets.sets.size()) {
@@ -518,7 +538,7 @@ bool egn::vk::writeDescriptors(Pipeline const &pipeline, std::vector<DescriptorW
 
         descWrites.emplace_back(VkWriteDescriptorSet{
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = pipeline.descriptorSets.sets.at(frame).at(write.dstSet),
+            .dstSet = pipeline.descriptorSets.sets.at(frame).at(write.dstSet).set,
             .dstBinding = write.dstBinding,
             .dstArrayElement = write.dstArrayElement,
             .descriptorCount = write.size(),
@@ -555,29 +575,16 @@ bool egn::vk::bindDescriptorSet(VkCommandBuffer cb, Pipeline const &pipeline, ui
     assert(pipeline._reflection);
     // auto const &reflection = *static_cast<Reflection *>(pipeline._reflection);
 
-    VkShaderStageFlags stages = VK_SHADER_STAGE_ALL;
 
-    if(pipeline.type == Pipeline::Type::Graphics)
-        stages = VK_SHADER_STAGE_ALL_GRAPHICS;
-    if(pipeline.type == Pipeline::Type::Compute)
-        stages = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    VkBindDescriptorSetsInfo bindInfo{
-        .sType = VK_STRUCTURE_TYPE_BIND_DESCRIPTOR_SETS_INFO,
-        .stageFlags = stages,
-        .layout = pipeline.layout.layout,
-        .firstSet = set,
-        .descriptorSetCount = 1,
-        .pDescriptorSets = &pipeline.descriptorSets.sets.at(frame).at(set),
-        .dynamicOffsetCount = 0,
-        .pDynamicOffsets = nullptr,
-    };
-    if(!offsets.empty()) {
-        bindInfo.dynamicOffsetCount = 1;
-        bindInfo.pDynamicOffsets = offsets.data();
+    VkPipelineBindPoint bindPoint;
+    switch(pipeline.type) {
+        case Pipeline::Type::Graphics: bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS; break;
+        case Pipeline::Type::Compute: bindPoint = VK_PIPELINE_BIND_POINT_COMPUTE; break;
+        case Pipeline::Type::RayTracing: bindPoint = VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR; break;
+        default: bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS; LOG_ERROR("Invalid pipeline descriptor bind!");
     }
 
-    vkCmdBindDescriptorSets2(cb, &bindInfo);
+    vkCmdBindDescriptorSets(cb, bindPoint, pipeline.layout.layout, set, 1, &pipeline.descriptorSets.sets.at(frame).at(set).set, offsets.size(), offsets.data());
 
     return true;
 }

@@ -7,6 +7,9 @@
 
 namespace scene {
 
+// Tag component
+struct MainWindow {};
+
 class IScene {
 public:
     virtual ~IScene() = default;
@@ -20,8 +23,10 @@ protected:
     Controller mController;
     egn::Entity mEventListener;
     egn::Entity mCamera;
-    VkCommandPool mCommandPool = nullptr;
+    std::unique_ptr<egn::IRenderer> mRenderer;
     egn::vk::Device mDevice;
+
+    void updateHotkeys(egn::Registry &reg);
 public:
     void setup(egn::Registry &reg) override;
     void setupRenderer(egn::Registry &reg, egn::IRenderer **renderer, egn::vk::Device const &device) override;

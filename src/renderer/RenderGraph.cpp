@@ -518,10 +518,10 @@ static bool isCompatible(RenderGraphImageCreateInfo const &first, RenderGraphIma
         first.imageInfo.sampler.unnormalizedCoordinates == second.imageInfo.sampler.unnormalizedCoordinates;
 } // let's never do THAT again...
 // Additionally checks the type of an external resource
-static ResourceCreateInfo::Type getResourceType(RestrictedEntityAny<ResourceCreateInfo> e) {
+static ResourceCreateInfo::Type getResourceType(RestrictedEntity<ResourceCreateInfo> e) {
     ZoneScoped;
 
-    auto const &ci = e.get<ResourceCreateInfo>();
+    auto const &ci = e.getc();
     if(ci.type == ResourceCreateInfo::External) {
         assert(e.contains<vk::Image>() || e.contains<vk::Buffer>());
         return e.contains<vk::Image>() ? ResourceCreateInfo::Image : ResourceCreateInfo::Buffer;
@@ -819,11 +819,5 @@ RenderGraphResult egn::buildRenderGraph(RenderGraphBuilder &&builder, void *data
         };
     }
 
-    RenderGraphResult result(res);
-
-    for(auto &[_, pass] : res->passes) {
-        pass.storage->postCompile(result, data);
-    }
-
-    return result;
+    return RenderGraphResult(res);
 }

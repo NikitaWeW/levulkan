@@ -1,7 +1,7 @@
 #include "engine/renderer/RenderGraphRenderer.hpp"
 
-void egn::RenderGraphRenderer::build(RenderGraphBuilder &&builder, void *data) {
-    mRenderGraph = buildRenderGraph(std::move(builder), data);
+void egn::RenderGraphRenderer::build(RenderGraphBuilder &&builder) {
+    mRenderGraph = buildRenderGraph(std::move(builder), mData);
     if(!mRenderGraph.success()) {
         return;
     }
@@ -10,13 +10,14 @@ void egn::RenderGraphRenderer::build(RenderGraphBuilder &&builder, void *data) {
     }
 }
 
-void egn::RenderGraphRenderer::render(RestrictedEntity<vk::Image> target, CommandBuffers &commandBuffers) {
+void egn::RenderGraphRenderer::preFrame(RestrictedEntity<vk::Image> target, uint) {
     mRenderGraph.setResource("target", target);
     for(auto const &passName : mRenderGraph.getPassStack()) {
         auto const &pass = mRenderGraph.getPass(passName);
         pass->storage->postCompile(mRenderGraph, mData);
     }
-
+}
+void egn::RenderGraphRenderer::render(CommandBuffers &commandBuffers) {
     for(auto passIndex : mRenderGraph.getPassStack()) {
         auto const &pass = mRenderGraph.getPass(passIndex);
         assert(pass);

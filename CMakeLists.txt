@@ -76,6 +76,7 @@ set(ENGINE_SOURCE
     "src/renderer/RenderGraph.cpp"
     "src/renderer/ResourceManager.cpp"
     "src/renderer/RenderGraphRenderer.cpp"
+    "src/renderer/EngineRenderer.cpp"
 
     "src/scene/ModelLoader.cpp"
     "src/scene/TextureLoader.cpp"

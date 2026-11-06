@@ -33,7 +33,8 @@ struct BufferCreateInfo {
 
     VkDeviceSize size = 0; // In bytes
 
-    void const *data = nullptr; ///< If not nullptr, appropriate memory flags are added automatically and the data is copied to mapped location. Adds appropriate flags.
+    void const *data =
+        nullptr; ///< If not nullptr, appropriate memory flags are added automatically and the data is copied to mapped location. Adds appropriate flags.
     bool map = true; ///< Map the buffer to host memory persistently. Adds appropriate flags.
     std::string name = ""; ///< Debug name
 };
@@ -42,7 +43,7 @@ struct BufferCreateInfo {
 struct Buffer {
     VkBuffer buffer = VK_NULL_HANDLE;
     VmaAllocation allocation = VK_NULL_HANDLE;
-    
+
     VmaAllocator allocator = VK_NULL_HANDLE;
     BufferCreateInfo createInfo;
     VkBufferCreateInfo bufferCreateInfo;
@@ -59,8 +60,7 @@ struct Buffer {
 Buffer makeBuffer(BufferCreateInfo const &ci);
 void destroy(Buffer &buffer);
 
-template<typename T>
-inline Buffer makeBuffer(VmaAllocator allocator, T const &obj, VkBufferUsageFlags usage) {
+template <typename T> inline Buffer makeBuffer(VmaAllocator allocator, T const &obj, VkBufferUsageFlags usage) {
     return makeBuffer(BufferCreateInfo{
         .usage = usage,
         .allocInfo = {
@@ -70,8 +70,7 @@ inline Buffer makeBuffer(VmaAllocator allocator, T const &obj, VkBufferUsageFlag
         .data = &obj,
     });
 }
-template<typename T>
-inline Buffer makeBuffer(VmaAllocator allocator, std::vector<T> const &vec, VkBufferUsageFlags usage) {
+template <typename T> inline Buffer makeBuffer(VmaAllocator allocator, std::vector<T> const &vec, VkBufferUsageFlags usage) {
     return makeBuffer(BufferCreateInfo{
         .usage = usage,
         .allocInfo = {
@@ -85,12 +84,12 @@ inline Buffer makeBuffer(VmaAllocator allocator, std::vector<T> const &vec, VkBu
 struct ImageCreateInfo {
     /// VK_IMAGE_USAGE_TRANSFER_XXX_BIT is added automatically if data is not nullptr.
     /// VK_IMAGE_USAGE_SAMPLED_BIT will create the sampler.
-    VkImageUsageFlags usage = 0; 
+    VkImageUsageFlags usage = 0;
     AllocationCreateInfo allocInfo;
-    
+
     // Command buffer to record transfer commands to
     VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
-    
+
     struct ImageInfo {
         VkImageType imageType = VK_IMAGE_TYPE_2D;
         VkFormat format = VK_FORMAT_UNDEFINED;
@@ -136,11 +135,7 @@ struct ImageCreateInfo {
             .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
             .imageType = image.imageType,
             .format = image.format,
-            .extent = {
-                .width = image.dimensions.width, 
-                .height = image.dimensions.height, 
-                .depth = image.dimensions.depth 
-            },
+            .extent = { .width = image.dimensions.width, .height = image.dimensions.height, .depth = image.dimensions.depth },
             .mipLevels = image.dimensions.mipLevels,
             .arrayLayers = image.dimensions.arrayLayers,
             .samples = image.dimensions.samples,
@@ -173,6 +168,10 @@ struct ImageCreateInfo {
         };
     }
 };
+inline constexpr bool operator==(ImageCreateInfo::ImageInfo::Dimensions const &lhs, ImageCreateInfo::ImageInfo::Dimensions const &rhs) {
+    return lhs.width == rhs.width && lhs.height == rhs.height && lhs.depth == rhs.depth && lhs.arrayLayers == rhs.arrayLayers &&
+           lhs.mipLevels == rhs.mipLevels && lhs.samples == rhs.samples;
+}
 /// @brief The image allocated on the gpu
 struct Image {
     VmaAllocation allocation = VK_NULL_HANDLE;
@@ -183,14 +182,14 @@ struct Image {
     /// The transfer buffer.
     /// Free anytime after submitting the command buffer.
     Buffer srcBuffer;
-    
+
     ImageCreateInfo createInfo;
     VmaAllocationCreateInfo allocationInfo;
 
     bool owns = true;
 
     /// @brief A small helper function that checks if necessary members handles are not null
-    bool valid() const; 
+    bool valid() const;
 };
 
 Image makeImage(ImageCreateInfo const &ci);

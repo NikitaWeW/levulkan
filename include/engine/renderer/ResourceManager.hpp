@@ -62,6 +62,10 @@ public:
     };
     ResourceAllocator() = default;
     ResourceAllocator(vk::AllocationCreateInfo const &allocInfo, VkCommandPool commandPool, VkQueue queue);
+    ResourceAllocator(ResourceAllocator &&o);
+    ResourceAllocator &operator=(ResourceAllocator &&o);
+    ResourceAllocator(ResourceAllocator const &) = delete;
+    ResourceAllocator &operator=(ResourceAllocator const &) = delete;
     ~ResourceAllocator();
     inline std::vector<Entity> getProcessedImages() const {
         return mProcessedImages;
@@ -73,16 +77,19 @@ public:
     /// Adds a vk::Buffer component.
     void processModel(Entity eModel);
     void begin();
-    void end();
+    /// @returns True if new resources were processed.
+    bool end();
 };
 
-struct ResourceDirty { };
+struct ResourceDirty { 
+    uint updateCount = 0;
+};
 struct ImageDescriptorWrite {
-    RestrictedEntity<vk::Image> resource;
+    Entity resource;
     VkImageLayout layout;
 };
 struct BufferDescriptorWrite {
-    RestrictedEntity<vk::Buffer> resource;
+    Entity resource;
     VkDeviceSize offset = 0;
     VkDeviceSize size = VK_WHOLE_SIZE;
 };
@@ -99,10 +106,9 @@ struct DescriptorWrite {
 class DescriptorManager {
 private:
     std::vector<DescriptorWrite> mWrites;
-    std::map<Entity, std::unordered_set<uint>> mFrameUsage;
-    std::vector<Registry *> mRegs;
+    std::unordered_map<Entity, uint32_t> mPipelines;
 public:
-    void addResource(DescriptorWrite write);
+    void emplace(DescriptorWrite write);
     void erase(Entity pipeline, vk::DescriptorBinding binding, uint frame);
     void update(uint frame = 0, bool force = false);
 };

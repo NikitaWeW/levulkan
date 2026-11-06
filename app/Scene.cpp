@@ -1,6 +1,8 @@
 #include "Scene.hpp"
 #include "Controller.hpp"
+#include "engine/renderer/EngineRenderer.hpp"
 #include "engine/renderer/ResourceManager.hpp"
+#include "engine/scene/Animation.hpp"
 #include "engine/scene/Loaders.hpp"
 #include "engine/scene/Resources.hpp"
 
@@ -212,12 +214,9 @@ static void assetGrid(egn::Registry &reg, std::vector<egn::Entity> const &props,
 }
 
 void scene::TestScene::setupRenderer(egn::Registry &reg, egn::IRenderer **renderer, egn::vk::Device const &device) {
-    // mRenderer = 
-    // renderer = mRenderer.get();
-
-
-
-
+    mRenderer = std::unique_ptr<egn::IRenderer>(new egn::EngineRenderer(reg, device));
+    *renderer = mRenderer.get();
+    mDevice = device;
 }
 void scene::TestScene::setup(egn::Registry &reg) {
     const auto prototypeTextures = egn::Material::Textures{ .albedo = loadTexture(reg, "assets/textures/prototype/texture_03.png", false) };
@@ -250,10 +249,12 @@ void scene::TestScene::setup(egn::Registry &reg) {
     dumpModels(reg, "tmp/models");
 
     mEventListener = reg.create<egn::WindowEventListener>();
+
+    assert(reg.view<MainWindow>().smallSize() == 1);
+    auto window = *reg.view<MainWindow>().begin();
     mCamera = Controller::createCamera(window, { 0, 2, 4 }, { 0, 0, 0 });
 }
-void scene::TestScene::update(egn::Registry &reg, float deltatime) {
-    
+void scene::TestScene::updateHotkeys(egn::Registry &reg) {
     auto &listener = mEventListener.get<egn::WindowEventListener>();
     while(!listener.keyEvents.empty()) {
         auto event = listener.keyEvents.front();
@@ -294,5 +295,13 @@ void scene::TestScene::update(egn::Registry &reg, float deltatime) {
         }
     }
 
-    cameraController.update(reg, deltatime);
+}
+void scene::TestScene::update(egn::Registry &reg, float deltatime) {
+    updateHotkeys(reg);
+
+    mController.update(reg, deltatime);
+
+    for(auto e : reg.view<egn::ModelInstance, egn::CurrentAnimation>()) {
+        animate(e, deltatime);
+    }
 }

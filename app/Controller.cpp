@@ -28,11 +28,12 @@ static void updateOrientation(glm::vec2 offset, glm::quat &q) {
 
 void Controller::update(egn::Registry &reg, float dt) {
     for(egn::Entity eCamera : reg.view<Controller::Camera, egn::WindowEventListener>()) {
+        auto &engineCamera = eCamera.get<egn::Camera>();
         auto &camera = eCamera.get<Controller::Camera>();
         auto &listener = eCamera.get<egn::WindowEventListener>();
         auto &window = camera.window.get<egn::Window>();
 
-        auto invView = glm::mat3(glm::inverse(camera.viewMat));
+        auto invView = glm::mat3(glm::inverse(engineCamera.viewMat));
         glm::vec3 right = invView * glm::vec3{ 1, 0, 0 };
         glm::vec3 up = invView * glm::vec3{ 0, 1, 0 };
         glm::vec3 forward = invView * glm::vec3{ 0, 0, -1 };
@@ -100,8 +101,8 @@ void Controller::update(egn::Registry &reg, float dt) {
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-        camera.projMat = glm::perspective<float>(glm::radians(camera.fov), (float) window.size.x / (float) window.size.y, camera.znear, camera.zfar);
-        camera.viewMat = glm::mat4_cast(glm::normalize(camera.orientation)) * glm::translate(glm::mat4(1.0f), -camera.position);
+        engineCamera.projMat = glm::perspective<float>(glm::radians(camera.fov), (float) window.size.x / (float) window.size.y, camera.znear, camera.zfar);
+        engineCamera.viewMat = glm::mat4_cast(glm::normalize(camera.orientation)) * glm::translate(glm::mat4(1.0f), -camera.position);
         // camera.viewMat =
         //     glm::rotate(glm::mat4{1.0f}, glm::radians(camera.pitchYaw.x), {1,0,0}) *
         //     glm::rotate(glm::mat4{1.0f}, glm::radians(camera.pitchYaw.y), {0,1,0}) *

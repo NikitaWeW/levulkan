@@ -141,7 +141,7 @@ public:
     ecs::view_sentinel end() const noexcept;
     bool empty() const noexcept;
 
-    ecs::size_t estimate() const noexcept;
+    ecs::size_t smallSize() const noexcept;
 };
 
 struct EntityWrapper;
@@ -484,11 +484,11 @@ inline ecs::view_sentinel egn::RegistryView<Include, Exclude, Entity_t>::end() c
 }
 template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
 inline bool egn::RegistryView<Include, Exclude, Entity_t>::empty() const noexcept {
-    ecs::view<Include, Exclude>::size() == 0;
+    return ecs::view<Include, Exclude>::size() == 0;
 }
 template <ecs::size_t Include, ecs::size_t Exclude, typename Entity_t>
-inline ecs::size_t egn::RegistryView<Include, Exclude, Entity_t>::estimate() const noexcept {
-    ecs::view<Include, Exclude>::size();
+inline ecs::size_t egn::RegistryView<Include, Exclude, Entity_t>::smallSize() const noexcept {
+    return ecs::view<Include, Exclude>::size();
 }
 
 inline constexpr egn::EntityWrapper egn::Entity::wrap() {
