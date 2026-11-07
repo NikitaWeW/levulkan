@@ -348,7 +348,7 @@ static void runOptimizer(Shader &program, spvtools::Optimizer &optimizer) {
                 program.createInfo.src,
                 message);
         };
-        optimizer.SetMessageConsumer(messageCallback);
+        // optimizer.SetMessageConsumer(messageCallback);
 
         std::vector<uint32_t> optimizedSpriv;
         auto res = optimizer.Run(bin.spirv.data(), bin.spirv.size(), &optimizedSpriv);

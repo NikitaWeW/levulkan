@@ -112,6 +112,23 @@ public:
         return device;
     }
 };
+class VulkanFinalizer {
+private:
+    egn::Registry *mReg = nullptr;
+public:
+    VulkanFinalizer(egn::Registry &reg): mReg(&reg) {
+    }
+    inline ~VulkanFinalizer() {
+        for(egn::RestrictedEntity<egn::vk::Device> e : mReg->view<egn::vk::Device>()) {
+            vmaDestroyAllocator(e->vma);
+            vkDestroyDevice(e->device, nullptr);
+        }
+        for(egn::RestrictedEntity<egn::vk::Instance> e : mReg->view<egn::vk::Instance>()) {
+            vkDestroyDebugUtilsMessengerEXT(e->instance, e->debugMessenger, nullptr);
+            vkDestroyInstance(e->instance, nullptr);
+        }
+    }
+};
 
 static std::string getDateTime() {
     time_t timestamp = time(NULL);
@@ -164,13 +181,6 @@ static VkCommandPool createCommandPool(uint32_t index, VkDevice device) {
 int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     scene::IScene *scene = nullptr;
 
-    /////////////////////////////////////////////////////////
-
-    scene::TestScene testScene;
-    scene = &testScene;
-
-    /////////////////////////////////////////////////////////
-
     if(!glfwInit()) {
         LOG_ERROR("Failed to init glfw!");
         return -1;
@@ -178,10 +188,12 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
 
     egn::RestrictedEntity<egn::Window> window = makeWindow(sReg, "levulkan");
     window.emplace<scene::MainWindow>();
+
     VulkanInitializer vulkanInitializer(window->handle);
     if(!vulkanInitializer.Success()) {
         return -1;
     }
+    VulkanFinalizer vulkanFinalizer(sReg);
 
     window->surface = vulkanInitializer.Surface();
 
@@ -204,14 +216,17 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     swapchain.emplace<egn::vk::Instance>(vulkanInitializer.Instance());
     swapchain.emplace<egn::vk::Device>(vulkanInitializer.Device());
 
-    scene->setup(sReg);
-
     VkCommandPool commandPool = createCommandPool(queueFamilies.indices.at(VK_QUEUE_GRAPHICS_BIT), device);
 
     VkPhysicalDeviceProperties2 properties{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
     vkGetPhysicalDeviceProperties2(physicalDevice, &properties);
 
     ////////////////////////////////////////////////////////////////
+
+    scene::TestScene testScene;
+    scene = &testScene;
+
+    scene->setup(sReg);
 
     // TODO: A better test render pipeline that uses all of the render graph features
     // Multiple queues
@@ -345,15 +360,6 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             break;
         }
 
-        if(std::ranges::distance(sReg.view<egn::ResourceDirty>()))
-            LOG_TRACE("{} resources are dirty! {}", std::ranges::distance(sReg.view<egn::ResourceDirty>()), sReg.view<egn::ResourceDirty>());
-
-        // FIXME: ResourceDirty flag removes too early for resources that are used in multiple frames. Writes are added only for frame 0.
-        // FIX: Add a counter to the component.
-        for(auto e : sReg.view<egn::ResourceDirty>()) {
-            e.erase<egn::ResourceDirty>();
-        }
-
         egn::CommandBuffers frameCommandBuffers{
             .commandBuffers = commandBuffers.at(frameIndex),
             .queueIndices = queueFamilies.indices,
@@ -473,14 +479,6 @@ int app([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     }
     for(egn::RestrictedEntity<egn::Window> e : sReg.view<egn::Window>()) {
         vkDestroySurfaceKHR(instance, e->surface, nullptr);
-    }
-    for(egn::RestrictedEntity<egn::vk::Device> e : sReg.view<egn::vk::Device>()) {
-        vmaDestroyAllocator(e->vma);
-        vkDestroyDevice(e->device, nullptr);
-    }
-    for(egn::RestrictedEntity<egn::vk::Instance> e : sReg.view<egn::vk::Instance>()) {
-        vkDestroyDebugUtilsMessengerEXT(e->instance, e->debugMessenger, nullptr);
-        vkDestroyInstance(e->instance, nullptr);
     }
 
     LOG_INFO("Ran for {:.3}s avg deltatime: {:.3}ms ({:.3} fps)", runtime, runtime / frameCount * 1e3, frameCount / runtime);

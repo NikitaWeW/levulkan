@@ -437,7 +437,6 @@ Pipeline egn::vk::makePipeline(Shader const &shader, PipelineLayoutCreateInfo la
 }
 
 void egn::vk::allocateDescriptors(vk::Pipeline &pipeline, DescriptorAllocationInfo ci) {
-    assert(ci.numFrames != 0);
     assert(pipeline._reflection);
     auto &reflection = *static_cast<Reflection *>(pipeline._reflection);
     uint32_t numDescriptors = reflection.descSets.size();
@@ -452,6 +451,8 @@ void egn::vk::allocateDescriptors(vk::Pipeline &pipeline, DescriptorAllocationIn
         vkDestroyDescriptorPool(pipeline.device, pipeline.descriptorSets.pool, nullptr);
         pipeline.descriptorSets.sets.clear();
     }
+
+    assert(ci.numFrames != 0);
 
     LOG_TRACE("Allocating descriptor sets.");
 

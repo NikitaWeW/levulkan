@@ -84,6 +84,10 @@ public:
 struct ResourceDirty { 
     uint updateCount = 0;
 };
+// How many descriptors use this resource
+struct DescriptorResourceUsage {
+    uint usageCount = 0;
+};
 struct ImageDescriptorWrite {
     Entity resource;
     VkImageLayout layout;
@@ -110,7 +114,7 @@ private:
 public:
     void emplace(DescriptorWrite write);
     void erase(Entity pipeline, vk::DescriptorBinding binding, uint frame);
-    void update(uint frame = 0, bool force = false);
+    void update(uint frame = 0);
 };
 
 } // namespace egn

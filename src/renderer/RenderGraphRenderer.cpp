@@ -57,6 +57,6 @@ void egn::RenderGraphRenderer::render(CommandBuffers &commandBuffers) {
             vkCmdPipelineBarrier2(passCB, &dependencyInfo);
         }
 
-        pass->render(passCB);
+        pass->storage->render(passCB, mData);
     }
 }

@@ -230,11 +230,6 @@ struct RenderPass {
     VkQueueFlagBits queue = VK_QUEUE_GRAPHICS_BIT;
 
     std::unique_ptr<IRenderPassStorage> storage;
-
-    inline void render(VkCommandBuffer cb) const {
-        assert(storage);
-        storage->render(cb);
-    }
 };
 
 class RenderGraphBuilder {

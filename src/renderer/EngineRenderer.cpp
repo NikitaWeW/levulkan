@@ -336,15 +336,12 @@ static void runGBufferPass(gbuffer_data &passData, VkCommandBuffer cb, void *pRe
         pushConstants.uniformBuffer = uniformBufferAddress;
         pushConstants.instanceData = pushUniform(renderer.uniformBuffer, data, renderer.frameIndex, 16);
 
-        VkPushConstantsInfo pushConstantsInfo{
-            .sType = VK_STRUCTURE_TYPE_PUSH_CONSTANTS_INFO,
-            .layout = passData.pipeline->layout.layout,
-            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-            .offset = 0,
-            .size = sizeof(pushConstants),
-            .pValues = &pushConstants,
-        };
-        vkCmdPushConstants2(cb, &pushConstantsInfo);
+        vkCmdPushConstants(cb,
+            passData.pipeline->layout.layout,
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            0,
+            sizeof(pushConstants),
+            &pushConstants);
 
         vkCmdDrawIndexed(cb, meh.indexCount, data.size(), 0, 0, 0);
     }
@@ -501,15 +498,12 @@ static void runLightingPass(lighting_data &passData, VkCommandBuffer cb, void *p
         .viewMat = glm::inverse(renderer.camera.get<Camera>().viewMat),
     };
 
-    VkPushConstantsInfo pushConstantsInfo{
-        .sType = VK_STRUCTURE_TYPE_PUSH_CONSTANTS_INFO,
-        .layout = passData.pipeline->layout.layout,
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-        .offset = 0,
-        .size = sizeof(pushConstants),
-        .pValues = &pushConstants,
-    };
-    vkCmdPushConstants2(cb, &pushConstantsInfo);
+    vkCmdPushConstants(cb,
+        passData.pipeline->layout.layout,
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+        0,
+        sizeof(pushConstants),
+        &pushConstants);
 
     vkCmdDraw(cb, 3, 1, 0, 0);
 
@@ -645,6 +639,7 @@ egn::EngineRenderer &egn::EngineRenderer::operator=(EngineRenderer &&o) {
 }
 egn::EngineRenderer::~EngineRenderer() {
     if(mImpl) {
+        vkDestroyCommandPool(mImpl->device.device, mImpl->commandPool, nullptr);
         delete mImpl;
     }
 }
@@ -729,8 +724,18 @@ void egn::EngineRenderer::preFrame(RestrictedEntity<vk::Image> target, uint fram
 
     updateResourceAllocator(*mImpl);
 
+    if(std::ranges::distance(mImpl->reg->view<egn::ResourceDirty>()))
+        LOG_TRACE("{} resources are dirty! {}", std::ranges::distance(mImpl->reg->view<egn::ResourceDirty>()), mImpl->reg->view<egn::ResourceDirty>());
+
     mImpl->uniformBuffer.free(frameIndex);
-    mImpl->descManager.update(frameIndex);
+
+    // Only one frame in descriptor sets (currently).
+    mImpl->descManager.update(0 /* frameIndex */);
+
+    // Clean up dirty resources that don't have any descriptors.
+    for(auto e : mImpl->reg->view<ResourceDirty>(exclude<ResourceUsage>())) {
+        e.erase<ResourceDirty>();
+    }
 }
 // A BACKWARDS 360?!? No- NO, HOW IS THIS POSSIBLE!???
 void egn::EngineRenderer::render(CommandBuffers &commandBuffers) {

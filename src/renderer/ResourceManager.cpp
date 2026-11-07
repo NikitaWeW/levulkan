@@ -88,8 +88,8 @@ uint32_t ResourceAllocator::processImage(Entity eImage) {
     if(!eImage.contains<vk::Image>() && eImage.contains<Texture2D>()) {
         auto &image = eImage.get<Texture2D>();
 
-        if(image.bitmap.numComponents == 3)
-            LOG_WARN("Making R32G32B32 texture2D \"{}\". Maybe change it to 32 bits or something...", image.path);
+        // if(image.bitmap.numComponents == 3)
+        //     LOG_WARN("Making R32G32B32 texture2D \"{}\". Maybe change it to 32 bits or something...", image.path);
 
         VkSamplerAddressMode addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         switch(image.addressMode) {
@@ -222,10 +222,6 @@ bool ResourceAllocator::end() {
     return true;
 }
 
-struct ResourceUsage {
-    uint usageCount = 0;
-};
-
 void DescriptorManager::emplace(DescriptorWrite write) {
     assert(!write.imageInfo.empty() || !write.bufferInfo.empty());
     erase(write.dstPipeline, { write.dstSet, write.dstBinding }, write.dstFrame);
@@ -233,15 +229,15 @@ void DescriptorManager::emplace(DescriptorWrite write) {
     write.dstPipeline.try_emplace<ResourceDirty>();
 
     if(!mPipelines.contains(write.dstPipeline)) {
-        ++write.dstPipeline.try_emplace<ResourceUsage>().usageCount;
+        ++write.dstPipeline.try_emplace<DescriptorResourceUsage>().usageCount;
     }
     ++mPipelines[write.dstPipeline];
 
     for(auto &info : write.imageInfo) {
-        ++info.resource.try_emplace<ResourceUsage>().usageCount;
+        ++info.resource.try_emplace<DescriptorResourceUsage>().usageCount;
     }
     for(auto &info : write.bufferInfo) {
-        ++info.resource.try_emplace<ResourceUsage>().usageCount;
+        ++info.resource.try_emplace<DescriptorResourceUsage>().usageCount;
     }
 }
 void DescriptorManager::erase(Entity pipeline, vk::DescriptorBinding binding, uint frame) {
@@ -256,18 +252,28 @@ void DescriptorManager::erase(Entity pipeline, vk::DescriptorBinding binding, ui
             --numResourcesInPipeline;
             if(numResourcesInPipeline == 0) {
                 mPipelines.erase(pipeline);
-                auto &usageCount = write.dstPipeline.get<ResourceUsage>().usageCount;
+                auto &usageCount = write.dstPipeline.get<DescriptorResourceUsage>().usageCount;
                 assert(usageCount != 0);
                 --usageCount;
                 if(usageCount == 0) {
-                    write.dstPipeline.erase<ResourceUsage>();
+                    write.dstPipeline.erase<DescriptorResourceUsage>();
                 }
             }
         }
     }
 }
-#define LOG_DESC(should, msg, ...) if(static_cast<bool>(should)) { LOG_TRACE(msg, __VA_ARGS__); }
-void DescriptorManager::update(uint frame, bool force) {
+static void updateCounter(Entity e) {
+    assert(e.valid());
+    assert(e.contains<ResourceDirty>());
+    assert(e.contains<DescriptorResourceUsage>());
+    auto &updateCount = e.get<ResourceDirty>().updateCount;
+    auto const &usageCount = e.get<DescriptorResourceUsage>().usageCount;
+    ++updateCount;
+    if(updateCount == usageCount) {
+        e.erase<ResourceDirty>();
+    }
+}
+void DescriptorManager::update(uint frame) {
     std::map<Entity, std::vector<vk::DescriptorWrite>> writes;
     for(auto const &write : mWrites) {
         if(write.dstFrame != frame) {
@@ -275,7 +281,7 @@ void DescriptorManager::update(uint frame, bool force) {
         }
 
         Entity ePipeline = write.dstPipeline;
-        bool dirty = force || ePipeline.contains<ResourceDirty>();
+        bool dirty = ePipeline.contains<ResourceDirty>();
         if(!dirty) {
             for(auto const &info : write.imageInfo) {
                 if(info.resource.contains<ResourceDirty>()) {
@@ -320,24 +326,34 @@ void DescriptorManager::update(uint frame, bool force) {
 
         writes[ePipeline].emplace_back(std::move(descWrite));
 
-        LOG_TRACE("Updating pipeline {} set {} binding {} frame {} element {} images {} buffers {}", Entity(write.dstPipeline), write.dstSet,
+        LOG_TRACE("Updating pipeline {} set {} binding {} frame {} element {} images {} buffers {}", write.dstPipeline, write.dstSet,
             write.dstBinding, write.dstFrame, write.dstElement, write.imageInfo.size(), write.bufferInfo.size());
         for(auto const &info : write.imageInfo) {
+            if(info.resource.contains<ResourceDirty>()) {
+                updateCounter(info.resource);
+            }
             LOG_TRACE("  image {} {}", Entity(info.resource), string_VkImageLayout(info.layout));
         }
         for(auto const &info : write.bufferInfo) {
+            if(info.resource.contains<ResourceDirty>()) {
+                updateCounter(info.resource);
+            }
             LOG_TRACE("  buffer {} offset {} size {}", Entity(info.resource), info.offset, info.size);
         }
     }
 
     for(auto &[ePipeline, descWrites] : writes) {
+        if(ePipeline.contains<ResourceDirty>()) {
+            updateCounter(ePipeline);
+        }
         // Automatically checks if the required num of unsized descriptors is bigger.
-        vk::allocateDescriptors(Entity(ePipeline).get<vk::Pipeline>(),
-            {
-                .unsizedDescSize = std::max_element(descWrites.begin(), descWrites.end(),
-                    [](auto const &lhs, auto const &rhs) { return lhs.size() < rhs.size(); })
-                    ->size(),
-            });
+        // clang-format off
+        vk::allocateDescriptors(Entity(ePipeline).get<vk::Pipeline>(), {
+            .numFrames = frame,
+            .unsizedDescSize = std::max_element(descWrites.begin(), descWrites.end(), 
+                [](auto const &lhs, auto const &rhs) { return lhs.size() < rhs.size(); })->size(),
+        });
+        // clang-format on
         vk::writeDescriptors(ePipeline.get<vk::Pipeline>(), descWrites, frame);
     }
 

@@ -215,6 +215,7 @@ static void assetGrid(egn::Registry &reg, std::vector<egn::Entity> const &props,
 
 void scene::TestScene::setupRenderer(egn::Registry &reg, egn::IRenderer **renderer, egn::vk::Device const &device) {
     mRenderer = std::unique_ptr<egn::IRenderer>(new egn::EngineRenderer(reg, device));
+    static_cast<egn::EngineRenderer *>(mRenderer.get())->setCamera(mCamera);
     *renderer = mRenderer.get();
     mDevice = device;
 }
@@ -226,9 +227,10 @@ void scene::TestScene::setup(egn::Registry &reg) {
     loadModelTo(reg, "assets/models/sphere.glb", props, prototypeTextures);
     loadModelTo(reg, "assets/models/teapot.glb", props, prototypeTextures);
 
-    const glm::uvec3 numProps = { 20, 6, 10 };
+    const glm::uvec3 numProps = { 10, 3, 5 };
+    // const glm::uvec3 numProps = { 40, 2, 40 };
     const float distance = 2;
-    const glm::vec3 offset = { 0, -1, -10 };
+    const glm::vec3 offset = { 0, -1, -5 };
     assetGrid(reg, props, numProps, offset, distance);
 
     const glm::vec3 startPos(0, -4, 0);
