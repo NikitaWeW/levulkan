@@ -1,8 +1,9 @@
-#include "Resource.hpp"
-#include "Logging.hpp"
-#include "Utility.hpp"
-#include "libraries/vk_format_utils.h"
-using namespace vk;
+#include "engine/vk/Resource.hpp"
+#include "engine/vk/Utility.hpp"
+#include "engine/io/Logging.hpp"
+#include "vk_format_utils.h"
+
+using namespace egn::vk;
 
 static VmaAllocationCreateInfo makeAllocInfo(AllocationCreateInfo const &ci) {
     return { .flags = ci.allocFlags,
@@ -12,7 +13,7 @@ static VmaAllocationCreateInfo makeAllocInfo(AllocationCreateInfo const &ci) {
         .pool = ci.pool };
 }
 static void writeImage(Image &image, ImageCreateInfo const &ci) {
-    image.srcBuffer = vk::makeBuffer(BufferCreateInfo{
+    image.srcBuffer = egn::vk::makeBuffer(BufferCreateInfo{
         .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         .allocInfo = { .allocator = image.createInfo.allocInfo.allocator,
             .allocFlags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT },
@@ -88,7 +89,7 @@ static void writeImage(Image &image, ImageCreateInfo const &ci) {
             VK_PIPELINE_STAGE_TRANSFER_BIT, { VK_IMAGE_ASPECT_COLOR_BIT, i, 1, 0, 1 });
     }
 }
-Image vk::makeImage(ImageCreateInfo const &ci) {
+Image egn::vk::makeImage(ImageCreateInfo const &ci) {
     if(ci.allocInfo.allocator == nullptr) {
         LOG_ERROR("ImageCreateInfo::allocator is null!");
         return { };
@@ -176,7 +177,7 @@ Image vk::makeImage(ImageCreateInfo const &ci) {
 
     return image;
 }
-Buffer vk::makeBuffer(BufferCreateInfo const &ci) {
+Buffer egn::vk::makeBuffer(BufferCreateInfo const &ci) {
     if(ci.allocInfo.allocator == nullptr) {
         LOG_ERROR("BufferCreateInfo::allocInfo::allocator is null!");
         return { };
@@ -198,11 +199,13 @@ Buffer vk::makeBuffer(BufferCreateInfo const &ci) {
         .sharingMode = ci.allocInfo.sharingMode };
     buffer.allocationInfo = makeAllocInfo(ci.allocInfo);
 
-    if(ci.data || ci.map)
+    if(ci.data || ci.map) {
         buffer.allocationInfo.flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
                                        VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-    if(buffer.bufferCreateInfo.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
+    }
+    if(buffer.bufferCreateInfo.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) {
         buffer.allocationInfo.requiredFlags |= VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    }
 
     if(buffer.bufferCreateInfo.size == 0) {
         LOG_ERROR("Creating a buffer with size of 0!");
@@ -214,10 +217,20 @@ Buffer vk::makeBuffer(BufferCreateInfo const &ci) {
     if(!buffer.createInfo.name.empty())
         vmaSetAllocationName(buffer.createInfo.allocInfo.allocator, buffer.allocation, buffer.createInfo.name.c_str());
 
-    if(ci.data || ci.map)
-        CHECK_VK_RES(vmaMapMemory(buffer.allocator, buffer.allocation, &buffer.mapped));
-    if(ci.data)
-        std::memcpy(buffer.mapped, ci.data, buffer.bufferCreateInfo.size);
+    if(ci.data || ci.map) {
+        CHECK_VK_RES(vmaMapMemory(buffer.allocator, buffer.allocation, &buffer.hostAddress));
+    }
+    if(ci.data) {
+        std::memcpy(buffer.hostAddress, ci.data, buffer.bufferCreateInfo.size);
+    }
+
+    if(buffer.bufferCreateInfo.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT && buffer.createInfo.allocInfo.device) {
+        VkBufferDeviceAddressInfoKHR addressInfo{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_KHR,
+            .buffer = buffer.buffer,
+        };
+        buffer.deviceAddress = vkGetBufferDeviceAddress(buffer.createInfo.allocInfo.device, &addressInfo);
+    }
 
     if(!buffer.createInfo.name.empty() && buffer.createInfo.allocInfo.device) {
         VkDebugUtilsObjectNameInfoEXT name_info{
@@ -232,16 +245,16 @@ Buffer vk::makeBuffer(BufferCreateInfo const &ci) {
     return buffer;
 }
 
-bool vk::Image::valid() const {
+bool egn::vk::Image::valid() const {
     bool sampled = createInfo.usage & VK_IMAGE_USAGE_SAMPLED_BIT;
     if(sampled && !sampler)
         return false;
 
     return image != VK_NULL_HANDLE && allocation != VK_NULL_HANDLE;
 }
-bool vk::Buffer::valid() const { return buffer != VK_NULL_HANDLE && allocation != VK_NULL_HANDLE; }
+bool egn::vk::Buffer::valid() const { return buffer != VK_NULL_HANDLE && allocation != VK_NULL_HANDLE; }
 
-void vk::destroy(Image &image) {
+void egn::vk::destroy(Image &image) {
     if(!image.owns)
         return;
     destroy(image.srcBuffer);
@@ -257,12 +270,12 @@ void vk::destroy(Image &image) {
     image.allocation = VK_NULL_HANDLE;
     image.view = VK_NULL_HANDLE;
 }
-void vk::destroy(Buffer &buffer) {
+void egn::vk::destroy(Buffer &buffer) {
     if(!buffer.owns)
         return;
     if(!buffer.valid())
         return;
-    if(buffer.mapped)
+    if(buffer.hostAddress)
         vmaUnmapMemory(buffer.allocator, buffer.allocation);
     vmaDestroyBuffer(buffer.allocator, buffer.buffer, buffer.allocation);
     buffer.buffer = VK_NULL_HANDLE;

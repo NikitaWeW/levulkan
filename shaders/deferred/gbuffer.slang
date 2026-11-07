@@ -1,45 +1,51 @@
-#include "common/Material.slang"
-#include "common/MatrixData.slang"
+#include "common/Data.slang"
 #include "common/Attributes.slang"
 
 struct UniformBuffer {
-    Material   material;
-    CameraData cameraData;
-    ModelData  modelData;
+    column_major float4x4 projMat;
+    column_major float4x4 viewMat;
 };
-
-[[vk::binding(0, 0)]]
-uniform ConstantBuffer<UniformBuffer, ScalarDataLayout> uBuffer;
+struct InstanceData {
+    ModelData[] data;
+};
+struct PushConstants {
+    UniformBuffer *uBuffer;
+    InstanceData *instanceData;
+};
 
 struct VsOut {
     float4 clipPos : SV_Position;
     float3 viewPos;
     float2 uv;
-    float3x3 tbn;
+    float3 tangent; // idk weird slang shenanigans
+    float3 bitangent;
+    float3 normal;
+    nointerpolation uint instanceID;
 };
 
 [[shader("vertex")]]
-VsOut vsMain(Attributes attr) {
+VsOut vsMain(Attributes attr, uint instanceID : SV_INSTANCEID, uniform PushConstants pushConstants) {
+    ModelData modelData = pushConstants.instanceData->data[instanceID];
     VsOut out;
-    float3 position = attr.position;
-    float3 normal = attr.normal;
-    float3 tangent = attr.tangent;
+    out.instanceID = instanceID;
 
-    out.viewPos = mul(mul(uBuffer.cameraData.viewMat, uBuffer.modelData.modelMat), float4(attr.position, 1)).xyz;
-    // out.viewPos = attr.position;
-    out.clipPos = mul(uBuffer.cameraData.projMat, float4(out.viewPos, 1));
+    float3 position = attr.position;
+    out.normal = attr.normal;
+    out.tangent = attr.tangent;
+
+    out.viewPos = mul(mul(pushConstants.uBuffer->viewMat, modelData.modelMat), float4(attr.position, 1)).xyz;
+    out.clipPos = mul(pushConstants.uBuffer->projMat, float4(out.viewPos, 1));
     out.uv = attr.uv;
     
-    normal  = normalize(mul(mul(uBuffer.cameraData.viewMat, uBuffer.modelData.normMat), float4(normal, 0))).xyz;
-    tangent = normalize(mul(mul(uBuffer.cameraData.viewMat, uBuffer.modelData.normMat), float4(tangent, 0))).xyz;
-    tangent = normalize(tangent - dot(tangent, normal) * normal);
-    float3 bitangent = cross(tangent, normal);
-    out.tbn = float3x3(tangent, bitangent, normal);
+    out.normal  = normalize(mul(mul(pushConstants.uBuffer->viewMat, modelData.normMat), float4(out.normal, 0))).xyz;
+    out.tangent = normalize(mul(mul(pushConstants.uBuffer->viewMat, modelData.normMat), float4(out.tangent, 0))).xyz;
+    out.tangent = normalize(out.tangent - dot(out.tangent, out.normal) * out.normal);
+    out.bitangent = cross(out.tangent, out.normal);
 
     return out;
 }
 
-[[vk::binding(0, 1)]] 
+[[vk::binding(0, 0)]] 
 uniform Sampler2D uTextures[];
 
 struct FsOut {
@@ -54,22 +60,24 @@ float4 texture(uint index, float2 uv) {
 }
 
 [[shader("fragment")]]
-FsOut fsMain(VsOut in) {
-    in.tbn = transpose(in.tbn);
+FsOut fsMain(VsOut in, uniform PushConstants pushConstants) {
+    ModelData modelData = pushConstants.instanceData->data[in.instanceID];
+
+    float3x3 tbn = transpose(float3x3(in.tangent, in.bitangent, in.normal));
     var uv = in.uv;
     FsOut out;
-    out.albedo = uBuffer.material.properties.albedo * texture(uBuffer.material.textures.albedo, uv);
+    out.albedo = modelData.material.properties.albedo * texture(modelData.material.textures.albedo, uv);
     out.position = float4(in.viewPos, 1);
 
     out.normal.a = 1;
-    out.normal.xyz = texture(uBuffer.material.textures.normal, uv).rgb * 2 - 1;
-    out.normal.xyz = mul(in.tbn, out.normal.xyz);
+    out.normal.xyz = texture(modelData.material.textures.normal, uv).rgb * 2 - 1;
+    out.normal.xyz = mul(tbn, out.normal.xyz);
     out.normal.xyz = normalize(out.normal.xyz) * 0.5 + 0.5;
 
-    out.pbr.r = clamp(uBuffer.material.properties.metallic * texture(uBuffer.material.textures.metallic, uv).r, 0, 1);
-    out.pbr.g = clamp(uBuffer.material.properties.roughness * texture(uBuffer.material.textures.roughness, uv).r, 0, 1);
-    out.pbr.b = 0;
-    out.pbr.a = 0;
+    out.pbr.r = clamp(modelData.material.properties.metallic * texture(modelData.material.textures.metallic, uv).r, 0, 1);
+    out.pbr.g = clamp(modelData.material.properties.roughness * texture(modelData.material.textures.roughness, uv).r, 0, 1);
+    out.pbr.b = 0; // unused lol 
+    out.pbr.a = 0; // unused lol
 
     out.albedo.a = 1;
 
